@@ -1,4 +1,4 @@
-module DbMod (DbVcsInfo(..), bringDbUpToDate, withDbAndDrop) where
+module Codd (DbVcsInfo(..), bringDbUpToDate, withDbAndDrop) where
 
 import Prelude hiding (readFile)
 import Control.Monad (void, when, forM, forM_)
@@ -9,10 +9,10 @@ import Control.Monad.IO.Class (MonadIO(..))
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
 import UnliftIO.Concurrent (threadDelay)
-import RIO.List (sortOn)
-import RIO.Directory (listDirectory)
-import RIO.ByteString (readFile)
-import qualified RIO.List as List
+import Data.List (sortOn)
+import UnliftIO.Directory (listDirectory)
+import Data.ByteString (readFile)
+import qualified Data.List as List
 import System.FilePath ((</>))
 
 data DbVcsInfo = DbVcsInfo {
@@ -64,7 +64,8 @@ bringDbUpToDate DbVcsInfo { superUserConnString, dbName, appUser, sqlMigrationsD
             tblAlreadyExists <- isSingleTrue <$> DB.query conn "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ?" (DB.Only ("sql_migrations" :: String))
             when (not tblAlreadyExists) $ do
                 execvoid_ conn $ "CREATE TABLE sql_migrations ( " <>
-                    " applied_at timestamptz not null default now() " <>
+                    " non_dest_section_applied_at timestamptz not null default now() " <>
+                    " dest_section_applied_at timestamptz not null default now() " <>
                     ", name text not null " <>
                     ", unique (name))"
                 execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO " <> unsafeAppUser

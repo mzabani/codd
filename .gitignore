@@ -1,2 +1,4 @@
 .stack-work/
 *~
+local/
+dist-newstyle/

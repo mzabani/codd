@@ -1,3 +1,3 @@
-# Changelog for dbmod
+# Changelog for codd
 
 ## Unreleased changes
