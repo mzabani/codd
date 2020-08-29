@@ -129,7 +129,7 @@ The best way to handle these situations is to do a two-stage deployment: first d
 Every migration must have the following structure:
 
 ```sql
--- codd: ['no-txn' | 'in-txn' | '' ], ['force' | ''] non-destructive
+-- codd: ['no-txn' | 'in-txn' | '' ], ['force' | ''], non-destructive
 SQL commands of non-destructive section
 
 -- The destructive section must come after the non-destructive section and is optional

@@ -4,16 +4,16 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b218f16e0e277d3f365ba716f11c2aa2031996e569ef2d4ce4ed24a651c20687
+-- hash: 7c46bbf04cae65be91984bb79b0438618945e947721fb35f08574134ab65b7c6
 
 name:           codd
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/codd#readme>
-homepage:       https://github.com/githubuser/codd#readme
-bug-reports:    https://github.com/githubuser/codd/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2020 Author name here
+description:    Please see the README on GitHub at <https://github.com/mzabani/codd#readme>
+homepage:       https://github.com/mzabani/codd#readme
+bug-reports:    https://github.com/mzabani/codd/issues
+author:         Marcelo Zabani
+maintainer:     mzabani@gmail.com
+copyright:      2020 Marcelo Zabani
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -23,22 +23,26 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/codd
+  location: https://github.com/mzabani/codd
 
 library
   exposed-modules:
       Codd
       Codd.Hashing
       Codd.Internal
+      Codd.Parsing
+      Codd.Types
   other-modules:
       Paths_codd
   hs-source-dirs:
       src
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   build-depends:
-      base >=4.7 && <5
+      attoparsec
+    , base >=4.7 && <5
     , bytestring
     , filepath
+    , hspec-core
     , mtl
     , postgresql-simple
     , text
@@ -52,13 +56,14 @@ executable codd-exe
       Paths_codd
   hs-source-dirs:
       app
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
     , bytestring
     , codd
     , filepath
+    , hspec-core
     , mtl
     , postgresql-simple
     , text
@@ -72,11 +77,12 @@ test-suite codd-test
   other-modules:
       AllSpecs
       GeneralSpec
+      ParsingSpec
       TypesGen
       Paths_codd
   hs-source-dirs:
       test
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck
@@ -85,6 +91,7 @@ test-suite codd-test
     , codd
     , filepath
     , hspec
+    , hspec-core
     , mtl
     , postgresql-simple
     , text

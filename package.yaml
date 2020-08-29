@@ -23,6 +23,7 @@ dependencies:
 - base >= 4.7 && < 5
 - bytestring
 - filepath
+- hspec-core
 - mtl
 - postgresql-simple
 - text
@@ -42,9 +43,12 @@ default-extensions:
   - ScopedTypeVariables
   - TupleSections
   - TypeApplications
+  - ViewPatterns
 
 library:
   source-dirs: src
+  dependencies:
+    - attoparsec
 
 executables:
   codd-exe:
