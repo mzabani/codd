@@ -34,8 +34,10 @@ default-extensions:
   - DerivingStrategies
   - LambdaCase
   - FlexibleContexts
+  - FlexibleInstances
   - GADTs
   - GeneralizedNewtypeDeriving
+  - MultiParamTypeClasses
   - NamedFieldPuns
   - OverloadedStrings
   - RankNTypes

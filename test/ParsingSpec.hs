@@ -1,8 +1,9 @@
 module ParsingSpec where
 
-import Codd.Parsing (parseSqlMigration)
+import Codd.Parsing (parseSqlMigration, nothingIfWhiteSpace)
 import Codd.Types (SqlMigration(..))
 import Control.Monad (when)
+import qualified Data.Char as Char
 import Data.Either (isLeft)
 import qualified Data.Text as Text
 import Data.Text (Text)
@@ -38,11 +39,12 @@ spec = do
                             <> "\n-- codd: destructive\n"
                             <> destSql
                     in
-                        parseSqlMigration sql `shouldBe` Right SqlMigration {
-                            nonDestructiveSql = nonDestSql
+                        parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
+                            migrationName = "any-name.sql"
+                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
                             , nonDestructiveForce = False
                             , nonDestructiveInTxn = True
-                            , destructiveSql = destSql
+                            , destructiveSql = nothingIfWhiteSpace destSql
                             , destructiveInTxn = True
                         }
             it "Sql Migration with one section, missing optional options" $ do
@@ -52,11 +54,12 @@ spec = do
                                 <> sectionSql
                         (nonDestSql, destSql) = if nonDest then (sectionSql, "") else ("", sectionSql)
                     in
-                        parseSqlMigration sql `shouldBe` Right SqlMigration {
-                            nonDestructiveSql = nonDestSql
+                        parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
+                            migrationName = "any-name.sql"
+                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
                             , nonDestructiveForce = False
                             , nonDestructiveInTxn = True
-                            , destructiveSql = destSql
+                            , destructiveSql = nothingIfWhiteSpace destSql
                             , destructiveInTxn = True
                         }
             it "Sql Migration options parsed correctly" $
@@ -68,32 +71,33 @@ spec = do
                         <> "\n-- codd: no-txn, destructive\n"
                         <> destSql
                 in
-                    parseSqlMigration sql `shouldBe` Right SqlMigration {
-                            nonDestructiveSql = nonDestSql
+                    parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
+                            migrationName = "any-name.sql"
+                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
                             , nonDestructiveForce = True
                             , nonDestructiveInTxn = True
-                            , destructiveSql = destSql
+                            , destructiveSql = nothingIfWhiteSpace destSql
                             , destructiveInTxn = False
                         }
         
         context "Invalid SQL Migrations" $ do
             it "Sql Migration Parser never blocks for random text" $ do
                 property $ \(unRandomSql -> anyText) ->
-                    parseSqlMigration anyText `shouldSatisfy` const True
+                    parseSqlMigration "any-name.sql" anyText `shouldSatisfy` const True
 
             it "Gibberish after -- codd:" $
                 let
                     sql = "-- codd: complete gibberish\n"
                         <> "ANY SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` isLeft
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
             
             it "Duplicate options" $
                 let
                     sql = "-- codd: force, non-destructive, in-txn, non-destructive\n"
                         <> "ANY SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` \case
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` \case
                                                                 Right _ -> False
                                                                 Left err -> "duplicate" `Text.isInfixOf` err
             it "Unknown / mistyped options" $
@@ -101,14 +105,14 @@ spec = do
                     sql = "-- codd: force, NON-Destructive, in-txn\n"
                         <> "ANY SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` isLeft
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
             it "Missing non-destructive and destructive, otherwise valid options" $
                 let
                     sql = "-- codd: in-txn\n"
                         <> "ANY SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` isLeft
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
             it "Two non-destructive sections" $
                 let
@@ -117,7 +121,7 @@ spec = do
                         <> "\n--codd: non-destructive\n"
                         <> "MORE SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` isLeft
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
             it "Two destructive sections" $
                 let
@@ -126,4 +130,8 @@ spec = do
                         <> "\n--codd: destructive\n"
                         <> "MORE SQL HERE"
                 in
-                    parseSqlMigration sql `shouldSatisfy` isLeft
+                    parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
+
+            it "Can't BEGIN, COMMIT or ROLLBACK Transactions inside SQL migrations" $ pendingWith "Testing this by selecting txid_current() might be more effective"
+
+            it "SAVEPOINTs need to be released or rolled back inside SQL migrations" $ pendingWith "Testing this by selecting txid_current() might be more effective"

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7c46bbf04cae65be91984bb79b0438618945e947721fb35f08574134ab65b7c6
+-- hash: 84ff8fe783fa49c294af981357c1581d801a0b4b53d9a65d9062a1daeb5177d4
 
 name:           codd
 version:        0.1.0.0
@@ -28,6 +28,7 @@ source-repository head
 library
   exposed-modules:
       Codd
+      Codd.Analysis
       Codd.Hashing
       Codd.Internal
       Codd.Parsing
@@ -36,7 +37,7 @@ library
       Paths_codd
   hs-source-dirs:
       src
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   build-depends:
       attoparsec
     , base >=4.7 && <5
@@ -56,7 +57,7 @@ executable codd-exe
       Paths_codd
   hs-source-dirs:
       app
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -76,13 +77,14 @@ test-suite codd-test
   main-is: Main.hs
   other-modules:
       AllSpecs
+      AnalysisSpec
       GeneralSpec
       ParsingSpec
       TypesGen
       Paths_codd
   hs-source-dirs:
       test
-  default-extensions: DerivingStrategies LambdaCase FlexibleContexts GADTs GeneralizedNewtypeDeriving NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
+  default-extensions: DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck

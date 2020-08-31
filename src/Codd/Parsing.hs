@@ -1,10 +1,12 @@
-module Codd.Parsing (parseSqlMigration) where
+module Codd.Parsing (parseSqlMigration, nothingIfWhiteSpace) where
 
 import Prelude hiding (takeWhile)
+
 import Codd.Types (SqlMigration(..))
 import Control.Applicative ((<|>))
 import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, skipSpace, skipWhile, string, sepBy, takeText, takeWhile)
 import Data.Bifunctor (bimap)
+import qualified Data.Char as Char
 import Data.List (sort)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
@@ -57,8 +59,11 @@ migrationParser = do
         fullLine = Text.pack <$> manyTill anyChar (endOfLine <|> endOfInput)
         everythingUpToCodd = Text.concat <$> manyTill fullLine (endOfInput <|> coddComment)
 
-parseSqlMigration :: Text -> Either Text SqlMigration
-parseSqlMigration t = bimap Text.pack id migE >>= toMig
+nothingIfWhiteSpace :: Text -> Maybe Text
+nothingIfWhiteSpace t = if Text.all Char.isSpace t then Nothing else Just t
+
+parseSqlMigration :: FilePath -> Text -> Either Text SqlMigration
+parseSqlMigration name t = bimap Text.pack id migE >>= toMig
     where
         migE = parseOnly (migrationParser <* endOfInput) t
         dupOpts (sort -> opts) = any (==True) $ zipWith (==) opts (drop 1 opts)
@@ -76,19 +81,13 @@ parseSqlMigration t = bimap Text.pack id migE >>= toMig
         noTxn opts = OptInTxn False `elem` opts
         isForce opts = OptForce True `elem` opts
 
-        fullOpts :: [SectionOption] -> [SectionOption]
-        fullOpts opts = [OptDest (isDest opts), OptInTxn (inTxn opts), OptForce (isForce opts)]
-
-        defaultNonDestOpts, defaultDestOpts :: [SectionOption]
-        defaultNonDestOpts = [OptDest False, OptInTxn True, OptForce False]
-        defaultDestOpts = [OptDest True, OptInTxn True, OptForce False]
-
         mkMig :: Maybe ([SectionOption], Text) -> Maybe ([SectionOption], Text) -> SqlMigration
         mkMig mndest mdest = SqlMigration {
-            nonDestructiveSql = fromMaybe "" (snd <$> mndest)
+            migrationName = name
+            , nonDestructiveSql = nothingIfWhiteSpace $ fromMaybe "" (snd <$> mndest)
             , nonDestructiveForce = fromMaybe False (isForce . fst <$> mndest)
             , nonDestructiveInTxn = fromMaybe True (inTxn . fst <$> mndest)
-            , destructiveSql = fromMaybe "" (snd <$> mdest)
+            , destructiveSql = nothingIfWhiteSpace $ fromMaybe "" (snd <$> mdest)
             , destructiveInTxn = fromMaybe True (inTxn . fst <$> mdest)
         }
 

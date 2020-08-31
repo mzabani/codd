@@ -1,6 +1,6 @@
 module TypesGen where
 
-import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), ObjHash(..), ObjName(..), objName)
+import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), ObjHash(..), ObjName(..), objName)
 import Data.Function (on)
 import Data.List (nubBy)
 import qualified Data.Text as Text
@@ -14,9 +14,9 @@ instance Arbitrary DbHashesGen where
             schemaHashGen = SchemaHash <$> genObjName <*> genObjHash <*> uniqueListOf 100 schemaObjGen objName
             schemaObjGen =
                 oneof [
-                    TableHash <$> genObjName <*> genObjHash <*> uniqueListOf 20 colGen fst
+                    TableHash <$> genObjName <*> genObjHash <*> uniqueListOf 20 colGen objName
                 ]
-            colGen = (,) <$> genObjName <*> genObjHash
+            colGen = TableColumn <$> genObjName <*> genObjHash
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy = nubBy ((==) `on` uniqBy) <$> resize size (listOf gen)

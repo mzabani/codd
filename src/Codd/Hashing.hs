@@ -1,4 +1,4 @@
-module Codd.Hashing (getDbHashes, persistHashesToDisk, readHashesFromDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), ObjHash(..), ObjName(..), objName) where
+module Codd.Hashing (getDbHashes, persistHashesToDisk, readHashesFromDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), ObjHash(..), ObjName(..), IsDbObject(..), DbObject(..)) where
 
 import Prelude hiding (writeFile, readFile)
 import Control.Monad (forM, forM_, when, unless, (<=<))
@@ -48,14 +48,27 @@ queryObjNamesAndHashes conn objNameCol hashCols table filterBy = liftIO $ withQu
 data DbHashes = DbHashes [SchemaHash] deriving stock Show
 data SchemaHash = SchemaHash ObjName ObjHash [SchemaObjectHash] deriving stock Show
 -- TODO: VIEWs, Functions, sequences, collations, triggers, FKs, constraints, row level security policies... What else?
-data SchemaObjectHash = TableHash ObjName ObjHash [(ObjName, ObjHash)] deriving stock Show
+data SchemaObjectHash = TableHash ObjName ObjHash [TableColumn] deriving stock Show
+data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 
 class IsDbObject a where
     objName :: a -> ObjName
-instance IsDbObject SchemaObjectHash where
-    objName (TableHash n _ _) = n
+    childrenObjs :: a -> [DbObject]
 instance IsDbObject SchemaHash where
     objName (SchemaHash n _ _) = n
+    childrenObjs (SchemaHash _ _ cs) = map DbObject cs
+instance IsDbObject SchemaObjectHash where
+    objName (TableHash n _ _) = n
+    childrenObjs (TableHash _ _ cs) = map DbObject cs
+instance IsDbObject TableColumn where
+    objName (TableColumn n _) = n
+    childrenObjs (TableColumn _ _) = []
+
+-- | This existential type helps us recurse over the DB's hierarchy
+data DbObject = forall a. IsDbObject a => DbObject a
+instance IsDbObject DbObject where
+    objName (DbObject obj) = objName obj
+    childrenObjs (DbObject obj) = childrenObjs obj
 
 -- Filesystem collation, haskell collation and DB collation for ordering are things we just cannot risk
 -- considering are the same, so our Eq instances do sorting by object name in Haskell, always.
@@ -65,7 +78,7 @@ instance Eq DbHashes where
 instance Eq SchemaHash where
     SchemaHash n1 h1 objs1 == SchemaHash n2 h2 objs2 = n1 == n2 && h1 == h2 && sortOn objName objs1 == sortOn objName objs2
 instance Eq SchemaObjectHash where
-    TableHash n1 h1 cols1 == TableHash n2 h2 cols2 = n1 == n2 && h1 == h2 && sortOn fst cols1 == sortOn fst cols2
+    TableHash n1 h1 cols1 == TableHash n2 h2 cols2 = n1 == n2 && h1 == h2 && sortOn objName cols1 == sortOn objName cols2
 
 newtype ObjHash = ObjHash { unObjHash :: Text }
     deriving stock (Eq, Ord, Show)
@@ -81,10 +94,10 @@ toFiles (DbHashes schemas) = concatMap schemaToFiles schemas
         schemaToFiles (SchemaHash schemaName schemaHash objs) = map (prepend (mkPathFrag schemaName)) $ ("objhash", schemaHash) : concatMap objToFiles objs
         objToFiles = \case
             TableHash tableName tableHash cols -> map (prepend ("tables" </> mkPathFrag tableName)) $ ("objhash", tableHash) : map colToFiles cols
-        colToFiles (colName, colHash) = (mkPathFrag colName, colHash)
+        colToFiles (TableColumn colName colHash) = (mkPathFrag colName, colHash)
 
-getDbHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.ConnectInfo -> m DbHashes
-getDbHashes connStr = connectAndDispose connStr $ \conn -> do
+getDbHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> m DbHashes
+getDbHashes conn = do
     -- TODO: Ignore Pg's schemas!
     schemas :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "schema_name" ["schema_owner", "default_character_set_catalog", "default_character_set_schema", "default_character_set_name" ] "information_schema.schemata" Nothing
     DbHashes <$> getSchemaHash conn schemas
@@ -99,7 +112,7 @@ getSchemaHash conn schemas = forM schemas $ \(schemaName, schemaHash) -> do
 getTablesHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> ObjName -> [(ObjName, ObjHash)] -> m [SchemaObjectHash]
 getTablesHashes conn schemaName tables = forM tables $ \(tableName, tableHash) -> do
     columns :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "column_name" ["table_schema", "table_name", "column_default", "is_nullable", "data_type", "character_maximum_length", "character_octet_length", "numeric_precision", "numeric_precision_radix", "numeric_scale", "datetime_precision", "interval_type", "interval_precision", "collation_name", "is_identity", "identity_generation", "identity_start", "identity_increment", "identity_maximum", "identity_minimum", "identity_cycle", "is_generated", "generation_expression", "is_updatable"] "information_schema.columns" (Just $ QueryFrag "table_schema=? AND table_name=?" (schemaName, tableName))
-    pure $ TableHash tableName tableHash columns
+    pure $ TableHash tableName tableHash $ map (uncurry TableColumn) columns
 
 -- | TODO: Make sure valid DB characters are replaced by valid on-disk characters when necessary
 mkPathFrag :: ObjName -> FilePath
@@ -135,7 +148,7 @@ readHashesFromDisk dir = do
                     "tables" ->
                         forM objFolders $ \tableFolder -> readObjWithObjHashFile (dir </> schemaFolder </> folderInSchema </> tableFolder) TableHash $ \colNames -> forM colNames $ \colName -> do
                             colHash <- liftIO $ readFile (dir </> schemaFolder </> folderInSchema </> tableFolder </> colName)
-                            pure (fromPathFrag colName, ObjHash colHash)
+                            pure $ TableColumn (fromPathFrag colName) (ObjHash colHash)
 
                     _ -> throwError "Invalid folder under schemas"
 
