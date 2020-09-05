@@ -2,25 +2,18 @@ module Codd (DbVcsInfo(..), applyMigrations, withDbAndDrop) where
 
 import Prelude hiding (readFile)
 import Codd.Internal (connectAndDispose, applyMigrationsInternal, dbIdentifier, beginCommitTxnBracket, mainAppApplyMigsBlock)
-import Codd.Parsing (parseSqlMigration)
 import Codd.Types (DbVcsInfo(..), ApplyMigrations)
-import Control.Monad (void, when, forM, forM_)
+import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.IO.Unlift (MonadUnliftIO)
-import Data.ByteString (readFile)
-import Data.String (fromString)
 import qualified Database.PostgreSQL.Simple as DB
-import UnliftIO.Concurrent (threadDelay)
-import UnliftIO.Directory (listDirectory)
-import UnliftIO.Exception (bracket, catchAny, throwIO, tryAny)
-
-import qualified Data.List as List
+import UnliftIO.Exception (bracket)
 
 
 -- | Creates the new Database if necessary, applies every single migration and returns a Connection String
 --   that allows the Application User to connect (not the superuser).
 applyMigrations :: (MonadUnliftIO m, MonadIO m) => DbVcsInfo -> ApplyMigrations -> m DB.ConnectInfo
-applyMigrations dbInfo@(DbVcsInfo { superUserConnString, dbName, appUser, sqlMigrations }) applyType = do
+applyMigrations dbInfo@(DbVcsInfo { superUserConnString, dbName, appUser }) applyType = do
     applyMigrationsInternal beginCommitTxnBracket mainAppApplyMigsBlock dbInfo applyType
     return superUserConnString { DB.connectDatabase = dbName, DB.connectUser = appUser }
 

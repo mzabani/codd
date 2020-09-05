@@ -15,16 +15,13 @@ spec = do
             property $ \(DbHashesGen dbHashes) -> do
                 persistHashesToDisk dbHashes "/dev/shm/inverse-test-sql-folder"
                 readDbHashes <- readHashesFromDisk "/dev/shm/inverse-test-sql-folder"
-                case readDbHashes of
-                    Left err -> error $ unpack err
-                    Right x ->
-                        when (x /= dbHashes) $ do
-                            putStrLn "Hashes differ!"
-                            putStrLn "Randomly generated hashes (expected):"
-                            print dbHashes
-                            putStrLn "Hashes read from disk"
-                            print x
-                            error "Failed!"
+                when (readDbHashes /= dbHashes) $ do
+                    putStrLn "Hashes differ!"
+                    putStrLn "Randomly generated hashes (expected):"
+                    print dbHashes
+                    putStrLn "Hashes read from disk"
+                    print readDbHashes
+                    error "Failed!"
         modifyMaxSuccess (const 1) $
             it "persistHashesToDisk works even when temporary folder and final folder are in separate filesystems" $ do
                 -- We don't know where the temporary folder will be, but it'll either be in /dev/shm or it won't,

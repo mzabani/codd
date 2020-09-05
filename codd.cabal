@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 84ff8fe783fa49c294af981357c1581d801a0b4b53d9a65d9062a1daeb5177d4
+-- hash: dbeb93f0664e132b19b27e7c69d5ff87b6d0ff5cdaf817ba35a47924781bdb7e
 
 name:           codd
 version:        0.1.0.0
@@ -30,14 +30,19 @@ library
       Codd
       Codd.Analysis
       Codd.Hashing
+      Codd.Hashing.Database
+      Codd.Hashing.Disk
+      Codd.Hashing.Types
       Codd.Internal
       Codd.Parsing
+      Codd.Query
       Codd.Types
   other-modules:
       Paths_codd
   hs-source-dirs:
       src
   default-extensions: DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
+  ghc-options: -Wall
   build-depends:
       attoparsec
     , base >=4.7 && <5
@@ -58,7 +63,7 @@ executable codd-exe
   hs-source-dirs:
       app
   default-extensions: DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings RankNTypes RecordWildCards ScopedTypeVariables TupleSections TypeApplications ViewPatterns
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:
       base >=4.7 && <5
     , bytestring
@@ -78,6 +83,7 @@ test-suite codd-test
   other-modules:
       AllSpecs
       AnalysisSpec
+      ApplicationSpec
       GeneralSpec
       ParsingSpec
       TypesGen

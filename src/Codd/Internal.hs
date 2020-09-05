@@ -3,23 +3,22 @@ module Codd.Internal where
 import Prelude hiding (readFile)
 
 import Codd.Parsing (parseSqlMigration)
+import Codd.Query (execvoid_, query)
 import Codd.Types (DbVcsInfo(..), ApplyMigrations(..), SqlMigration(..))
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
-import qualified Data.Char as Char
 import qualified Data.List as List
 import Data.List (sortOn)
 import Data.String (fromString)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import qualified Data.Text as Text
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
 import System.FilePath ((</>))
 import UnliftIO (MonadUnliftIO, toIO)
 import UnliftIO.Concurrent (threadDelay)
 import UnliftIO.Directory (listDirectory)
-import UnliftIO.Exception (bracket, bracket_, catchAny, throwIO, tryAny, finally)
+import UnliftIO.Exception (bracket, catchAny, throwIO, tryAny, finally)
 
 dbIdentifier :: String -> DB.Query
 dbIdentifier s = "\"" <> fromString s <> "\""
@@ -132,9 +131,3 @@ applySingleMigration conn applyType sqlMig = do
                 liftIO $ void $ DB.execute conn "UPDATE sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
                 -- TODO: Assert 1 row was updated
     liftIO $ putStrLn " [ OK ]"
-
-execvoid_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
-execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
-
-query :: (MonadIO m, DB.ToRow a, DB.FromRow b) => DB.Connection -> DB.Query -> a -> m [b]
-query conn q r = liftIO $ DB.query conn q r

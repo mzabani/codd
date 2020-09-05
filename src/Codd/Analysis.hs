@@ -2,8 +2,9 @@ module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), Destru
 
 -- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
-import Codd.Hashing (DbHashes(..), SchemaHash(..), SchemaObjectHash(..), ObjHash(..), ObjName(..), IsDbObject(..), DbObject(..), getDbHashes)
+import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), getDbHashes, childrenObjs)
 import Codd.Internal
+import Codd.Query (unsafeQuery1)
 import Codd.Types (SqlMigration(..), ApplyMigrations(..), DbVcsInfo)
 import Data.List (sortOn)
 import qualified Database.PostgreSQL.Simple as DB
@@ -33,11 +34,9 @@ checkMigration dbInfo mig =
     where
         applyMigs :: DB.Connection -> ApplyMigrations -> [SqlMigration] -> m MigrationCheck
         applyMigs conn applyType allMigs = baseApplyMigsBlock runLast conn applyType allMigs
-        
-        unsafeHead (x:_) = x
 
         getTxId :: DB.Connection -> m Int64
-        getTxId conn = liftIO $ fmap (DB.fromOnly . unsafeHead) $ DB.query conn "SELECT txid_current()" ()
+        getTxId conn = fmap DB.fromOnly $ unsafeQuery1 conn "SELECT txid_current()" ()
         
         runLast conn = do
             hbef <- getDbHashes conn

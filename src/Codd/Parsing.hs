@@ -1,10 +1,9 @@
 module Codd.Parsing (parseSqlMigration, nothingIfWhiteSpace) where
 
-import Prelude hiding (takeWhile)
-
 import Codd.Types (SqlMigration(..))
 import Control.Applicative ((<|>))
-import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, skipSpace, skipWhile, string, sepBy, takeText, takeWhile)
+import Control.Monad (void)
+import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, skipSpace, skipWhile, string, sepBy, takeText)
 import Data.Bifunctor (bimap)
 import qualified Data.Char as Char
 import Data.List (sort)
@@ -32,9 +31,9 @@ skipJustSpace = skipWhile (== ' ')
 
 coddComment :: Parser ()
 coddComment = do
-    string "--"
+    void $ string "--"
     skipJustSpace
-    string "codd:"
+    void $ string "codd:"
     skipJustSpace
     
 migrationParser :: Parser ([SectionOption], Text, Maybe ([SectionOption], Text))

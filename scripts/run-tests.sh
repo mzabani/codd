@@ -4,3 +4,4 @@
 cabal run -O0 codd-test -- --match "/General tests/"
 
 # Postgres-version dependent tests for each possible version next
+cabal run -O0 codd-test -- --skip "/General tests/"
