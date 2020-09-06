@@ -16,6 +16,8 @@ instance Arbitrary DbHashesGen where
                 oneof [
                     TableHash <$> genObjName <*> genObjHash <*> uniqueListOf 20 colGen objName <*> uniqueListOf 5 constraintGen objName
                     , ViewHash <$> genObjName <*> genObjHash
+                    , RoutineHash <$> genObjName <*> genObjHash
+                    , SequenceHash <$> genObjName <*> genObjHash
                 ]
             colGen = TableColumn <$> genObjName <*> genObjHash
             constraintGen = TableConstraint <$> genObjName <*> genObjHash

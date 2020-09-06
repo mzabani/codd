@@ -16,14 +16,20 @@ import UnliftIO.Directory (getTemporaryDirectory, createDirectory, removeDirecto
 -- TODO: A single tree-like structure that can be used both to read from disk and write to disk
 readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaHash
 readSchemaHash dir = SchemaHash (readObjName dir)
-                            <$> readObjHash dir
-                            <*> ((++) <$> readMultiple (dir </> "tables") readTable <*> readMultiple (dir </> "views") readView)
-readTable, readView :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaObjectHash
+                            <$> readFileAsHash (dir </> "objhash")
+                            <*> concatReaders [ readMultiple (dir </> "tables") readTable
+                                              , readMultiple (dir </> "views") readView
+                                              , readMultiple (dir </> "routines") readRoutine
+                                              , readMultiple (dir </> "sequences") readSequence ]
+
+readTable, readView, readRoutine, readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaObjectHash
 readTable dir = TableHash (readObjName dir)
-                        <$> readObjHash dir
+                        <$> readFileAsHash (dir </> "objhash")
                         <*> readMultiple (dir </> "cols") readTableColumn
                         <*> readMultiple (dir </> "constraints") readTableConstraint
-readView dir = ViewHash (readObjName dir) <$> readObjHash dir
+readView = simpleObjHashFileRead ViewHash
+readRoutine = simpleObjHashFileRead RoutineHash
+readSequence = simpleObjHashFileRead SequenceHash
 
 readTableColumn :: (MonadError Text m, MonadIO m) => FilePath -> m TableColumn
 readTableColumn = simpleObjHashFileRead TableColumn
@@ -38,8 +44,6 @@ readFileAsHash filepath = do
     unless exists $ throwError $ "File " <> pack filepath <> " was expected but does not exist"
     liftIO $ ObjHash <$> readFile filepath
 
-readObjHash :: (MonadError Text m, MonadIO m) => FilePath -> m ObjHash
-readObjHash dir = readFileAsHash (dir </> "objhash")
 simpleObjHashFileRead :: (MonadError Text m, MonadIO m) => (ObjName -> ObjHash -> a) -> FilePath -> m a
 simpleObjHashFileRead f filepath = f (readObjName filepath) <$> readFileAsHash filepath
 readMultiple :: (MonadError Text m, MonadIO m) => FilePath -> (FilePath -> m a) -> m [a]
@@ -49,6 +53,11 @@ readMultiple dir f = do
         folders <- filter (/= "objhash") <$> listDirectory dir
         traverse f $ map (dir </>) folders
     else pure []
+
+concatReaders :: (MonadError Text m, MonadIO m) => [m [a]] -> m [a]
+concatReaders readers = do
+    r <- sequenceA readers
+    return $ mconcat r
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
 toFiles (DbHashes schemas) = concatMap objToFiles (map DbObject schemas)

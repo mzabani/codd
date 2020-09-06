@@ -9,8 +9,8 @@ import System.FilePath ((</>))
 
 data DbHashes = DbHashes [SchemaHash] deriving stock Show
 data SchemaHash = SchemaHash ObjName ObjHash [SchemaObjectHash] deriving stock Show
--- TODO: Functions, orphaned sequences, collations, triggers, FKs, constraints, row level security policies... What else?
-data SchemaObjectHash = TableHash ObjName ObjHash [TableColumn] [TableConstraint] | ViewHash ObjName ObjHash deriving stock Show
+-- TODO: Functions, orphaned sequences, collations, triggers, row level security policies... What else?
+data SchemaObjectHash = TableHash ObjName ObjHash [TableColumn] [TableConstraint] | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock Show
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)
 
@@ -31,18 +31,26 @@ instance IsDbObject SchemaObjectHash where
         \case
             TableHash n _ _ _ -> n
             ViewHash n _ -> n
+            RoutineHash n _ -> n
+            SequenceHash n _ -> n
     objHash =
         \case
             TableHash _ h _ _ -> h
             ViewHash _ h -> h
+            RoutineHash _ h -> h
+            SequenceHash _ h -> h
     hashFileRelativeToParent =
         \case
             TableHash n _ _ _ -> "tables" </> mkPathFrag n </> "objhash"
-            ViewHash n _ -> "views" </> mkPathFrag n </> "objhash"
+            ViewHash n _ -> "views" </> mkPathFrag n
+            RoutineHash n _ -> "routines" </> mkPathFrag n
+            SequenceHash n _ -> "sequences" </> mkPathFrag n
     childrenObjs =
         \case
             TableHash _ _ cols cks -> map DbObject cols ++ map DbObject cks
             ViewHash _ _ -> []
+            RoutineHash _ _ -> []
+            SequenceHash {} -> []
 
 instance IsDbObject TableColumn where
     objName (TableColumn n _) = n
@@ -77,10 +85,13 @@ fromPathFrag fp = ObjName $ Text.pack fp
 instance Eq DbHashes where
     DbHashes schemas1 == DbHashes schemas2 = sortOn objName schemas1 == sortOn objName schemas2
 instance Eq SchemaHash where
+    -- TODO: Objects of different types with the same name!! Is that possible??
     SchemaHash n1 h1 objs1 == SchemaHash n2 h2 objs2 = n1 == n2 && h1 == h2 && sortOn objName objs1 == sortOn objName objs2
 instance Eq SchemaObjectHash where
     TableHash n1 h1 cols1 cks1 == TableHash n2 h2 cols2 cks2 = n1 == n2 && h1 == h2 && sortOn objName cols1 == sortOn objName cols2 && sortOn objName cks1 == sortOn objName cks2
     ViewHash n1 h1 == ViewHash n2 h2 = n1 == n2 && h1 == h2
+    RoutineHash n1 h1 == RoutineHash n2 h2 = n1 == n2 && h1 == h2
+    SequenceHash n1 h1 == SequenceHash n2 h2 = n1 == n2 && h1 == h2
     _ == _ = False
 
 newtype ObjHash = ObjHash { unObjHash :: Text }
