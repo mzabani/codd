@@ -1,8 +1,8 @@
 module ParsingSpec where
 
-import Codd.Parsing (parseSqlMigration, nothingIfWhiteSpace)
+import Codd.Parsing (parseSqlMigration, nothingIfEmptyQuery)
 import Codd.Types (SqlMigration(..))
-import Control.Monad (when)
+import Control.Monad (when, forM_)
 import qualified Data.Char as Char
 import Data.Either (isLeft)
 import qualified Data.Text as Text
@@ -41,10 +41,10 @@ spec = do
                     in
                         parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
                             migrationName = "any-name.sql"
-                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
+                            , nonDestructiveSql = nothingIfEmptyQuery nonDestSql
                             , nonDestructiveForce = False
                             , nonDestructiveInTxn = True
-                            , destructiveSql = nothingIfWhiteSpace destSql
+                            , destructiveSql = nothingIfEmptyQuery destSql
                             , destructiveInTxn = True
                         }
             it "Sql Migration with one section, missing optional options" $ do
@@ -56,10 +56,10 @@ spec = do
                     in
                         parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
                             migrationName = "any-name.sql"
-                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
+                            , nonDestructiveSql = nothingIfEmptyQuery nonDestSql
                             , nonDestructiveForce = False
                             , nonDestructiveInTxn = True
-                            , destructiveSql = nothingIfWhiteSpace destSql
+                            , destructiveSql = nothingIfEmptyQuery destSql
                             , destructiveInTxn = True
                         }
             it "Sql Migration options parsed correctly" $
@@ -73,10 +73,10 @@ spec = do
                 in
                     parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
                             migrationName = "any-name.sql"
-                            , nonDestructiveSql = nothingIfWhiteSpace nonDestSql
+                            , nonDestructiveSql = nothingIfEmptyQuery nonDestSql
                             , nonDestructiveForce = True
                             , nonDestructiveInTxn = True
-                            , destructiveSql = nothingIfWhiteSpace destSql
+                            , destructiveSql = nothingIfEmptyQuery destSql
                             , destructiveInTxn = False
                         }
         
@@ -135,3 +135,32 @@ spec = do
             it "Can't BEGIN, COMMIT or ROLLBACK Transactions inside SQL migrations" $ pendingWith "Testing this by selecting txid_current() might be more effective"
 
             it "SAVEPOINTs need to be released or rolled back inside SQL migrations" $ pendingWith "Testing this by selecting txid_current() might be more effective"
+
+        context "Other important behaviours to test" $ do
+            it "Empty queries detector works well" $ do
+                let
+                    emptyQueries = [
+                        ""
+                        , "           "
+                        , "      --Some comment           "
+                        , "    /* Just comment */ \n"
+                        , "      --Some comment    \n-- Some other comment       "
+                        , "      --Some comment    \n-- Some other comment\n\n\n       "
+                        , "    /* Just comment */ \n -- Other comment \n\n\n\n"
+                        , "    /* Just comment */ \n -- Other comment \n\n\n\n"
+                        ]
+                    nonEmptyQueries = [
+                        "      --Some comment    \n-- Some other comment\n\n\n Some SQL Command      "
+                        , "      --Some comment    \n-- Some other comment\n\n\n - - This is not a valid comment and should be considered SQL"
+                        , "\n\n--Some comment    \n-- Some other comment\n\n\n -- Other comment\n\n\n SQL command"
+                        , "SOME SQL COMMAND      --Some comment    \n-- Some other comment\n\n\n - - This is not a valid comment and should be considered SQL"
+                        , "Regular sql COMMANDS -- this is not a comment"
+                        , "Regular sql COMMANDS \n-- this is a comment\n"
+                        , "Regular sql /* With comment */ COMMANDS"
+                        , "/* With comment */ SQL COMMANDS"
+                        , "/* With comment */\n\nSQL COMMANDS\n-- Comment"
+                        ]
+                forM_ emptyQueries $ \q ->
+                    (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
+                forM_ nonEmptyQueries $ \q ->
+                    nothingIfEmptyQuery q `shouldBe` Just q

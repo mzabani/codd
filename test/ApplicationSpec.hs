@@ -9,18 +9,10 @@ import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
 import Test.Hspec
 
-placeHoldersMig, emptyQueryMig :: SqlMigration
+placeHoldersMig :: SqlMigration
 placeHoldersMig = SqlMigration {
                     migrationName = "0000-placeholders.sql"
                     , nonDestructiveSql = Just "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
-                    , nonDestructiveForce = False
-                    , nonDestructiveInTxn = True
-                    , destructiveSql = Nothing
-                    , destructiveInTxn = True
-                }
-emptyQueryMig = SqlMigration {
-                    migrationName = "0001-no-sql-commands.sql"
-                    , nonDestructiveSql = Just "-- Comments only, no SQL commands"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -41,9 +33,6 @@ spec = do
             sqlMigrations = Right migs
         }
     describe "Application tests" $ do
-        it "No queries at all are not a problem" $ do
-            withDbAndDrop (emptyTestDbInfo { sqlMigrations = Right [ emptyQueryMig ] }) OnlyNonDestructive (const $ return True)
-                `shouldReturn` True
         it "SQL containing characters typical to placeholders is not a problem" $ do
             withDbAndDrop (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) OnlyNonDestructive (const $ return True)
                 `shouldReturn` True

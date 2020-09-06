@@ -1,9 +1,9 @@
-module Codd.Parsing (parseSqlMigration, nothingIfWhiteSpace) where
+module Codd.Parsing (parseSqlMigration, nothingIfEmptyQuery) where
 
 import Codd.Types (SqlMigration(..))
 import Control.Applicative ((<|>))
-import Control.Monad (void)
-import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, skipSpace, skipWhile, string, sepBy, takeText)
+import Control.Monad (void, guard)
+import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, takeText)
 import Data.Bifunctor (bimap)
 import qualified Data.Char as Char
 import Data.List (sort)
@@ -55,11 +55,51 @@ migrationParser = do
             -- TODO: Ideally, a third "-- codd:" would fail parsing
     
     where
-        fullLine = Text.pack <$> manyTill anyChar (endOfLine <|> endOfInput)
         everythingUpToCodd = Text.concat <$> manyTill fullLine (endOfInput <|> coddComment)
 
-nothingIfWhiteSpace :: Text -> Maybe Text
-nothingIfWhiteSpace t = if Text.all Char.isSpace t then Nothing else Just t
+fullLine :: Parser Text
+fullLine = Text.pack <$> manyTill anyChar (endOfLine <|> endOfInput)
+
+takeCommentsUnit :: Parser ()
+takeCommentsUnit = skipComment1 <|> skipComment2
+    where
+        skipComment1 = () <$ (string "--" >> manyTill anyChar (endOfInput <|> endOfLine))
+        skipComment2 = () <$ (string "/*" >> manyTill anyChar (string "*/"))
+
+skipBlanksAndCommentsNoFail :: Parser ()
+skipBlanksAndCommentsNoFail = skipMany (takeSpaceUnit <|> takeCommentsUnit)
+    where
+        takeSpaceUnit = do
+            c <- peekChar
+            guard $ maybe False Char.isSpace c
+            skipSpace
+
+
+-- skipBlanksAndComments :: Parser ()
+-- skipBlanksAndComments = do
+--     -- TODO: Does skipSpace fail on endOfInput? If not, this code can be simplified
+--     done <- atEnd
+--     case done of
+--         True -> pure ()
+--         False -> do
+--             skipSpace
+--             startsComment <- (True <$ string "--") <|> pure False
+--             case startsComment of
+--                 False -> pure ()
+--                 True -> do
+--                     void $ manyTill anyChar (endOfInput <|> endOfLine)
+--                     skipBlanksAndComments
+
+-- | Given some SQL, returns a Nothing if it doesn't contain any SQL Commands. Useful
+--   because you can't run SQL that does not contain any commands.
+nothingIfEmptyQuery :: Text -> Maybe Text
+nothingIfEmptyQuery t
+    | Text.all Char.isSpace t = Nothing
+    | parseOnly notJustBlanksAndCommentsParser t /= Right True = Nothing
+    | otherwise = Just t
+    where notJustBlanksAndCommentsParser :: Parser Bool
+          notJustBlanksAndCommentsParser = skipBlanksAndCommentsNoFail >> not <$> atEnd
+
 
 parseSqlMigration :: FilePath -> Text -> Either Text SqlMigration
 parseSqlMigration name t = bimap Text.pack id migE >>= toMig
@@ -83,10 +123,10 @@ parseSqlMigration name t = bimap Text.pack id migE >>= toMig
         mkMig :: Maybe ([SectionOption], Text) -> Maybe ([SectionOption], Text) -> SqlMigration
         mkMig mndest mdest = SqlMigration {
             migrationName = name
-            , nonDestructiveSql = nothingIfWhiteSpace $ fromMaybe "" (snd <$> mndest)
+            , nonDestructiveSql = nothingIfEmptyQuery $ fromMaybe "" (snd <$> mndest)
             , nonDestructiveForce = fromMaybe False (isForce . fst <$> mndest)
             , nonDestructiveInTxn = fromMaybe True (inTxn . fst <$> mndest)
-            , destructiveSql = nothingIfWhiteSpace $ fromMaybe "" (snd <$> mdest)
+            , destructiveSql = nothingIfEmptyQuery $ fromMaybe "" (snd <$> mdest)
             , destructiveInTxn = fromMaybe True (inTxn . fst <$> mdest)
         }
 

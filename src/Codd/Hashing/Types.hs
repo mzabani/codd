@@ -10,7 +10,7 @@ import System.FilePath ((</>))
 
 data DbHashes = DbHashes (Map ObjName SchemaHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
--- TODO: schema search path, collations, triggers, row level security policies... What else?
+-- TODO: schema search path, collations, triggers, row level security policies, permissions per table, per column... What else?
 data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)
