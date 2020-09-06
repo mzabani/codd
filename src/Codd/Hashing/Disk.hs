@@ -6,6 +6,8 @@ import Codd.Hashing.Types
 import Control.Monad (forM_, when, unless)
 import Control.Monad.Except (MonadError(..), runExceptT)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Text (Text, pack, unpack)
 import Data.Text.IO (writeFile, readFile)
 import GHC.Stack (HasCallStack)
@@ -46,21 +48,22 @@ readFileAsHash filepath = do
 
 simpleObjHashFileRead :: (MonadError Text m, MonadIO m) => (ObjName -> ObjHash -> a) -> FilePath -> m a
 simpleObjHashFileRead f filepath = f (readObjName filepath) <$> readFileAsHash filepath
-readMultiple :: (MonadError Text m, MonadIO m) => FilePath -> (FilePath -> m a) -> m [a]
+readMultiple :: (MonadError Text m, MonadIO m, IsDbObject o) => FilePath -> (FilePath -> m o) -> m (Map ObjName o)
 readMultiple dir f = do
     dirExists <- doesDirectoryExist dir
     if dirExists then do
         folders <- filter (/= "objhash") <$> listDirectory dir
-        traverse f $ map (dir </>) folders
-    else pure []
+        objList <- traverse f $ map (dir </>) folders
+        return $ listToMap objList
+    else pure Map.empty
 
-concatReaders :: (MonadError Text m, MonadIO m) => [m [a]] -> m [a]
-concatReaders readers = do
-    r <- sequenceA readers
-    return $ mconcat r
+concatReaders :: (MonadError Text m, MonadIO m, Monoid s) => [m s] -> m s
+concatReaders readers = mconcat <$> sequenceA readers -- do
+    -- objList <- mconcat <$> sequenceA readers
+    -- return $ Map.fromList $ map (\obj -> (objName obj, obj)) objList
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
-toFiles (DbHashes schemas) = concatMap objToFiles (map DbObject schemas)
+toFiles (DbHashes (Map.elems -> schemas)) = concatMap objToFiles (map DbObject schemas)
     where
         objToFiles :: DbObject -> [(FilePath, ObjHash)]
         objToFiles obj =
@@ -94,7 +97,7 @@ readHashesFromDisk dir = do
     schemaHashesE <- runExceptT $ traverse readSchemaHash schemaFolders
     case schemaHashesE of
         Left err -> throwIO $ userError $ "An error happened when reading hashes from disk: " <> unpack err
-        Right schemaHashes -> return $ DbHashes schemaHashes
+        Right schemaHashes -> return $ DbHashes $ Map.fromList $ map (\s -> (objName s,s)) schemaHashes
 
 -- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
 copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()

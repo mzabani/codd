@@ -29,6 +29,7 @@ dependencies:
 - text
 - unliftio
 - unliftio-core
+- containers
 
 default-extensions:
   - DerivingStrategies

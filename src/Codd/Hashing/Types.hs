@@ -1,16 +1,17 @@
 module Codd.Hashing.Types where
 
-import Data.List (sortOn)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple.FromField (FromField)
 import Database.PostgreSQL.Simple.ToField (ToField)
 import System.FilePath ((</>))
 
-data DbHashes = DbHashes [SchemaHash] deriving stock Show
-data SchemaHash = SchemaHash ObjName ObjHash [SchemaObjectHash] deriving stock Show
--- TODO: Functions, orphaned sequences, collations, triggers, row level security policies... What else?
-data SchemaObjectHash = TableHash ObjName ObjHash [TableColumn] [TableConstraint] | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock Show
+data DbHashes = DbHashes (Map ObjName SchemaHash) deriving stock (Show, Eq)
+data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
+-- TODO: schema search path, collations, triggers, row level security policies... What else?
+data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)
 
@@ -24,7 +25,7 @@ instance IsDbObject SchemaHash where
     objName (SchemaHash n _ _) = n
     objHash (SchemaHash _ h _) = h
     hashFileRelativeToParent (SchemaHash n _ _ ) = mkPathFrag n </> "objhash"
-    childrenObjs (SchemaHash _ _ cs) = map DbObject cs
+    childrenObjs (SchemaHash _ _ cs) = map DbObject $ Map.elems cs
 
 instance IsDbObject SchemaObjectHash where
     objName =
@@ -47,7 +48,7 @@ instance IsDbObject SchemaObjectHash where
             SequenceHash n _ -> "sequences" </> mkPathFrag n
     childrenObjs =
         \case
-            TableHash _ _ cols cks -> map DbObject cols ++ map DbObject cks
+            TableHash _ _ cols cks -> map DbObject (Map.elems cols) ++ map DbObject (Map.elems cks)
             ViewHash _ _ -> []
             RoutineHash _ _ -> []
             SequenceHash {} -> []
@@ -79,24 +80,10 @@ mkPathFrag (ObjName n) = Text.unpack n
 fromPathFrag :: FilePath -> ObjName
 fromPathFrag fp = ObjName $ Text.pack fp
 
--- Filesystem collation, haskell collation and DB collation for ordering are things we just cannot risk
--- considering are the same, so our Eq instances do sorting by object name in Haskell, always.
--- TODO: Use Maps instead of lists? They guarantee uniqueness and make sorting a non-problem.. sounds nice
-instance Eq DbHashes where
-    DbHashes schemas1 == DbHashes schemas2 = sortOn objName schemas1 == sortOn objName schemas2
-instance Eq SchemaHash where
-    -- TODO: Objects of different types with the same name!! Is that possible??
-    SchemaHash n1 h1 objs1 == SchemaHash n2 h2 objs2 = n1 == n2 && h1 == h2 && sortOn objName objs1 == sortOn objName objs2
-instance Eq SchemaObjectHash where
-    TableHash n1 h1 cols1 cks1 == TableHash n2 h2 cols2 cks2 = n1 == n2 && h1 == h2 && sortOn objName cols1 == sortOn objName cols2 && sortOn objName cks1 == sortOn objName cks2
-    ViewHash n1 h1 == ViewHash n2 h2 = n1 == n2 && h1 == h2
-    RoutineHash n1 h1 == RoutineHash n2 h2 = n1 == n2 && h1 == h2
-    SequenceHash n1 h1 == SequenceHash n2 h2 = n1 == n2 && h1 == h2
-    _ == _ = False
-
 newtype ObjHash = ObjHash { unObjHash :: Text }
-    deriving stock (Eq, Ord, Show)
-    deriving newtype (FromField)
+    deriving newtype (FromField, Eq, Ord, Show)
 newtype ObjName = ObjName { unObjName :: Text } 
-    deriving stock (Eq, Ord, Show)
-    deriving newtype (FromField, ToField)
+    deriving newtype (FromField, ToField, Eq, Ord, Show)
+
+listToMap :: IsDbObject o => [o] -> Map ObjName o
+listToMap = Map.fromList . map (\obj -> (objName obj, obj))

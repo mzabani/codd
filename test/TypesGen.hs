@@ -3,18 +3,20 @@ module TypesGen where
 import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), TableConstraint(..), ObjHash(..), ObjName(..), objName)
 import Data.Function (on)
 import Data.List (nubBy)
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import qualified Data.Text as Text
 import Test.QuickCheck
 
 newtype DbHashesGen = DbHashesGen { unDbHashesGen :: DbHashes } deriving stock Show
 
 instance Arbitrary DbHashesGen where
-    arbitrary = DbHashesGen . DbHashes <$> uniqueListOf 3 schemaHashGen objName
+    arbitrary = DbHashesGen . DbHashes <$> uniqueMapOf 3 schemaHashGen objName
         where
-            schemaHashGen = SchemaHash <$> genObjName <*> genObjHash <*> uniqueListOf 100 schemaObjGen objName
+            schemaHashGen = SchemaHash <$> genObjName <*> genObjHash <*> uniqueMapOf 100 schemaObjGen objName
             schemaObjGen =
                 oneof [
-                    TableHash <$> genObjName <*> genObjHash <*> uniqueListOf 20 colGen objName <*> uniqueListOf 5 constraintGen objName
+                    TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName
                     , ViewHash <$> genObjName <*> genObjHash
                     , RoutineHash <$> genObjName <*> genObjHash
                     , SequenceHash <$> genObjName <*> genObjHash
@@ -24,6 +26,9 @@ instance Arbitrary DbHashesGen where
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy = nubBy ((==) `on` uniqBy) <$> resize size (listOf gen)
+
+uniqueMapOf :: Ord k => Int -> Gen a -> (a -> k) -> Gen (Map k a)
+uniqueMapOf size gen uniqBy = Map.fromList . map (\v -> (uniqBy v, v)) <$> resize size (listOf gen)
 
 genObjName :: Gen ObjName
 -- TODO: freq > 0 genNasty

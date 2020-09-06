@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: dbeb93f0664e132b19b27e7c69d5ff87b6d0ff5cdaf817ba35a47924781bdb7e
+-- hash: 3c210b46386ee343dd55ef3ffc82c77e77c64eca5c20139ba543a935e6472cc9
 
 name:           codd
 version:        0.1.0.0
@@ -47,6 +47,7 @@ library
       attoparsec
     , base >=4.7 && <5
     , bytestring
+    , containers
     , filepath
     , hspec-core
     , mtl
@@ -68,6 +69,7 @@ executable codd-exe
       base >=4.7 && <5
     , bytestring
     , codd
+    , containers
     , filepath
     , hspec-core
     , mtl
@@ -97,6 +99,7 @@ test-suite codd-test
     , base >=4.7 && <5
     , bytestring
     , codd
+    , containers
     , filepath
     , hspec
     , hspec-core

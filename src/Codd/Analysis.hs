@@ -7,6 +7,7 @@ import Codd.Internal
 import Codd.Query (unsafeQuery1)
 import Codd.Types (SqlMigration(..), ApplyMigrations(..), DbVcsInfo)
 import Data.List (sortOn)
+import qualified Data.Map.Strict as Map
 import qualified Database.PostgreSQL.Simple as DB
 import GHC.Int (Int64)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
@@ -69,7 +70,7 @@ checkMigration dbInfo mig =
 
 -- | TODO: It'd be interesting to show which changes we detected as destructive
 someDestructiveChangeHasBeenApplied :: DbHashes -> DbHashes -> Bool
-someDestructiveChangeHasBeenApplied (DbHashes sbf) (DbHashes saf) = anyDrop (map DbObject sbf) (map DbObject saf)
+someDestructiveChangeHasBeenApplied (DbHashes (Map.elems -> sbf)) (DbHashes (Map.elems -> saf)) = anyDrop (map DbObject sbf) (map DbObject saf)
 
 anyDrop :: [DbObject] -> [DbObject] -> Bool
 anyDrop objs1 objs2 =
