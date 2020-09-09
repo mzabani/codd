@@ -4,6 +4,7 @@ import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Types (DbVcsInfo(..), SqlMigration(..), ApplyMigrations(..))
 import Control.Monad (when)
+import DbUtils (testConnInfo)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
@@ -55,7 +56,7 @@ isDestTxnClosing (MigrationCheck _ destCheck) = destSectionEndsTransaction destC
 spec :: Spec
 spec = do
     let
-        superUserConnString = DB.defaultConnectInfo { connectHost = "localhost", connectUser = "postgres", connectDatabase = "postgres", connectPort = 5432 }
+        superUserConnString = testConnInfo
         emptyTestDbInfo = DbVcsInfo {
             superUserConnString = superUserConnString
             , dbName = "codd-test-db"

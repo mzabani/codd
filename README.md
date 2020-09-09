@@ -1,4 +1,4 @@
-### How to best upgrade your DB's schema in Production?
+# How to best upgrade your DB's schema in Production?
 
 Suppose we want to run SQL migrations when we Blue-Green Deploy our Apps in a way that neither the Old App or the New App can fail. How would we do that?
 
@@ -47,7 +47,7 @@ How about this?
 - However, applying the same set of migrations is no longer idempotent. It's only idempotent from the second run on. This is a bit odd, but let's accept it for now.
 - While we can make CI run tests against a DB State that is the same as the one the new App will use, there's still an interval of time when the old App will run against an untested DB State. This is a much smaller concern now that we know this should be temporary (unless starting the new App fails for non-DB related reasons).
 
-### Setting up CI
+## Setting up CI
 
 **Important**: On CI, you should **ALWAYS**
 
@@ -57,7 +57,7 @@ TODO: Why must we always do these?
 
 **Extra**: On CI, you _might want_, if you want to be very careful, to run your old App's test-suite against the new DB State to test the old App's behaviour while the new one hasn't come up yet. This adds a lot of build time to CI only to test a very short-lasting state during Deploy. Due to that, you can probably only run this for Deployment builds instead of for every build.
 
-### For development
+## For development
 
 Testing our Apps with automated tests on CI is important, but as developers we are also an important part of testing our changes. We run our Apps and use them ourselves during the process of development and before pushing, and we want to make sure we're testing the same DB State that will be running on Production.
 To achieve that, we want to run only the non-destructive sections of our newly added migrations, but want to have the same set of destructive migrations that have run in Production run locally.
@@ -68,9 +68,9 @@ It is not trivial to assure this property, though. A perfect local development a
 
 Because many setups will not include this, we provide ways to run the destructive sections of already-run SQL migrations, so that you can periodically run it (THIS SOUNDS TERRIBLE).
 
-### Problematic SQL migrations
+## Problematic SQL migrations
 
-#### Avoiding too much work by accepting short-lived possible breakage
+### Avoiding too much work by accepting short-lived possible breakage
 
 Suppose we want to apply the following migration:
 ```sql
@@ -100,7 +100,7 @@ Codd considers renaming and dropping columns as destructive actions, so you have
 
 *: Or you can do a two-stage deployment by changing all your queries to select `COALESCE(birthday, birthdate)`, setting both `birthday` and `birthdate` in your insertions and updates and having the `UPDATE employee` query in the destructive section of your migration. More about this strategy in the next section.
 
-#### No-txn SQL migrations 
+### No-txn SQL migrations 
 
 Suppose we want to apply this migration when using Postgres version < 12:
 
@@ -124,7 +124,7 @@ The best way to handle these situations is to do a two-stage deployment: first d
 
 **Important:** Codd runs all pending `no-txn` migrations intertwined with Transaction blocks for consecutive pending `in-txn` migrations. However, because migrations can fail, when using `no-txn` migrations, your old App could be left running with a DB State that's the result of applying a few of the migrations, but not all of them. Splitting migrations into destructive and non-destructive sections alleviates this problem, but it's on you to be _really_ careful about this.
 
-### Anatomy of a SQL migration
+## Anatomy of a SQL migration
 
 Every migration must have the following structure:
 

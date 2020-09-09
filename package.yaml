@@ -66,6 +66,7 @@ executables:
     - -Wall
     dependencies:
     - codd
+    - optparse-applicative
 
 tests:
   codd-test:

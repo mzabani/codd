@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3c210b46386ee343dd55ef3ffc82c77e77c64eca5c20139ba543a935e6472cc9
+-- hash: ed3a9ef5b153aa5a121f89dacb943f01ad848f79d4cc106894583ba12f4dc9bd
 
 name:           codd
 version:        0.1.0.0
@@ -73,6 +73,7 @@ executable codd-exe
     , filepath
     , hspec-core
     , mtl
+    , optparse-applicative
     , postgresql-simple
     , text
     , unliftio
@@ -86,6 +87,7 @@ test-suite codd-test
       AllSpecs
       AnalysisSpec
       ApplicationSpec
+      DbUtils
       GeneralSpec
       ParsingSpec
       TypesGen
