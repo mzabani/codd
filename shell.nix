@@ -1,6 +1,8 @@
 let
     pkgs = import ./nix/nixpkgs.nix;
     hsPkgs = import ./default.nix;
+
+    postgres-init = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_12; inherit pkgs; };
 in
     hsPkgs.shellFor {
         # Include only the *local* packages of your project.
@@ -25,4 +27,11 @@ in
         # Prevents cabal from choosing alternate plans, so that
         # *all* dependencies are provided by Nix.
         exactDeps = true;
+
+        shellHook = ''
+            source scripts/source-env.sh .env
+            ${postgres-init}/bin/init-postgres
+            echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
+            echo If 'psql' fails to connect, check logs at $PGDATA/log/
+        '';
     }

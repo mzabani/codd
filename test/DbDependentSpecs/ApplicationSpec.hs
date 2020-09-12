@@ -1,14 +1,15 @@
-module ApplicationSpec where
+module DbDependentSpecs.ApplicationSpec where
 
-import Codd (withDbAndDrop)
+import Codd (withDbAndDrop, applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Types (DbVcsInfo(..), SqlMigration(..), ApplyMigrations(..))
-import Control.Monad (when)
-import DbUtils (testConnInfo)
+import Control.Monad (when, void)
+import DbUtils (aroundFreshDatabase)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
 import Test.Hspec
+import Test.QuickCheck
 
 placeHoldersMig :: SqlMigration
 placeHoldersMig = SqlMigration {
@@ -22,17 +23,9 @@ placeHoldersMig = SqlMigration {
 
 spec :: Spec
 spec = do
-    let
-        emptyTestDbInfo = DbVcsInfo {
-            superUserConnString = testConnInfo
-            , dbName = "codd-test-db"
-            , appUser = "postgres"
-            , sqlMigrations = Right []
-        }
-        mkDbInfo migs = emptyTestDbInfo {
-            sqlMigrations = Right migs
-        }
-    describe "Application tests" $ do
-        it "SQL containing characters typical to placeholders is not a problem" $ do
-            withDbAndDrop (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) OnlyNonDestructive (const $ return True)
-                `shouldReturn` True
+    describe "DbDependentSpecs" $ do
+        describe "Application tests" $ do
+            aroundFreshDatabase $
+                it "SQL containing characters typical to placeholders does not throw" $
+                    \emptyTestDbInfo -> do
+                        void @IO $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) OnlyNonDestructive

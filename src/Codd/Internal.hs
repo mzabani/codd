@@ -80,7 +80,7 @@ applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbNa
                     ", unique (name))"
                 execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO " <> unsafeAppUser
                 execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO " <> unsafeAppUser
-                execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT EXECUTE ON ROUTINES TO " <> unsafeAppUser
+                execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " <> unsafeAppUser
         
         -- Run all Migrations in a single transaction now
         txnBracket conn $ txnApp conn applyType parsedMigrations

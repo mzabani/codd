@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: ed3a9ef5b153aa5a121f89dacb943f01ad848f79d4cc106894583ba12f4dc9bd
+-- hash: 3b2dc91393285af36067214621e5887f02d3179e622064b685507ee6e165bb12
 
 name:           codd
 version:        0.1.0.0
@@ -29,6 +29,7 @@ library
   exposed-modules:
       Codd
       Codd.Analysis
+      Codd.Environment
       Codd.Hashing
       Codd.Hashing.Database
       Codd.Hashing.Disk
@@ -85,8 +86,8 @@ test-suite codd-test
   main-is: Main.hs
   other-modules:
       AllSpecs
-      AnalysisSpec
-      ApplicationSpec
+      DbDependentSpecs.AnalysisSpec
+      DbDependentSpecs.ApplicationSpec
       DbUtils
       GeneralSpec
       ParsingSpec

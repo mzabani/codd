@@ -24,6 +24,6 @@
             else
                 echo All good, initializing postgres
                 ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
-                ${postgres}/bin/postgres -D $PGDATA &
+                ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
             fi
             ''
