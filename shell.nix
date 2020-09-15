@@ -32,6 +32,7 @@ in
             source scripts/source-env.sh .env
             ${postgres-init}/bin/init-postgres
             echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
+            echo You just might have to run 'cabal run codd-exe -- up' first to create the $PGDATABASE database.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
         '';
     }

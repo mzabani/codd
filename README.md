@@ -92,7 +92,7 @@ But there is still a problem. The old App might insert new rows with NULL `birth
 To make this migration work well, we'd have to set up triggers to set `birthdate` when `birthday` is updated*, but that might just be too much work, and maybe we don't want to go to such lengths only to ensure the old App remains working for a short while. Maybe we're fine with breaking the old App for a very short while and just want to `RENAME COLUMN`. If that's the case, you can force run a migration with a bit more markup:
 
 ```sql
--- codd: force non-destructive
+-- codd: force, non-destructive
 ALTER TABLE employee RENAME COLUMN birthday to birthdate;
 ```
 

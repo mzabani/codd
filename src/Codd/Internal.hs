@@ -11,6 +11,8 @@ import Data.ByteString (ByteString, readFile)
 import qualified Data.List as List
 import Data.List (sortOn)
 import Data.String (fromString)
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
@@ -20,8 +22,8 @@ import UnliftIO.Concurrent (threadDelay)
 import UnliftIO.Directory (listDirectory)
 import UnliftIO.Exception (bracket, catchAny, throwIO, tryAny, finally)
 
-dbIdentifier :: String -> DB.Query
-dbIdentifier s = "\"" <> fromString s <> "\""
+dbIdentifier :: Text -> DB.Query
+dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 
 -- | Tries to connect until a connection succeeds or until a timeout, executes the supplied action and disposes of the opened Connection.
 connectAndDispose :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> (DB.Connection -> m a) -> m a
@@ -66,7 +68,7 @@ applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbNa
             noErrors $ execvoid_ conn $ "CREATE USER " <> unsafeAppUser
             noErrors $ execvoid_ conn $ "GRANT CONNECT ON DATABASE " <> unsafeDbName <> " TO " <> unsafeAppUser
     
-    let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = dbName }
+    let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = Text.unpack dbName }
     ret <- connectAndDispose appDbSuperUserConnString $ \conn -> do
         -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
         --       We should find a better way to do this in the future.

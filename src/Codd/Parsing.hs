@@ -40,8 +40,8 @@ migrationParser :: Parser ([SectionOption], Text, Maybe ([SectionOption], Text))
 migrationParser = do
     -- Any amount of white space, then first codd comment
     skipSpace
-    coddComment
-    opts1 <- optionParser `sepBy` (char ',')
+    coddComment <> fail "The first non-white-space line in your migration must begin with '-- codd:'"
+    opts1 <- optionParser `sepBy` (char ',') <|> fail "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
     endOfLine
     firstSectionSql <- everythingUpToCodd
     singleSection <- atEnd
@@ -74,22 +74,6 @@ skipBlanksAndCommentsNoFail = skipMany (takeSpaceUnit <|> takeCommentsUnit)
             guard $ maybe False Char.isSpace c
             skipSpace
 
-
--- skipBlanksAndComments :: Parser ()
--- skipBlanksAndComments = do
---     -- TODO: Does skipSpace fail on endOfInput? If not, this code can be simplified
---     done <- atEnd
---     case done of
---         True -> pure ()
---         False -> do
---             skipSpace
---             startsComment <- (True <$ string "--") <|> pure False
---             case startsComment of
---                 False -> pure ()
---                 True -> do
---                     void $ manyTill anyChar (endOfInput <|> endOfLine)
---                     skipBlanksAndComments
-
 -- | Given some SQL, returns a Nothing if it doesn't contain any SQL Commands. Useful
 --   because you can't run SQL that does not contain any commands.
 nothingIfEmptyQuery :: Text -> Maybe Text
@@ -101,7 +85,7 @@ nothingIfEmptyQuery t
           notJustBlanksAndCommentsParser = skipBlanksAndCommentsNoFail >> not <$> atEnd
 
 
-parseSqlMigration :: FilePath -> Text -> Either Text SqlMigration
+parseSqlMigration :: String -> Text -> Either Text SqlMigration
 parseSqlMigration name t = bimap Text.pack id migE >>= toMig
     where
         migE = parseOnly (migrationParser <* endOfInput) t

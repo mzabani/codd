@@ -1,8 +1,8 @@
-module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration, someDestructiveChangeHasBeenApplied) where
+module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration, someDestructiveChangeHasBeenApplied, migrationErrors) where
 
 -- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
-import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), getDbHashes, childrenObjs)
+import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), readHashesFromDatabase, childrenObjs)
 import Codd.Internal
 import Codd.Query (unsafeQuery1)
 import Codd.Types (SqlMigration(..), ApplyMigrations(..), DbVcsInfo)
@@ -12,16 +12,23 @@ import qualified Database.PostgreSQL.Simple as DB
 import GHC.Int (Int64)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
 
-data MigrationCheck = MigrationCheck NonDestructiveSectionCheck DestructiveSectionCheck
+data MigrationCheck = MigrationCheck NonDestructiveSectionCheck DestructiveSectionCheck deriving stock Show
 
 data NonDestructiveSectionCheck = NonDestructiveSectionCheck {
     nonDestSectionIsDestructive :: Bool
     , nonDestSectionEndsTransaction :: Bool
-}
+} deriving stock Show
 
 data DestructiveSectionCheck = DestructiveSectionCheck {
     destSectionEndsTransaction :: Bool
-}
+} deriving stock Show
+
+migrationErrors :: SqlMigration -> MigrationCheck -> [String]
+migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (DestructiveSectionCheck {..})) = 
+    if (nonDestSectionIsDestructive && not (nonDestructiveForce sqlMig)) then [ "Non-destructive section is destructive but not properly annotated. Add the option 'force' if you really want this." ] else []
+    ++ if (nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig) then [ "Non-destructive section ends Transactions when run, and that is not allowed." ] else []
+    ++ if (destSectionEndsTransaction && destructiveInTxn sqlMig) then [ "Destructive section ends Transactions when run, and that is not allowed." ] else []
+
 
 -- | Checks if there are any problems, including:
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.
@@ -40,7 +47,7 @@ checkMigration dbInfo mig =
         getTxId conn = fmap DB.fromOnly $ unsafeQuery1 conn "SELECT txid_current()" ()
         
         runLast conn = do
-            hbef <- getDbHashes conn
+            hbef <- readHashesFromDatabase conn
             txId1 <- getTxId conn
             -- TODO: because we are inside a transaction here, if the migration attempts to
             -- do something that can't be done in a transaction we should expect a specific exception..
@@ -50,7 +57,7 @@ checkMigration dbInfo mig =
             -- in case of bugs too.
             applySingleMigration conn IndNonDestructive mig
             txId2 <- getTxId conn
-            haft <- getDbHashes conn
+            haft <- readHashesFromDatabase conn
 
             -- If the non-destructive section ended the transaction, we should start a new one here!
             (txId3, txId4) <- (if txId1 == txId2 then id else beginRollbackTxnBracket conn) $ do

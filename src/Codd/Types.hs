@@ -1,12 +1,14 @@
-module Codd.Types (SqlMigration(..), DbVcsInfo(..), ApplyMigrations(..)) where
+module Codd.Types (SqlMigration(..), SqlFilePath(..), DbVcsInfo(..), ApplyMigrations(..)) where
 
 import Data.Text (Text)
 import qualified Database.PostgreSQL.Simple as DB
 
+newtype SqlFilePath = SqlFilePath { unSqlFilePath :: FilePath } deriving newtype (Eq, Ord, Show)
+
 data DbVcsInfo = DbVcsInfo {
-    dbName :: String
+    dbName :: Text
     -- ^ The name of the Database the Application will connect to
-    , appUser :: String
+    , appUser :: Text
     -- ^ The name of the User which will be created and authorized to access any assets created for the App's database.
     --   This is usually the App's User.
     , superUserConnString :: DB.ConnectInfo
@@ -14,6 +16,9 @@ data DbVcsInfo = DbVcsInfo {
     , sqlMigrations :: Either [FilePath] [SqlMigration]
     -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
     --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
+    , diskHashesDir :: FilePath
+    -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
+    -- (perhaps only after applying migrations when deploying).
 }
 
 data ApplyMigrations = OnlyNonDestructive | IncludeDestructiveOfAlreadyRun | BothNonAndDestructive

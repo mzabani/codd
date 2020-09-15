@@ -1,26 +1,44 @@
-module Codd.Environment where
+module Codd.Environment (connStringParser, getAdminConnInfo, getDbVcsInfo, appUserInAppDatabaseConnInfo, superUserInAppDatabaseConnInfo) where
 
+import Codd.Types (DbVcsInfo(..))
 import Control.Applicative ((<|>))
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Database.PostgreSQL.Simple (ConnectInfo(..))
-import Data.Attoparsec.Text (Parser, char, decimal, endOfInput, parseOnly, string, takeWhile1)
+import Data.Attoparsec.Text (Parser, char, decimal, endOfInput, parseOnly, peekChar, string)
+import qualified Data.Attoparsec.Text as Parsec
 import Data.Text (Text)
 import qualified Data.Text as Text
 import UnliftIO (MonadIO(..))
-import UnliftIO.Environment (getEnv)
+import UnliftIO.Environment (lookupEnv)
 
--- protocol://username[:password]@host:port/database_name
+-- | Parses a value using backslash as an escape char for any char that matches
+-- the supplied predicate. Stops at and does not consume the first predicate-passing
+-- char.
+parseWithEscapeChar :: (Char -> Bool) -> Parser Text
+parseWithEscapeChar untilc = do
+    cs <- Parsec.takeWhile (\c -> c /= '\\' && not (untilc c))
+    nextChar <- peekChar
+    case nextChar of
+        Nothing -> pure cs
+        Just '\\' -> do
+            void $ char '\\'
+            c <- Parsec.take 1
+            rest <- parseWithEscapeChar untilc
+            pure $ cs <> c <> rest
+        Just _ -> pure cs
 
+-- | Parses a string in the format protocol://username[:password]@host:port/database_name
 connStringParser :: Parser ConnectInfo
 connStringParser = do
     void $ string "postgres://"
-    usr <- idParser
-    pwd <- char ':' *> idParser <|> pure ""
+    usr <- idParser "username"
+    pwd <- (char ':' *> idParser "password") <|> pure ""
     void $ char '@'
-    host <- idParser
-    port <- decimal
+    host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
+    void $ char ':'
+    port <- decimal <|> fail "Could not find a port in the connection string."
     void $ char '/'
-    adminDb <- idParser
+    adminDb <- idParser "database"
     pure ConnectInfo {
         connectHost = host
         , connectPort = port
@@ -28,17 +46,37 @@ connStringParser = do
         , connectPassword = pwd
         , connectDatabase = adminDb
     }
-    where idParser :: Parser String
-          idParser = Text.unpack <$> takeWhile1 (\c -> c /= ':' && c /= '@')
+    where idParser :: String -> Parser String
+          idParser idName = do
+              x <- Text.unpack <$> parseWithEscapeChar (\c -> c == ':' || c == '@')
+              when (x == "") $ fail $ "Could not find a " <> idName <> " in the connection string."
+              pure x
+
+readEnv :: MonadIO m => String -> m Text
+readEnv var = maybe (error $ "Could not find environment variable '" ++ var ++ "'") Text.pack <$> lookupEnv var
 
 getAdminConnInfo :: MonadIO m => m ConnectInfo
 getAdminConnInfo = do
-    adminConnStr <- Text.pack <$> getEnv "ADMIN_DATABASE_URL"
+    adminConnStr <- readEnv "ADMIN_DATABASE_URL"
     let connInfoE = parseOnly (connStringParser <* endOfInput) adminConnStr
     case connInfoE of
-        Left err -> error $ "Error parsing the connection string in environment variable DATABASE_URL: " ++ err
+        Left err -> error $ "Error parsing the connection string in environment variable ADMIN_DATABASE_URL: " ++ err
         Right connInfo -> pure connInfo
 
-getAppDatabaseName :: MonadIO m => m Text
-getAppDatabaseName = Text.pack <$> getEnv "APP_DATABASE_NAME"
-    -- TODO: Throw informative exception if env var does not exist!
+getDbVcsInfo :: MonadIO m => m DbVcsInfo
+getDbVcsInfo = do
+    adminConnInfo <- getAdminConnInfo
+    appDbName <- readEnv "APP_DATABASE"
+    appUserName <- readEnv "APP_USERNAME"
+    sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
+    -- TODO: Do we throw on empty sqlMigrationPaths?
+    onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
+    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, diskHashesDir = onDiskHashesDir }
+
+-- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
+superUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo
+superUserInAppDatabaseConnInfo DbVcsInfo { superUserConnString, dbName } = superUserConnString { connectDatabase = Text.unpack dbName }
+
+-- | Returns a `ConnectInfo` that will connect to the App's Database with the App's User's credentials.
+appUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo
+appUserInAppDatabaseConnInfo DbVcsInfo { superUserConnString, dbName, appUser } = superUserConnString { connectDatabase = Text.unpack dbName, connectUser = Text.unpack appUser }

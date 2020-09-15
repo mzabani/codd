@@ -54,6 +54,7 @@ library:
     - -Wall
   dependencies:
     - attoparsec
+    - time
 
 executables:
   codd-exe:
@@ -77,6 +78,7 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
+    - attoparsec
     - codd
     - hspec
     - QuickCheck

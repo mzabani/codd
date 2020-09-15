@@ -1,4 +1,4 @@
-module Codd.Hashing.Database (getDbHashes) where
+module Codd.Hashing.Database (readHashesFromDatabase) where
 
 import Codd.Hashing.Types
 import Control.Monad (forM)
@@ -36,8 +36,8 @@ queryObjNamesAndHashes conn objNameCol hashCols table filterBy = liftIO $ withQu
                      <> " ORDER BY " <> objNameCol
 
 
-getDbHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> m DbHashes
-getDbHashes conn = do
+readHashesFromDatabase :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> m DbHashes
+readHashesFromDatabase conn = do
     -- TODO: Do different installations of postgres come with different schemas? We should ask the User which schemas to consider
     schemas :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "schema_name" ["schema_owner", "default_character_set_catalog", "default_character_set_schema", "default_character_set_name" ] "information_schema.schemata" (Just $ QueryFrag "schema_name NOT IN ?" (DB.Only $ DB.In [ "information_schema" :: Text, "pg_catalog", "pg_temp_1", "pg_toast", "pg_toast_temp_1" ]))
     DbHashes <$> getSchemaHash conn schemas

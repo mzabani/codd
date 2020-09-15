@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3b2dc91393285af36067214621e5887f02d3179e622064b685507ee6e165bb12
+-- hash: 097713b04b665c4455c396df2271f16277677022d6f26842873a62f8fdb7170b
 
 name:           codd
 version:        0.1.0.0
@@ -29,6 +29,7 @@ library
   exposed-modules:
       Codd
       Codd.Analysis
+      Codd.AppCommands
       Codd.Environment
       Codd.Hashing
       Codd.Hashing.Database
@@ -54,6 +55,7 @@ library
     , mtl
     , postgresql-simple
     , text
+    , time
     , unliftio
     , unliftio-core
   default-language: Haskell2010
@@ -61,6 +63,9 @@ library
 executable codd-exe
   main-is: Main.hs
   other-modules:
+      Commands.AddMigration
+      Commands.CheckMigration
+      Commands.VerifyDb
       Paths_codd
   hs-source-dirs:
       app
@@ -89,6 +94,7 @@ test-suite codd-test
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.ApplicationSpec
       DbUtils
+      EnvironmentSpec
       GeneralSpec
       ParsingSpec
       TypesGen
@@ -99,6 +105,7 @@ test-suite codd-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck
+    , attoparsec
     , base >=4.7 && <5
     , bytestring
     , codd
