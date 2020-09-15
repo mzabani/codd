@@ -81,4 +81,5 @@ tests:
     - attoparsec
     - codd
     - hspec
+    - hspec-expectations
     - QuickCheck

@@ -38,7 +38,7 @@ checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => DbVcsInfo -> SqlMigr
 checkMigration dbInfo mig =
     -- TODO: If there are no-txn non-destructive migrations, create a separate throw-away DB to do this
     -- TODO: What if this migration is itself no-txn ?
-    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfo OnlyNonDestructive
+    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfo OnlyNonDestructive Nothing
     where
         applyMigs :: DB.Connection -> ApplyMigrations -> [SqlMigration] -> m MigrationCheck
         applyMigs conn applyType allMigs = baseApplyMigsBlock runLast conn applyType allMigs

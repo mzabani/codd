@@ -5,6 +5,7 @@ import Prelude hiding (readFile)
 import Codd.Parsing (parseSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Types (DbVcsInfo(..), ApplyMigrations(..), SqlMigration(..))
+import Codd.Hashing (DbHashes, readHashesFromDatabase)
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
@@ -43,8 +44,8 @@ beginCommitTxnBracket conn f = do
 beginRollbackTxnBracket :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
 beginRollbackTxnBracket conn f = (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
 
-applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> ApplyMigrations -> [SqlMigration] -> m a) -> DbVcsInfo -> ApplyMigrations -> m a
-applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbName, appUser, sqlMigrations }) applyType = do
+applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> ApplyMigrations -> [SqlMigration] -> m a) -> DbVcsInfo -> ApplyMigrations -> Maybe DbHashes -> m a
+applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbName, appUser, sqlMigrations }) applyType hashCheck = do
     let
         unsafeDbName = dbIdentifier dbName
         unsafeAppUser = dbIdentifier appUser
@@ -85,7 +86,14 @@ applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbNa
                 execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " <> unsafeAppUser
         
         -- Run all Migrations in a single transaction now
-        txnBracket conn $ txnApp conn applyType parsedMigrations
+        txnBracket conn $ do
+            ret <- txnApp conn applyType parsedMigrations
+            case hashCheck of
+                Nothing -> pure ret
+                Just h -> do
+                    dbhashes <- readHashesFromDatabase conn
+                    when (dbhashes /= h) $ throwIO $ userError $ "DB Hash check failed. Aborting applying migrations."
+                    pure ret
     
     liftIO $ putStrLn "All migrations applied successfully"
     return ret

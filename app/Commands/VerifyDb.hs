@@ -9,13 +9,14 @@ import System.Exit (ExitCode(..), exitWith)
 import System.IO (hPutStrLn, stderr)
 
 verifyDb :: DbVcsInfo -> Bool -> IO ()
-verifyDb dbInfoWithAllMigs@DbVcsInfo { diskHashesDir } verbose = do
+verifyDb dbInfoWithAllMigs@DbVcsInfo { onDiskHashes } verbose = do
   let dbInfoDontApplyAnything = dbInfoWithAllMigs {
     sqlMigrations = Right []
   }
   let adminConnInfo = superUserInAppDatabaseConnInfo dbInfoDontApplyAnything
+  onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") onDiskHashes
   dbHashes <- connectAndDispose adminConnInfo readHashesFromDatabase
-  diskHashes <- readHashesFromDisk diskHashesDir
+  diskHashes <- readHashesFromDisk onDiskHashesDir
   when (dbHashes /= diskHashes) $ do
     when verbose $ hPutStrLn stderr "DB and on-disk hashes do not match."
     exitWith (ExitFailure 1)

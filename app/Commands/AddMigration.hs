@@ -14,12 +14,13 @@ import System.FilePath (takeFileName)
 import UnliftIO.Directory (doesFileExist)
 
 addMigration :: DbVcsInfo -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
-addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
-  let finalDir = case (destFolder, sqlMigrations) of
-        (Just f, _) -> f
+addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations, onDiskHashes }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
+  finalDir <- case (destFolder, sqlMigrations) of
+        (Just f, _) -> pure f
         (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the SQL_MIGRATION_PATHS environment variable."
-        (Nothing, Left (f:_)) -> f
+        (Nothing, Left (f:_)) -> pure f
         (Nothing, Right _) -> error "This is a bug in the add command. Please report it."
+  onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") onDiskHashes
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
   sqlMigContents <- Text.readFile fp
@@ -36,6 +37,6 @@ addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations }) alsoApply destFolder sqlF
         finalMigFile <- timestampAndMoveMigrationFile sqlFp finalDir
         putStrLn $ "Migration added to " ++ finalMigFile
         when alsoApply $ do
-            Codd.applyMigrations dbInfo OnlyNonDestructive
+            Codd.applyMigrations dbInfo OnlyNonDestructive False
             hashes <- connectAndDispose (superUserInAppDatabaseConnInfo dbInfo) readHashesFromDatabase
-            persistHashesToDisk hashes (diskHashesDir dbInfo)
+            persistHashesToDisk hashes onDiskHashesDir

@@ -71,7 +71,7 @@ getDbVcsInfo = do
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
     -- TODO: Do we throw on empty sqlMigrationPaths?
     onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
-    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, diskHashesDir = onDiskHashesDir }
+    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, onDiskHashes = Left onDiskHashesDir }
 
 -- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
 superUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo

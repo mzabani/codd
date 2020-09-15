@@ -1,5 +1,6 @@
 module Codd.Types (SqlMigration(..), SqlFilePath(..), DbVcsInfo(..), ApplyMigrations(..)) where
 
+import Codd.Hashing.Types (DbHashes)
 import Data.Text (Text)
 import qualified Database.PostgreSQL.Simple as DB
 
@@ -16,7 +17,7 @@ data DbVcsInfo = DbVcsInfo {
     , sqlMigrations :: Either [FilePath] [SqlMigration]
     -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
     --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
-    , diskHashesDir :: FilePath
+    , onDiskHashes :: Either FilePath DbHashes
     -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
 }

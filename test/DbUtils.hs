@@ -27,6 +27,6 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
             , dbName = "codd-test-db"
             , appUser = "postgres"
             , sqlMigrations = Right startingMigs
-            , diskHashesDir = ""
+            , onDiskHashes = Left ""
         }
     withDbAndDrop (emptyTestDbInfo { sqlMigrations = Right [ ] }) OnlyNonDestructive (\_ -> act emptyTestDbInfo)

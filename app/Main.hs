@@ -57,9 +57,10 @@ main = do
 
 doWork :: DbVcsInfo -> Cmd -> IO ()
 doWork dbInfo Up = do
-  Codd.applyMigrations dbInfo OnlyNonDestructive
+  Codd.applyMigrations dbInfo OnlyNonDestructive True
   hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) Codd.readHashesFromDatabase
-  Codd.persistHashesToDisk hashes (diskHashesDir dbInfo)
+  onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") (onDiskHashes dbInfo)
+  Codd.persistHashesToDisk hashes onDiskHashesDir
 doWork dbInfo (Analyze fp) = checkMigrationFile dbInfo fp
 doWork dbInfo (Add alsoApply destFolder fp) = addMigration dbInfo alsoApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = verifyDb dbInfo verbose

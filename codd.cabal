@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 097713b04b665c4455c396df2271f16277677022d6f26842873a62f8fdb7170b
+-- hash: 53a66303773c7ec128d1f34874315d8c62c3c457f3086f859c49ae748b979020
 
 name:           codd
 version:        0.1.0.0
@@ -113,6 +113,7 @@ test-suite codd-test
     , filepath
     , hspec
     , hspec-core
+    , hspec-expectations
     , mtl
     , postgresql-simple
     , text
