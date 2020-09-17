@@ -4,7 +4,7 @@ import qualified Codd as Codd
 import qualified Codd.Environment as Codd
 import qualified Codd.Hashing as Codd
 import qualified Codd.Internal as Codd
-import Codd.Types (DbVcsInfo(..), ApplyMigrations(..), SqlFilePath(..))
+import Codd.Types (DbVcsInfo(..), SqlFilePath(..))
 import Commands.AddMigration (addMigration)
 import Commands.CheckMigration (checkMigrationFile)
 import Commands.VerifyDb (verifyDb)
@@ -12,11 +12,12 @@ import Data.String (IsString)
 import qualified Data.List as List
 import Options.Applicative
 
-data Cmd = Up | Analyze SqlFilePath | Add Bool (Maybe FilePath) SqlFilePath | DbHashes FilePath | VerifyDb Bool
+data Cmd = UpDeploy | UpDev | Analyze SqlFilePath | Add Bool (Maybe FilePath) SqlFilePath | DbHashes FilePath | VerifyDb Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser (
-        command "up" (info (pure Up) (progDesc "Applies all pending migrations."))
+        command "up-dev" (info (pure UpDev) (progDesc "Applies all pending migrations and updates the on-disk hashes. Useful when developing."))
+     <> command "up-deploy" (info (pure UpDeploy) (progDesc "Applies all pending migrations but does NOT update on-disk hashes. Instead, compares on-disk hashes to DB hashes after applying migrations and only commits if they match."))
      <> command "check" (info analyzeParser (progDesc "Checks that a SQL migration doesn't fail and checks some of its attributes such as destructiveness, amongst others."))
      <> command "add" (info addParser (progDesc "Adds a SQL migration to the list of to-be-applied migrations"))
      <> command "dbhashes" (info dbHashesParser (progDesc "Cleans up a directory and writes a file and folder structure to it that represents the DB's current schema"))
@@ -56,11 +57,12 @@ main = do
       )
 
 doWork :: DbVcsInfo -> Cmd -> IO ()
-doWork dbInfo Up = do
-  Codd.applyMigrations dbInfo OnlyNonDestructive True
+doWork dbInfo UpDev = do
+  Codd.applyMigrations dbInfo False
   hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) Codd.readHashesFromDatabase
   onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") (onDiskHashes dbInfo)
   Codd.persistHashesToDisk hashes onDiskHashesDir
+doWork dbInfo UpDeploy = Codd.applyMigrations dbInfo True
 doWork dbInfo (Analyze fp) = checkMigrationFile dbInfo fp
 doWork dbInfo (Add alsoApply destFolder fp) = addMigration dbInfo alsoApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = verifyDb dbInfo verbose

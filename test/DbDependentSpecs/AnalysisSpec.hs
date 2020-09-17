@@ -2,47 +2,47 @@ module DbDependentSpecs.AnalysisSpec where
 
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Types (DbVcsInfo(..), SqlMigration(..), ApplyMigrations(..))
+import Codd.Types (DbVcsInfo(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when)
-import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs)
+import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
 import Test.Hspec
 
-createTableMig, addColumnMig, dropColumnMig, dropTableMig :: SqlMigration
-createTableMig = SqlMigration {
+createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
+createTableMig = AddedSqlMigration SqlMigration {
                     migrationName = "0001-create-table.sql"
                     , nonDestructiveSql = Just "CREATE TABLE anytable ();"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
                     , destructiveInTxn = True
-                }
-addColumnMig = SqlMigration {
+                } (getIncreasingTimestamp 1)
+addColumnMig = AddedSqlMigration SqlMigration {
                     migrationName = "0002-add-column.sql"
                     , nonDestructiveSql = Just "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
                     , destructiveInTxn = True
-                }
-dropColumnMig = SqlMigration {
+                } (getIncreasingTimestamp 2)
+dropColumnMig = AddedSqlMigration SqlMigration {
                     migrationName = "0003-drop-column.sql"
                     , nonDestructiveSql = Just "ALTER TABLE anytable DROP COLUMN anycolumn;"
                     , nonDestructiveForce = True
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
                     , destructiveInTxn = True
-                }
-dropTableMig = SqlMigration {
+                } (getIncreasingTimestamp 3)
+dropTableMig = AddedSqlMigration SqlMigration {
                     migrationName = "0004-drop-table.sql"
                     , nonDestructiveSql = Just "DROP TABLE anytable;"
                     , nonDestructiveForce = True
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
                     , destructiveInTxn = True
-                }
+                } (getIncreasingTimestamp 4)
 
 isMigrationDestructive :: MigrationCheck -> Bool
 isMigrationDestructive (MigrationCheck nonDestCheck _) = nonDestSectionIsDestructive nonDestCheck
@@ -65,24 +65,24 @@ spec = do
                 aroundFreshDatabase $
                     it "Create Table is non-destructive" $
                         \emptyTestDbInfo ->
-                            isMigrationDestructive <$> (checkMigration emptyTestDbInfo createTableMig) `shouldReturn` False
+                            isMigrationDestructive <$> (checkMigration emptyTestDbInfo (addedSqlMig createTableMig)) `shouldReturn` False
 
                 aroundDatabaseWithMigs [ createTableMig ] $
                     it "Adding columns is non-destructive" $
                         \dbInfo ->
-                            isMigrationDestructive <$> (checkMigration dbInfo addColumnMig) `shouldReturn` False
+                            isMigrationDestructive <$> (checkMigration dbInfo (addedSqlMig addColumnMig)) `shouldReturn` False
 
             context "Obviously destructive actions detected as such" $ do
                 aroundFreshDatabase $
                     it "Dropping columns is destructive" $
                         \emptyTestDbInfo ->
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) dropColumnMig) `shouldReturn` True
+                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropColumnMig)) `shouldReturn` True
 
                 aroundFreshDatabase $
                     it "Dropping tables is destructive" $
                         \emptyTestDbInfo -> do
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) dropTableMig) `shouldReturn` True
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig, dropColumnMig ]) dropTableMig) `shouldReturn` True
+                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
+                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig, dropColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
 
             context "Transaction ending migrations" $ do
                 aroundFreshDatabase $

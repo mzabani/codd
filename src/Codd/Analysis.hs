@@ -5,10 +5,11 @@ module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), Destru
 import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), readHashesFromDatabase, childrenObjs)
 import Codd.Internal
 import Codd.Query (unsafeQuery1)
-import Codd.Types (SqlMigration(..), ApplyMigrations(..), DbVcsInfo)
+import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..), DbVcsInfo(..))
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Database.PostgreSQL.Simple as DB
+import qualified Database.PostgreSQL.Simple.Time as DB
 import GHC.Int (Int64)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
 
@@ -35,12 +36,18 @@ migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (Destru
 --   2. non-destructive migration is destructive without 'force' option (not a perfect algorithm, but helpful for most common cases).
 -- This function can only be used for Migrations that haven't been added yet.
 checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => DbVcsInfo -> SqlMigration -> m MigrationCheck
-checkMigration dbInfo mig =
+checkMigration dbInfoApp mig =
     -- TODO: If there are no-txn non-destructive migrations, create a separate throw-away DB to do this
     -- TODO: What if this migration is itself no-txn ?
-    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfo OnlyNonDestructive Nothing
+    -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
+    -- conflicts that aren't caught by on-disk hashes are detected by developers
+    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfoBlueGreen Nothing
     where
-        applyMigs :: DB.Connection -> ApplyMigrations -> [SqlMigration] -> m MigrationCheck
+        thisMigrationAdded = AddedSqlMigration mig DB.PosInfinity
+
+        dbInfoBlueGreen = dbInfoApp { deploymentWorkflow = BlueGreenSafeDeploymentUpToAndIncluding DB.PosInfinity }
+
+        applyMigs :: DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m MigrationCheck
         applyMigs conn applyType allMigs = baseApplyMigsBlock runLast conn applyType allMigs
 
         getTxId :: DB.Connection -> m Int64
@@ -55,14 +62,14 @@ checkMigration dbInfo mig =
             -- how do we recover the previous DB state? Maybe we should always create a throw-away DB for this operation!
             -- Note: if this is going to be expensive, add a --no-check to the app for Users to add migrations. It will be useful
             -- in case of bugs too.
-            applySingleMigration conn IndNonDestructive mig
+            applySingleMigration conn ApplyNonDestructiveOnly thisMigrationAdded
             txId2 <- getTxId conn
             haft <- readHashesFromDatabase conn
 
             -- If the non-destructive section ended the transaction, we should start a new one here!
             (txId3, txId4) <- (if txId1 == txId2 then id else beginRollbackTxnBracket conn) $ do
                 txId3 <- getTxId conn
-                applySingleMigration conn IndDestructive mig
+                applySingleMigration conn ApplyDestructiveOnly thisMigrationAdded
                 txId4 <- getTxId conn
                 return (txId3, txId4)
             let

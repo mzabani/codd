@@ -2,7 +2,7 @@
 set -e
 
 # Tests which are not Postgres-version dependent first
-cabal run -O0 codd-test -- --skip "/DbDependentSpecs/"
+# cabal run -O0 codd-test -- --skip "/DbDependentSpecs/"
 
 # Postgres-version dependent tests for each possible version next
 nix-shell nix/test-shell-pg12.nix --run 'cabal run -O0 codd-test -- --match "/DbDependentSpecs/"'

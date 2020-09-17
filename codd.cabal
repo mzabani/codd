@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 53a66303773c7ec128d1f34874315d8c62c3c457f3086f859c49ae748b979020
+-- hash: ff50f4d8f74e37ca1e6643d983302a6f66cb5395d4bbd6fe70a6e73beed0d17b
 
 name:           codd
 version:        0.1.0.0
@@ -93,6 +93,7 @@ test-suite codd-test
       AllSpecs
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.ApplicationSpec
+      DbDependentSpecs.InvariantsSpec
       DbUtils
       EnvironmentSpec
       GeneralSpec
@@ -117,6 +118,7 @@ test-suite codd-test
     , mtl
     , postgresql-simple
     , text
+    , time
     , unliftio
     , unliftio-core
   default-language: Haskell2010

@@ -6,7 +6,6 @@
 - CLI
 - Better Logging options
 - When applying migrations, query DB for all fully-applied migrations first, so that those don't need to be parsed.
-- Do we create the App's User if it does not exist? We probably should.
 - HOOGLE Docs Generation + nice docs
 - Failed test:
      To rerun use: --match "/Parsing/Parsing tests/Valid SQL Migrations/Sql Migration with one section, missing optional options/"
@@ -14,3 +13,5 @@
 - Review non-destructive, both destructive and non-destructive workflows
 - More complex login mechanisms: what if the App User has a password, or authenticates by a different mechanism??
 - Tests for the App itself, not just the library
+- Proper return status codes for the app, 1 for error, 0 for success. No output unless -v for all/most commands.
+- Docker version of the App

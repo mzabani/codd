@@ -1,5 +1,6 @@
 module Codd.AppCommands (timestampAndMoveMigrationFile) where
 
+import Codd.Parsing (toMigrationTimestamp)
 import Codd.Types (SqlFilePath(..))
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -14,8 +15,8 @@ timestampAndMoveMigrationFile (unSqlFilePath -> migrationPath) folderToMoveTo = 
     --   2. Chance of naming conflicts with migrations added by other developers is small.
     -- One desirable property, however, is that filenames are human-readable
     -- and convey more or less an idea of when they were added.
-    utcNow <- liftIO getCurrentTime
-    let finalName = folderToMoveTo </> iso8601Show utcNow ++ "-" ++ takeFileName migrationPath
+    (migTimestamp, _) <- toMigrationTimestamp <$> liftIO getCurrentTime
+    let finalName = folderToMoveTo </> iso8601Show migTimestamp ++ "-" ++ takeFileName migrationPath
     copyFile migrationPath finalName
     removeFile migrationPath
     return finalName

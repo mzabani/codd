@@ -7,7 +7,7 @@ import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabase, persistHashesToDisk)
 import Codd.Internal (connectAndDispose)
 import Codd.Parsing (parseSqlMigration)
-import Codd.Types (ApplyMigrations(..), DbVcsInfo(..), SqlFilePath(..))
+import Codd.Types (DbVcsInfo(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import qualified Data.Text.IO as Text
 import System.FilePath (takeFileName)
@@ -34,9 +34,10 @@ addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations, onDiskHashes }) alsoApply d
       -- TODO: Run in some MonadError to be able to return!
       if migErrors /= [] then forM_ migErrors putStrLn
       else do
+        -- TODO: Don't allow adding a migration with the same timestamp as another!
         finalMigFile <- timestampAndMoveMigrationFile sqlFp finalDir
         putStrLn $ "Migration added to " ++ finalMigFile
         when alsoApply $ do
-            Codd.applyMigrations dbInfo OnlyNonDestructive False
+            Codd.applyMigrations dbInfo False
             hashes <- connectAndDispose (superUserInAppDatabaseConnInfo dbInfo) readHashesFromDatabase
             persistHashesToDisk hashes onDiskHashesDir

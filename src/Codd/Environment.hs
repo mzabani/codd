@@ -1,6 +1,7 @@
 module Codd.Environment (connStringParser, getAdminConnInfo, getDbVcsInfo, appUserInAppDatabaseConnInfo, superUserInAppDatabaseConnInfo) where
 
-import Codd.Types (DbVcsInfo(..))
+import Codd.Types (DbVcsInfo(..), DeploymentWorkflow(..))
+import Codd.Parsing (parseMigrationTimestamp)
 import Control.Applicative ((<|>))
 import Control.Monad (void, when)
 import Database.PostgreSQL.Simple (ConnectInfo(..))
@@ -55,6 +56,16 @@ connStringParser = do
 readEnv :: MonadIO m => String -> m Text
 readEnv var = maybe (error $ "Could not find environment variable '" ++ var ++ "'") Text.pack <$> lookupEnv var
 
+parseEnv :: MonadIO m => a -> (String -> Either Text a) -> String -> m a
+parseEnv defaultValue parser var = do
+    e <- lookupEnv var
+    case e of
+        Nothing -> pure defaultValue
+        Just v ->
+            case parser v of
+                Left err -> error (Text.unpack err)
+                Right x -> pure x
+
 getAdminConnInfo :: MonadIO m => m ConnectInfo
 getAdminConnInfo = do
     adminConnStr <- readEnv "ADMIN_DATABASE_URL"
@@ -71,7 +82,8 @@ getDbVcsInfo = do
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
     -- TODO: Do we throw on empty sqlMigrationPaths?
     onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
-    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, onDiskHashes = Left onDiskHashesDir }
+    destructiveUpTo <- parseEnv SimpleDeployment (fmap BlueGreenSafeDeploymentUpToAndIncluding . parseMigrationTimestamp) "CODD_DESTROY_UP_TO_AND_INCLUDING"
+    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, onDiskHashes = Left onDiskHashesDir, deploymentWorkflow = destructiveUpTo }
 
 -- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
 superUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo

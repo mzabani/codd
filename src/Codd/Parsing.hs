@@ -1,6 +1,6 @@
-module Codd.Parsing (parseSqlMigration, nothingIfEmptyQuery) where
+module Codd.Parsing (parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
 
-import Codd.Types (SqlMigration(..))
+import Codd.Types (SqlMigration(..), AddedSqlMigration(..))
 import Control.Applicative ((<|>))
 import Control.Monad (void, guard)
 import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, takeText)
@@ -10,6 +10,9 @@ import Data.List (sort)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import Data.Text (Text)
+import Data.Time.Clock (UTCTime(..))
+import qualified Database.PostgreSQL.Simple.Time as DB
+import Data.Time.Format.ISO8601 (iso8601ParseM)
 
 data SectionOption = OptForce Bool | OptInTxn Bool | OptDest Bool deriving stock (Ord, Eq, Show)
 
@@ -131,3 +134,19 @@ parseSqlMigration name t = bimap Text.pack id migE >>= toMig
                         (_, _, True, False) -> Right $ mkMig (Just (ssops, sssql)) (Just (fsops, fssql))
                         (_, _, True, True)  -> Left "There can't be two destructive sections"
                         (_, _, False, False)  -> Left "There can't be two non-destructive sections"
+
+parseAddedSqlMigration :: String -> Text -> Either Text AddedSqlMigration
+parseAddedSqlMigration name t = AddedSqlMigration <$> parseSqlMigration name t <*> parseMigrationTimestamp name
+
+-- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
+-- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime
+-- and the Postgres timestamp.
+toMigrationTimestamp :: UTCTime -> (UTCTime, DB.UTCTimestamp)
+toMigrationTimestamp (UTCTime day diffTime) = let t = UTCTime day (fromInteger $ round diffTime) in (t, DB.Finite t)
+
+-- | Parses the UTC timestamp from a migration's name.
+parseMigrationTimestamp :: String -> Either Text DB.UTCTimestamp
+parseMigrationTimestamp name =
+    case iso8601ParseM (takeWhile (/= 'Z') name ++ "Z") of
+        Nothing -> Left $ "Could not find migration timestamp from its name: '" <> Text.pack name <> "'"
+        Just t -> Right $ DB.Finite t

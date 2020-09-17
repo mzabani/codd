@@ -83,3 +83,4 @@ tests:
     - hspec
     - hspec-expectations
     - QuickCheck
+    - time
