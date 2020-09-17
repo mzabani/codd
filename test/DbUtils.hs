@@ -18,6 +18,19 @@ aroundConnInfo = around $ \act -> do
     cinfo <- testConnInfo
     act cinfo
 
+-- | Doesn't create a Database, doesn't create anything. Just supplies the Test DbVcsInfo from Env Vars to your test.
+aroundTestDbInfo :: SpecWith DbVcsInfo -> Spec
+aroundTestDbInfo = around $ \act -> do
+    connInfo <- testConnInfo
+    act DbVcsInfo {
+            superUserConnString = connInfo
+            , dbName = "codd-test-db"
+            , appUser = "postgres"
+            , sqlMigrations = Right []
+            , onDiskHashes = Left ""
+            , deploymentWorkflow = SimpleDeployment
+        }
+
 aroundFreshDatabase :: SpecWith DbVcsInfo -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 

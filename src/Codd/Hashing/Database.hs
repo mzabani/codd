@@ -11,10 +11,12 @@ import qualified Database.PostgreSQL.Simple as DB
 import GHC.Stack (HasCallStack)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
 
+-- | We do not want columns of type OID or OID[] to affect hashing. They're instance-local values that might differ regardless of the DB's schema.
 hashProjection :: [QueryFrag] -> QueryFrag
 hashProjection cols = "MD5(" <> interspBy " || " (map toHash cols) <> ")"
   where
-    toHash col = "(CASE WHEN " <> col <> " IS NULL THEN '' ELSE '_' || " <> col <> " :: TEXT END)"
+    toHash col = "(CASE WHEN " <> col <> " IS NULL THEN '' WHEN " <> isOidCol col <> " THEN '' ELSE '_' || " <> col <> " :: TEXT END)"
+    isOidCol col = "pg_typeof(" <> col <> ")=pg_typeof(0::OID) OR pg_typeof(" <> col <> ")=pg_typeof('{0}'::OID[])"
     interspBy _ [] = ""
     interspBy _ (c:[]) = c
     interspBy sep (c:cs) = c <> sep <> interspBy sep cs
@@ -35,6 +37,12 @@ queryObjNamesAndHashes conn objNameCol hashCols table filterBy = liftIO $ withQu
                      <> maybe "" (" WHERE " <>) filterBy
                      <> " ORDER BY " <> objNameCol
 
+rawQueryObjNamesAndHashes :: (HasCallStack, MonadIO m) => DB.Connection -> QueryFrag -> [QueryFrag] -> QueryFrag -> QueryFrag -> m [(ObjName, ObjHash)]
+rawQueryObjNamesAndHashes conn objNameCol hashCols table afterSelect = liftIO $ withQueryFrag fullQuery (DB.query conn)
+  where
+    fullQuery = "SELECT " <> objNameCol <> ", " <> hashProjection hashCols <> " FROM " <> table
+                     <> " " <> afterSelect
+                     <> " ORDER BY " <> objNameCol
 
 readHashesFromDatabase :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> m DbHashes
 readHashesFromDatabase conn = do
@@ -56,5 +64,7 @@ getSchemaHash conn schemas = fmap Map.fromList $ forM schemas $ \(schemaName, sc
 getTablesHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> ObjName -> [(ObjName, ObjHash)] -> m [SchemaObjectHash]
 getTablesHashes conn schemaName tables = forM tables $ \(tableName, tableHash) -> do
     columns :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "column_name" ["column_default", "is_nullable", "data_type", "character_maximum_length", "character_octet_length", "numeric_precision", "numeric_precision_radix", "numeric_scale", "datetime_precision", "interval_type", "interval_precision", "collation_name", "is_identity", "identity_generation", "identity_start", "identity_increment", "identity_maximum", "identity_minimum", "identity_cycle", "is_generated", "generation_expression", "is_updatable"] "information_schema.columns" (Just $ QueryFrag "table_schema=? AND table_name=?" (schemaName, tableName))
-    constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "constraint_name" ["constraint_type", "is_deferrable", "initially_deferred"] "information_schema.table_constraints" (Just $ QueryFrag "constraint_schema=? AND table_name=?" (schemaName, tableName))
+    -- constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "constraint_name" ["constraint_type", "is_deferrable", "initially_deferred"] "information_schema.table_constraints" (Just $ QueryFrag "constraint_schema=? AND table_name=?" (schemaName, tableName))
+    constraints :: [(ObjName, ObjHash)] <- rawQueryObjNamesAndHashes conn "conname" [ "contype", "condeferrable", "condeferred", "convalidated", "conrelid", "contypid", "conindid", "conparentid", "confrelid", "confupdtype", "confdeltype", "confmatchtype", "conislocal", "coninhcount", "connoinherit", "conkey", "confkey", "conpfeqop", "conppeqop", "conffeqop", "conexclop", "pg_get_constraintdef(pg_constraint.oid)" ] "pg_catalog.pg_constraint" (QueryFrag "JOIN pg_catalog.pg_namespace ON connamespace=pg_namespace.oid AND pg_namespace.nspname=? JOIN pg_catalog.pg_class ON conrelid=pg_class.oid AND pg_class.relname=?" (schemaName, tableName))
+    -- ^ PG 10 Does not have the "conparentid" column..
     pure $ TableHash tableName tableHash (listToMap $ map (uncurry TableColumn) columns) (listToMap $ map (uncurry TableConstraint) constraints)

@@ -15,3 +15,9 @@
 - Tests for the App itself, not just the library
 - Proper return status codes for the app, 1 for error, 0 for success. No output unless -v for all/most commands.
 - Docker version of the App
+
+
+VERY CAREFULLY GO THROUGH ALL THE QUERIES FOR HASHING.
+FOR EXAMPLE: pg_constraint.confrelid is the referenced table by a FK. Someone could change the FK to make the same column refer to a different table
+ and we'd have to detect that!! So we need to include the references table's name. Also, pg_get_constraintdef(oid) must be used instead of using conbin, which is something
+ you can only see by reading the docs carefully!!
