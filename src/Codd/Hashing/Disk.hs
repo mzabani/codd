@@ -1,11 +1,11 @@
 module Codd.Hashing.Disk (persistHashesToDisk, readHashesFromDisk) where
 
 import Prelude hiding (writeFile, readFile)
+import Codd.Prelude
 
 import Codd.Hashing.Types
 import Control.Monad (forM_, when, unless)
 import Control.Monad.Except (MonadError(..), runExceptT)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Text (Text, pack, unpack)
@@ -86,10 +86,6 @@ persistHashesToDisk dbHashes dir = do
     whenM (doesDirectoryExist dir) $ removeDirectoryRecursive dir
     -- Important: renameDirectory will fail when the destination is a different partition. So we make a Copy instead.
     copyDir tempDir dir
-
-    where
-        nubOrd :: Ord a => [a] -> [a]
-        nubOrd = map NE.head . NE.groupAllWith id
 
 readHashesFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbHashes
 readHashesFromDisk dir = do

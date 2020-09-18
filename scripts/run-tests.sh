@@ -11,6 +11,6 @@ nix-shell nix/test-shell-pg12.nix --run 'cabal run -O0 codd-test -- --match "/Db
 echo Running tests on Postgres 11
 nix-shell nix/test-shell-pg11.nix --run 'cabal run -O0 codd-test -- --match "/DbDependentSpecs/"'
 
-# Posgres 10 is not supported yet
+# Postgres 10 is not supported yet
 # echo Running tests on Postgres 10
 # nix-shell nix/test-shell-pg10.nix --run 'cabal run -O0 codd-test -- --match "/DbDependentSpecs/"'

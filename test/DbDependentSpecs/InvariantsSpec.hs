@@ -30,7 +30,11 @@ timestampsMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 0)
 lotsOfObjectsMigration = AddedSqlMigration SqlMigration {
                     migrationName = "0000-create-lots-of-objects.sql"
-                    , nonDestructiveSql = Just "CREATE TABLE anytable (id serial primary key, col1 timestamptz not null, col2 text CHECK (col2 <> ''), UNIQUE (col1), UNIQUE(col1, col2));"
+                    , nonDestructiveSql = Just $
+    "CREATE TABLE anytable (id serial primary key, col1 timestamptz not null, col2 text CHECK (col2 <> ''), UNIQUE (col1), UNIQUE(col1, col2));"
+ <> "CREATE EXTENSION intarray; CREATE EXTENSION btree_gist;"
+ -- <> "CREATE TABLE other_table (a1 int references timestamps(seq_number), a2 circle, unique(a1, a2), exclude using gist (a1 with =, (a2) with &&));"
+ -- <> "CREATE UNIQUE INDEX something_idx ON other_table (a1) WHERE (a1 > 50);"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
