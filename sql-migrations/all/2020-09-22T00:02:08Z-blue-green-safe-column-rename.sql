@@ -56,4 +56,8 @@ DROP TRIGGER employee_new_app_update_column_name ON employee;
 DROP TRIGGER employee_new_app_insert_column_name ON employee;
 DROP FUNCTION employee_name_rename_set_new();
 DROP FUNCTION employee_name_rename_set_old();
-ALTER TABLE employee DROP COLUMN name;
+
+-- We drop the new and rename because in the non-destructive section we didn't add constraints that might exist
+-- to the new column, but we still want them.
+ALTER TABLE employee DROP COLUMN employee_name;
+ALTER TABLE employee RENAME COLUMN name TO employee_name;

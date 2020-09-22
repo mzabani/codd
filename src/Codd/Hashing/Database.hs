@@ -1,6 +1,5 @@
 module Codd.Hashing.Database where
 
-import Debug.Trace (traceShowId)
 import Codd.Hashing.Types
 import Control.Monad (forM)
 import qualified Data.Map.Strict as Map

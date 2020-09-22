@@ -137,7 +137,6 @@ applySingleMigration conn deploymentWorkflow (AddedSqlMigration sqlMig migTimest
     case deploymentWorkflow of
             ApplyNonDestructiveOnly -> do
                 liftIO $ putStr $ "Applying non-destructive section of " <> fn
-                liftIO $ print mNonDestSql
                 case mNonDestSql of
                     Nothing -> pure ()
                     Just nonDestSql -> execvoid_ conn $ DB.Query nonDestSql

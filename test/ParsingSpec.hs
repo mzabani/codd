@@ -51,7 +51,7 @@ spec = do
             it "Sql Migration with one section, missing optional options" $ do
                 property $ \(unRandomSql -> sectionSql, nonDest :: Bool) ->
                     let
-                        sql = (if nonDest then "-- codd: non-destructive\n" else "-- codd: destructive\n")
+                        sql = (if nonDest then "-- codd: non-destructive\n" else "\n-- codd: destructive\n")
                                 <> sectionSql
                         (nonDestSql, destSql) = if nonDest then (sectionSql, "") else ("", sectionSql)
                     in

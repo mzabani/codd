@@ -61,9 +61,7 @@ readMultiple dir f = do
     else pure Map.empty
 
 concatReaders :: (MonadError Text m, MonadIO m, Monoid s) => [m s] -> m s
-concatReaders readers = mconcat <$> sequenceA readers -- do
-    -- objList <- mconcat <$> sequenceA readers
-    -- return $ Map.fromList $ map (\obj -> (objName obj, obj)) objList
+concatReaders readers = mconcat <$> sequenceA readers
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
 toFiles (DbHashes (Map.elems -> schemas)) = concatMap objToFiles (map DbObject schemas)

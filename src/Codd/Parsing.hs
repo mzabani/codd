@@ -1,6 +1,5 @@
 module Codd.Parsing (parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
 
-import Debug.Trace (traceShowId)
 import Codd.Types (SqlMigration(..), AddedSqlMigration(..))
 import Control.Applicative ((<|>))
 import Control.Monad (void, guard)
@@ -35,15 +34,12 @@ skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
 
 coddComment :: Parser ()
-coddComment = (endOfLine *> noNewlineParser) <|> noNewlineParser
-    -- ^ A "\n-- codd: options" line is considered such that the "\n" does not belong to any previous SQL section.
-    where
-        noNewlineParser = do
-            void $ string "--"
-            skipJustSpace
-            void $ string "codd:"
-            skipJustSpace
-    
+coddComment = do
+    void $ string "--"
+    skipJustSpace
+    void $ string "codd:"
+    skipJustSpace
+
 migrationParser :: Parser ([SectionOption], Text, Maybe ([SectionOption], Text))
 migrationParser = do
     -- Any amount of white space, then first codd comment
@@ -61,17 +57,36 @@ migrationParser = do
             secondSectionSql <- takeText
             pure (opts1, firstSectionSql, Just (opts2, secondSectionSql))
             -- TODO: Ideally, a third "-- codd:" would fail parsing
-    
-    where
-        everythingUpToCodd = Text.concat <$> manyTill fullLine (endOfInput <|> coddComment)
 
-fullLine :: Parser Text
-fullLine = do
-    t <- Parsec.takeWhile (/= '\n')
-    done <- atEnd
-    case done of
-        True -> pure t
-        False -> endOfLine *> pure (t <> "\n")
+data EverythingUpToCoddAccum = EverythingUpToCoddAccum !Bool !Int
+-- | Parses and returns everything from now until "\n-- codd:", consuming the "\n -- codd:" string but not returning its starting "\n".
+--   This parser's behaviour is only valid if you use it at the start of a line.
+everythingUpToCodd :: Parser Text
+everythingUpToCodd = do
+    -- Parse until finding a dash, "-", as long as it is only preceded by white-space in its line
+    (piece, EverythingUpToCoddAccum _ lastLineLen) <-
+        Parsec.runScanner (EverythingUpToCoddAccum True 0) (\(EverythingUpToCoddAccum onlySpacesInLine lenLastLine) c ->
+                if c == '-' && onlySpacesInLine then Nothing
+                else if c == '\n' then Just $ acc True 1
+                else if not (Char.isSpace c) then Just $ acc False (lenLastLine + 1)
+                else Just $ acc onlySpacesInLine (lenLastLine + 1))
+    -- If we stopped at a dash, it could be a codd section.
+    isCoddSection <- (True <$ coddComment) <|> pure False
+    if isCoddSection then
+        -- Remove last line from "piece"
+        pure $ Text.dropEnd lastLineLen piece
+    else do
+        done <- atEnd
+        if done
+            then pure piece
+        else do
+            void $ char '-'
+            -- Consume the dash to advance the parser. Since two dashes are so common in SQL, we could try to optimize that path in the future
+            remaining <- everythingUpToCodd
+            pure $ piece <> "-" <> remaining
+
+    where
+        acc = EverythingUpToCoddAccum
 
 takeCommentsUnit :: Parser ()
 takeCommentsUnit = skipComment1 <|> skipComment2
