@@ -20,11 +20,12 @@ instance Arbitrary RandomSql where
 
         where
             semiCommaGen = frequency [(5, pure ";"), (1, pure "")]
-            lineGen = Text.pack . getUnicodeString <$> arbitrary
+            emptyLineGen = pure "\n"
+            lineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
             -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
             -- is so low that we can just ignore it
             commentGen = ("-- " <>) <$> lineGen
-            lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen) ]
+            lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen), (1, emptyLineGen) ]
             randomSqlGen = Text.concat <$> listOf1 lineOrCommentGen
 
 spec :: Spec
@@ -73,11 +74,39 @@ spec = do
                 in
                     parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
                             migrationName = "any-name.sql"
-                            , nonDestructiveSql = nothingIfEmptyQuery nonDestSql
+                            , nonDestructiveSql = Just nonDestSql
                             , nonDestructiveForce = True
                             , nonDestructiveInTxn = True
-                            , destructiveSql = nothingIfEmptyQuery destSql
+                            , destructiveSql = Just destSql
                             , destructiveInTxn = False
+                        }
+
+            it "A real-life SqlMigration parsed correctly" $
+                let
+                    nonDestSql = 
+                        "\n\n"
+                        <> "-- README:\n"
+                        -- <> "-- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps\n"
+                        -- <> "-- need not be concerned of the new/old column names here. We recommend caution and testing when using this.\n\n"
+
+                        -- <> "-- 1. Add the column and set its values, initially\n"
+                        <> "ALTER TABLE employee ADD COLUMN employee_name TEXT; -- TODO: Remember to set a good DEFAULT if you need one.\n"
+                        <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
+
+                    destSql = "DROP TRIGGER employee_old_app_update_column_name ON employee;\nDROP TRIGGER employee_old_app_insert_column_name ON employee;\n"
+
+                    sql = "-- codd: non-destructive\n"
+                        <> nonDestSql
+                        <> "\n-- codd: destructive\n"
+                        <> destSql
+                in
+                    parseSqlMigration "any-name.sql" sql `shouldBe` Right SqlMigration {
+                            migrationName = "any-name.sql"
+                            , nonDestructiveSql = Just nonDestSql
+                            , nonDestructiveForce = False
+                            , nonDestructiveInTxn = True
+                            , destructiveSql = Just destSql
+                            , destructiveInTxn = True
                         }
         
         context "Invalid SQL Migrations" $ do
@@ -148,6 +177,14 @@ spec = do
                         , "      --Some comment    \n-- Some other comment\n\n\n       "
                         , "    /* Just comment */ \n -- Other comment \n\n\n\n"
                         , "    /* Just comment */ \n -- Other comment \n\n\n\n"
+                        , "\n\n"
+                            <> "-- README:\n"
+                            <> "-- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps\n"
+                            <> "-- need not be concerned of the new/old column names here. We recommend caution and testing when using this.\n\n"
+
+                            <> "-- 1. Add the column and set its values, initially\n"
+                            <> "-- ALTER TABLE employee ADD COLUMN employee_name TEXT; -- TODO: Remember to set a good DEFAULT if you need one.\n"
+                            <> "/* UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name; */ \n"
                         ]
                     nonEmptyQueries = [
                         "      --Some comment    \n-- Some other comment\n\n\n Some SQL Command      "
@@ -159,6 +196,14 @@ spec = do
                         , "Regular sql /* With comment */ COMMANDS"
                         , "/* With comment */ SQL COMMANDS"
                         , "/* With comment */\n\nSQL COMMANDS\n-- Comment"
+                        , "\n\n"
+                            <> "-- README:\n"
+                            <> "-- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps\n"
+                            <> "-- need not be concerned of the new/old column names here. We recommend caution and testing when using this.\n\n"
+
+                            <> "-- 1. Add the column and set its values, initially\n"
+                            <> "ALTER TABLE employee ADD COLUMN employee_name TEXT; -- TODO: Remember to set a good DEFAULT if you need one.\n"
+                            <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
                         ]
                 forM_ emptyQueries $ \q ->
                     (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)

@@ -1,6 +1,6 @@
 module TypesGen where
 
-import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), TableConstraint(..), ObjHash(..), ObjName(..), objName)
+import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), TableConstraint(..), TableTrigger(..), ObjHash(..), ObjName(..), objName)
 import Data.Function (on)
 import Data.List (nubBy)
 import qualified Data.Map.Strict as Map
@@ -16,13 +16,14 @@ instance Arbitrary DbHashesGen where
             schemaHashGen = SchemaHash <$> genObjName <*> genObjHash <*> uniqueMapOf 100 schemaObjGen objName
             schemaObjGen =
                 oneof [
-                    TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName
+                    TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName <*> uniqueMapOf 1 triggerGen objName
                     , ViewHash <$> genObjName <*> genObjHash
                     , RoutineHash <$> genObjName <*> genObjHash
                     , SequenceHash <$> genObjName <*> genObjHash
                 ]
             colGen = TableColumn <$> genObjName <*> genObjHash
             constraintGen = TableConstraint <$> genObjName <*> genObjHash
+            triggerGen = TableTrigger <$> genObjName <*> genObjHash
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy = nubBy ((==) `on` uniqBy) <$> resize size (listOf gen)

@@ -29,6 +29,7 @@ readTable dir = TableHash (readObjName dir)
                         <$> readFileAsHash (dir </> "objhash")
                         <*> readMultiple (dir </> "cols") readTableColumn
                         <*> readMultiple (dir </> "constraints") readTableConstraint
+                        <*> readMultiple (dir </> "triggers") readTableTrigger
 readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash
@@ -37,6 +38,8 @@ readTableColumn :: (MonadError Text m, MonadIO m) => FilePath -> m TableColumn
 readTableColumn = simpleObjHashFileRead TableColumn
 readTableConstraint :: (MonadError Text m, MonadIO m) => FilePath -> m TableConstraint
 readTableConstraint = simpleObjHashFileRead TableConstraint
+readTableTrigger :: (MonadError Text m, MonadIO m) => FilePath -> m TableTrigger
+readTableTrigger = simpleObjHashFileRead TableTrigger
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName

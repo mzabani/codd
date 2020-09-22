@@ -8,12 +8,15 @@ import Database.PostgreSQL.Simple.FromField (FromField)
 import Database.PostgreSQL.Simple.ToField (ToField)
 import System.FilePath ((</>))
 
+data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger
+
 data DbHashes = DbHashes (Map ObjName SchemaHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
 -- TODO: schema search path, collations, triggers, row level security policies, permissions per table, per column... What else?
-data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
+data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)
+data TableTrigger = TableTrigger ObjName ObjHash deriving stock (Show, Eq)
 
 class IsDbObject a where
     objName :: a -> ObjName
@@ -30,25 +33,25 @@ instance IsDbObject SchemaHash where
 instance IsDbObject SchemaObjectHash where
     objName =
         \case
-            TableHash n _ _ _ -> n
+            TableHash n _ _ _ _ -> n
             ViewHash n _ -> n
             RoutineHash n _ -> n
             SequenceHash n _ -> n
     objHash =
         \case
-            TableHash _ h _ _ -> h
+            TableHash _ h _ _ _ -> h
             ViewHash _ h -> h
             RoutineHash _ h -> h
             SequenceHash _ h -> h
     hashFileRelativeToParent =
         \case
-            TableHash n _ _ _ -> "tables" </> mkPathFrag n </> "objhash"
+            TableHash n _ _ _ _ -> "tables" </> mkPathFrag n </> "objhash"
             ViewHash n _ -> "views" </> mkPathFrag n
             RoutineHash n _ -> "routines" </> mkPathFrag n
             SequenceHash n _ -> "sequences" </> mkPathFrag n
     childrenObjs =
         \case
-            TableHash _ _ cols cks -> map DbObject (Map.elems cols) ++ map DbObject (Map.elems cks)
+            TableHash _ _ cols cks triggers -> map DbObject (Map.elems cols) ++ map DbObject (Map.elems cks) ++ map DbObject (Map.elems triggers)
             ViewHash _ _ -> []
             RoutineHash _ _ -> []
             SequenceHash {} -> []
@@ -64,6 +67,12 @@ instance IsDbObject TableConstraint where
     objHash (TableConstraint _ h) = h
     hashFileRelativeToParent (TableConstraint n _) = "constraints" </> mkPathFrag n
     childrenObjs (TableConstraint _ _) = []
+
+instance IsDbObject TableTrigger where
+    objName (TableTrigger n _) = n
+    objHash (TableTrigger _ h) = h
+    hashFileRelativeToParent (TableTrigger n _) = "triggers" </> mkPathFrag n
+    childrenObjs (TableTrigger _ _) = []
 
 -- | This existential type helps us recurse over the DB's hierarchy
 data DbObject = forall a. IsDbObject a => DbObject a

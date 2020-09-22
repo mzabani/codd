@@ -1,9 +1,11 @@
 module Codd.Parsing (parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
 
+import Debug.Trace (traceShowId)
 import Codd.Types (SqlMigration(..), AddedSqlMigration(..))
 import Control.Applicative ((<|>))
 import Control.Monad (void, guard)
 import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, takeText)
+import qualified Data.Attoparsec.Text as Parsec
 import Data.Bifunctor (bimap)
 import qualified Data.Char as Char
 import Data.List (sort)
@@ -33,11 +35,14 @@ skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
 
 coddComment :: Parser ()
-coddComment = do
-    void $ string "--"
-    skipJustSpace
-    void $ string "codd:"
-    skipJustSpace
+coddComment = (endOfLine *> noNewlineParser) <|> noNewlineParser
+    -- ^ A "\n-- codd: options" line is considered such that the "\n" does not belong to any previous SQL section.
+    where
+        noNewlineParser = do
+            void $ string "--"
+            skipJustSpace
+            void $ string "codd:"
+            skipJustSpace
     
 migrationParser :: Parser ([SectionOption], Text, Maybe ([SectionOption], Text))
 migrationParser = do
@@ -61,7 +66,12 @@ migrationParser = do
         everythingUpToCodd = Text.concat <$> manyTill fullLine (endOfInput <|> coddComment)
 
 fullLine :: Parser Text
-fullLine = Text.pack <$> manyTill anyChar (endOfLine <|> endOfInput)
+fullLine = do
+    t <- Parsec.takeWhile (/= '\n')
+    done <- atEnd
+    case done of
+        True -> pure t
+        False -> endOfLine *> pure (t <> "\n")
 
 takeCommentsUnit :: Parser ()
 takeCommentsUnit = skipComment1 <|> skipComment2
@@ -85,7 +95,7 @@ nothingIfEmptyQuery t
     | parseOnly notJustBlanksAndCommentsParser t /= Right True = Nothing
     | otherwise = Just t
     where notJustBlanksAndCommentsParser :: Parser Bool
-          notJustBlanksAndCommentsParser = skipBlanksAndCommentsNoFail >> not <$> atEnd
+          notJustBlanksAndCommentsParser = skipBlanksAndCommentsNoFail >> (not <$> atEnd)
 
 
 parseSqlMigration :: String -> Text -> Either Text SqlMigration

@@ -65,6 +65,7 @@ checkMigration dbInfoApp mig =
             applySingleMigration conn ApplyNonDestructiveOnly thisMigrationAdded
             txId2 <- getTxId conn
             haft <- readHashesFromDatabase conn
+            liftIO $ putStrLn $ "TxIds equal: " <> show (txId1 == txId2)
 
             -- If the non-destructive section ended the transaction, we should start a new one here!
             (txId3, txId4) <- (if txId1 == txId2 then id else beginRollbackTxnBracket conn) $ do
