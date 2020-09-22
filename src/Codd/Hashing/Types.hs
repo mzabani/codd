@@ -8,7 +8,7 @@ import Database.PostgreSQL.Simple.FromField (FromField)
 import Database.PostgreSQL.Simple.ToField (ToField)
 import System.FilePath ((</>))
 
-data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger | HRole
+data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger | HRole | HSequence
 
 data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)

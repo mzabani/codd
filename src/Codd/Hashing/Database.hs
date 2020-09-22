@@ -4,23 +4,23 @@ import Codd.Hashing.Types
 import Control.Monad (forM)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
-import Data.Text (Text)
 import Data.String (IsString(..))
 import Database.PostgreSQL.Simple (ToRow, Query)
 import qualified Database.PostgreSQL.Simple as DB
 import GHC.Stack (HasCallStack)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
 
-data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod deriving stock Show
+data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation deriving stock Show
 
 -- | Given an object we take hashes of, returns the catalog table and an appropriate `WHERE` filter to apply on it, if any.
 hashableObjCatalogTable :: HashableObject -> (CatalogTable, Maybe QueryFrag)
 hashableObjCatalogTable = \case
   HSchema -> (PgNamespace, Nothing)
-  HTable -> (PgClass, Just "pg_class.relkind IN ('r', 't', 'f', 'p')")
+  HTable -> (PgClass, Just "pg_class.relkind IN ('r', 'f', 'p')")
   HView -> (PgClass, Just "pg_class.relkind IN ('v', 'm')")
+  HSequence -> (PgClass, Just "pg_class.relkind = 'S'")
   HRoutine -> (PgProc, Nothing)
-  HColumn -> (PgAttribute, Nothing)
+  HColumn -> (PgAttribute, Just "NOT pg_attribute.attisdropped")
   HTableConstraint -> (PgConstraint, Nothing)
   HTrigger -> (PgTrigger, Nothing)
   HRole -> (PgAuthId, Nothing)
@@ -43,6 +43,7 @@ tableName = \case
   PgAttribute -> "pg_attribute"
   PgTrigger -> "pg_trigger"
   PgAccessMethod -> "pg_am"
+  PgCollation -> "pg_collation"
 
 fqObjNameCol :: CatalogTable -> CatalogTableColumn
 fqObjNameCol = \case
@@ -57,6 +58,7 @@ fqObjNameCol = \case
   PgAttribute -> fqcn PgAttribute "attname"
   PgTrigger -> fqcn PgTrigger "tgname"
   PgAccessMethod -> fqcn PgAccessMethod "amname"
+  PgCollation -> fqcn PgCollation "collname"
 
 -- | Returns a list with all columns that uniquely Identify an Object in a catalog table. Usually this is just the object's name, but in some cases
 --   can be more than one column.
@@ -76,10 +78,11 @@ fqTableIdentifyingCols tbl = fqObjNameCol tbl : case tbl of
   PgAttribute -> []
   PgTrigger -> []
   PgAccessMethod -> []
+  PgCollation -> [ "collencoding" ]
 
 hashingColsOf :: CatalogTable -> [CatalogTableColumn]
 hashingColsOf = \case
-  PgNamespace -> error "pgnamespace cols missing"
+  PgNamespace -> [ JoinOid PgAuthId "nspowner", "nspacl" ]
   PgClass -> [ JoinOid PgType "reltype", JoinOid PgType "reloftype", JoinOid PgAuthId "relowner", JoinOid PgAccessMethod "relam", "relisshared", "relpersistence", "relkind", "relrowsecurity", "relforcerowsecurity", "relreplident", "relispartition", "relacl", "reloptions", "relpartbound" ]
   PgProc -> [ JoinOid PgAuthId "proowner", JoinOid PgLanguage "prolang", "procost", "prorows", JoinOid PgType "provariadic", "prokind", "prosecdef", "proleakproof", "proisstrict", "proretset", "provolatile", "proparallel", "pronargs", "pronargdefaults", JoinOid PgType "prorettype", JoinOidArray PgType "proargtypes" ,"proargmodes", "proargnames", "proargdefaults", JoinOidArray PgType "protrftypes", "prosrc", "probin", "proconfig", "proacl" ]
   PgConstraint -> [ "contype", "condeferrable", "condeferred", "convalidated", JoinOid PgClass "conrelid", JoinOid PgType "contypid", JoinOid PgClass "conindid", JoinOid PgConstraint "conparentid", JoinOid PgClass "confrelid", "confupdtype", "confdeltype", "confmatchtype", "conislocal", "coninhcount", "connoinherit", "conkey", "confkey", JoinOidArray PgOperator "conpfeqop", JoinOidArray PgOperator "conppeqop", JoinOidArray PgOperator "conffeqop", JoinOidArray PgOperator "conexclop", FullyQualifiedColumn "pg_get_constraintdef(pg_constraint.oid)" ]
@@ -87,9 +90,11 @@ hashingColsOf = \case
   PgLanguage -> error "pglanguage cols missing"
   PgType -> error "pgtype cols missing"
   PgOperator -> error "pgoperator cols missing"
-  PgAttribute -> error "pgattribute cols missing"
+  PgAttribute -> [ JoinOid PgType "atttypid", "attnotnull", FullyQualifiedColumn "(SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM pg_catalog.pg_attrdef WHERE pg_attrdef.adrelid=pg_attribute.attrelid AND pg_attrdef.adnum=pg_attribute.attnum)"
+                  , "atthasmissing", "attidentity", "attgenerated", "attislocal", "attinhcount", JoinOid PgCollation "attcollation", "attacl", "attoptions", "attfdwoptions", "attmissingval" ]
   PgTrigger -> [ JoinOid PgProc "tgfoid", "tgtype", "tgenabled", "tgisinternal", JoinOid PgClass "tgconstrrelid", JoinOid PgClass "tgconstrindid", JoinOid PgConstraint "tgconstraint", "tgdeferrable", "tginitdeferred", "tgnargs", "tgattr", "tgargs", "tgqual", "tgoldtable", "tgnewtable" ]
   PgAccessMethod -> error "pg_am cols missing"
+  PgCollation -> error "pg_collation cols missing"
 
 -- | Fully qualified column name (returns table.colname)
 fqcn :: CatalogTable -> QueryFrag -> CatalogTableColumn
@@ -172,8 +177,8 @@ instance ToQueryFrag CatalogTableColumn where
 
 -- | Stores the table's column name, a table to join to and the value to compare the joined table's objname to.
 data JoinFilter = JoinFilter QueryFrag CatalogTable ObjName
-queryObjNamesAndHashes3 :: (HasCallStack, MonadIO m) => DB.Connection -> HashableObject -> [JoinFilter] -> m [(ObjName, ObjHash)]
-queryObjNamesAndHashes3 conn hobj joinFilters = liftIO $ withQueryFrag fullQuery (DB.query conn)
+queryObjNamesAndHashes :: (HasCallStack, MonadIO m) => DB.Connection -> HashableObject -> [JoinFilter] -> m [(ObjName, ObjHash)]
+queryObjNamesAndHashes conn hobj joinFilters = liftIO $ withQueryFrag fullQuery (DB.query conn)
   where
     (objTbl, mfilters) = hashableObjCatalogTable hobj
     objNameCol = fqObjNameCol objTbl
@@ -184,42 +189,38 @@ queryObjNamesAndHashes3 conn hobj joinFilters = liftIO $ withQueryFrag fullQuery
     -- TODO: Not all catalog tables have "oid" as their identifier column
     joins = foldMap (\(JoinFilter col joinTbl joinedTblObjName) -> "\n JOIN " <> tableName joinTbl <> " ON " <> fqcn objTbl col <<> "=" <> fqcn joinTbl "oid" <<> " AND " <> fqObjNameCol joinTbl <<> QueryFrag "=?" (DB.Only joinedTblObjName)) joinFilters
 
-queryObjNamesAndHashes :: (HasCallStack, MonadIO m) => DB.Connection -> QueryFrag -> [QueryFrag] -> QueryFrag -> Maybe QueryFrag -> m [(ObjName, ObjHash)]
-queryObjNamesAndHashes conn objNameCol hashCols table filterBy = liftIO $ withQueryFrag fullQuery (DB.query conn)
-  where
-    fullQuery = "SELECT " <> objNameCol <> ", " <> hashProjection hashCols <> " FROM " <> table
-                     <> maybe "" (" WHERE " <>) filterBy
-                     <> " ORDER BY " <> objNameCol
-
 readHashesFromDatabase :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> m DbHashes
 readHashesFromDatabase conn = do
     -- TODO: Do different installations of postgres come with different schemas? We should ask the User which schemas to consider
-    schemas :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "schema_name" ["schema_owner", "default_character_set_catalog", "default_character_set_schema", "default_character_set_name" ] "information_schema.schemata" (Just $ QueryFrag "schema_name NOT IN ?" (DB.Only $ DB.In [ "information_schema" :: Text, "pg_catalog", "pg_temp_1", "pg_toast", "pg_toast_temp_1" ]))
-    roles :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes3 conn HRole []
+    -- schemas <- queryObjNamesAndHashes conn "schema_name" ["schema_owner", "default_character_set_catalog", "default_character_set_schema", "default_character_set_name" ] "information_schema.schemata" (Just $ QueryFrag "schema_name NOT IN ?" (DB.Only $ DB.In [ "information_schema" :: Text, "pg_catalog", "pg_temp_1", "pg_toast", "pg_toast_temp_1" ]))
+    schemas <- queryObjNamesAndHashes conn HSchema []
+    roles <- queryObjNamesAndHashes conn HRole []
     DbHashes <$> getSchemaHash conn schemas <*> pure (listToMap $ map (uncurry RoleHash) roles)
 
 getSchemaHash :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> [(ObjName, ObjHash)] -> m (Map ObjName SchemaHash)
 getSchemaHash conn schemas = fmap Map.fromList $ forM schemas $ \(schemaName, schemaHash) -> do
     -- TODO: do it all in a single query? it'd be nice to batch.. we could batch n+1 queries with haxl!!
     -- tables :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "table_name" ["table_type", "self_referencing_column_name", "reference_generation", "is_insertable_into", "is_typed", "commit_action"] "information_schema.tables" (Just $ QueryFrag "table_schema=?" (DB.Only schemaName))
-    tables <- queryObjNamesAndHashes3 conn HTable [JoinFilter "relnamespace" PgNamespace schemaName]
-    views <- queryObjNamesAndHashes3 conn HView [JoinFilter "relnamespace" PgNamespace schemaName]
+    tables <- queryObjNamesAndHashes conn HTable [JoinFilter "relnamespace" PgNamespace schemaName]
+    views <- queryObjNamesAndHashes conn HView [JoinFilter "relnamespace" PgNamespace schemaName]
     -- views :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "table_name" ["view_definition", "check_option", "is_updatable", "is_insertable_into", "is_trigger_updatable", "is_trigger_deletable", "is_trigger_insertable_into"] "information_schema.views" (Just $ QueryFrag "table_schema=?" (DB.Only schemaName))
     -- routines :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "specific_name" ["routine_name", "routine_type", "data_type", "routine_body", "routine_definition", "external_name", "external_language", "is_deterministic", "is_null_call", "security_type"] "information_schema.routines" (Just $ QueryFrag "specific_schema=?" (DB.Only schemaName))
-    routines <- queryObjNamesAndHashes3 conn HRoutine [JoinFilter "pronamespace" PgNamespace schemaName]
-    -- routines <- pure []
-    sequences :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "sequence_name" ["data_type", "numeric_precision", "numeric_precision_radix", "numeric_scale", "start_value", "minimum_value", "maximum_value", "increment", "cycle_option"] "information_schema.sequences" (Just $ QueryFrag "sequence_schema=?" (DB.Only schemaName))
+    routines <- queryObjNamesAndHashes conn HRoutine [JoinFilter "pronamespace" PgNamespace schemaName]
+    sequences <- queryObjNamesAndHashes conn HSequence [ JoinFilter "relnamespace" PgNamespace schemaName ]
+
     tableHashes <- getTablesHashes conn schemaName tables
     let allObjs = listToMap $ tableHashes ++ map (uncurry ViewHash) views ++ map (uncurry RoutineHash) routines ++ map (uncurry SequenceHash) sequences
     return (schemaName, SchemaHash schemaName schemaHash allObjs)
 
 getTablesHashes :: (MonadUnliftIO m, MonadIO m, HasCallStack) => DB.Connection -> ObjName -> [(ObjName, ObjHash)] -> m [SchemaObjectHash]
 getTablesHashes conn schemaName tables = forM tables $ \(tblName, tableHash) -> do
-    columns :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "column_name" ["column_default", "is_nullable", "data_type", "character_maximum_length", "character_octet_length", "numeric_precision", "numeric_precision_radix", "numeric_scale", "datetime_precision", "interval_type", "interval_precision", "collation_name", "is_identity", "identity_generation", "identity_start", "identity_increment", "identity_maximum", "identity_minimum", "identity_cycle", "is_generated", "generation_expression", "is_updatable"] "information_schema.columns" (Just $ QueryFrag "table_schema=? AND table_name=?" (schemaName, tblName))
+    -- columns :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "column_name" ["column_default", "is_nullable", "data_type", "character_maximum_length", "character_octet_length", "numeric_precision", "numeric_precision_radix", "numeric_scale", "datetime_precision", "interval_type", "interval_precision", "collation_name", "is_identity", "identity_generation", "identity_start", "identity_increment", "identity_maximum", "identity_minimum", "identity_cycle", "is_generated", "generation_expression", "is_updatable"] "information_schema.columns" (Just $ QueryFrag "table_schema=? AND table_name=?" (schemaName, tblName))
+    columns <- queryObjNamesAndHashes conn HColumn [ JoinFilter "attrelid" PgClass tblName ]
+    -- ^ PG 11 does not support the "attgenerated" column
     -- constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "constraint_name" ["constraint_type", "is_deferrable", "initially_deferred"] "information_schema.table_constraints" (Just $ QueryFrag "constraint_schema=? AND table_name=?" (schemaName, tableName))
-    constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes3 conn HTableConstraint [JoinFilter "connamespace" PgNamespace schemaName, JoinFilter "conrelid" PgClass tblName ]
+    constraints <- queryObjNamesAndHashes conn HTableConstraint [JoinFilter "connamespace" PgNamespace schemaName, JoinFilter "conrelid" PgClass tblName ]
     -- ^ PG 10 Does not have the "conparentid" column..
-    triggers :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes3 conn HTrigger [JoinFilter "tgrelid" PgClass tblName ]
+    triggers <- queryObjNamesAndHashes conn HTrigger [JoinFilter "tgrelid" PgClass tblName ]
     -- TODO: VERY IMPORTANT!! THERE CAN BE TABLES WITH THE SAME NAME IN SEPARATE SCHEMAS, AND FETCHING TRIGGERS HERE WILL FAIL ON THAT SCENARIO!!
     -- WE NEED THE CURRENT TABLE'S OID TO FIX THIS
     pure $ TableHash tblName tableHash (listToMap $ map (uncurry TableColumn) columns)

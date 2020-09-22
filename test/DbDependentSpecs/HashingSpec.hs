@@ -45,6 +45,11 @@ migrationsAndHashChange =
             , ("ALTER TABLE employee ALTER COLUMN birthday TYPE TIMESTAMP;", True)
             , ("ALTER TABLE employee ADD COLUMN IF NOT EXISTS birthday TIMESTAMP;", False)
             , ("ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-03';", True)
+            , ("ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-03';", False)
+            , ("ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-04';", True)
+
+            , ("ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;", True)
+            -- ^ Recreating a sequence should not change our schema hash.
 
             -- TODO: Column Collations
 
@@ -102,6 +107,9 @@ migrationsAndHashChange =
 
 
             -- PARTITIONING
+
+            
+            -- CREATING UNMAPPED SCHEMAS AND ROLES SHOULD NOT AFFECT HASHING
 
 
             -- CRUD
