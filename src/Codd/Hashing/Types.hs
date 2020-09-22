@@ -8,15 +8,16 @@ import Database.PostgreSQL.Simple.FromField (FromField)
 import Database.PostgreSQL.Simple.ToField (ToField)
 import System.FilePath ((</>))
 
-data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger
+data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger | HRole
 
-data DbHashes = DbHashes (Map ObjName SchemaHash) deriving stock (Show, Eq)
+data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
 -- TODO: schema search path, collations, triggers, row level security policies, permissions per table, per column... What else?
 data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)
 data TableTrigger = TableTrigger ObjName ObjHash deriving stock (Show, Eq)
+data RoleHash = RoleHash ObjName ObjHash deriving stock (Show, Eq)
 
 class IsDbObject a where
     objName :: a -> ObjName
@@ -27,8 +28,14 @@ class IsDbObject a where
 instance IsDbObject SchemaHash where
     objName (SchemaHash n _ _) = n
     objHash (SchemaHash _ h _) = h
-    hashFileRelativeToParent (SchemaHash n _ _ ) = mkPathFrag n </> "objhash"
+    hashFileRelativeToParent (SchemaHash n _ _ ) = "schemas" </> mkPathFrag n </> "objhash"
     childrenObjs (SchemaHash _ _ cs) = map DbObject $ Map.elems cs
+
+instance IsDbObject RoleHash where
+    objName (RoleHash n _) = n
+    objHash (RoleHash _ h) = h
+    hashFileRelativeToParent (RoleHash n _) = "roles" </> mkPathFrag n
+    childrenObjs (RoleHash _ _) = []
 
 instance IsDbObject SchemaObjectHash where
     objName =

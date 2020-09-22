@@ -16,6 +16,10 @@ import UnliftIO (MonadIO(..), throwIO)
 import UnliftIO.Directory (getTemporaryDirectory, createDirectory, removeDirectoryRecursive, doesDirectoryExist, listDirectory, doesFileExist, copyFile, createDirectoryIfMissing)
 
 -- TODO: A single tree-like structure that can be used both to read from disk and write to disk
+readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
+readAllHashes dir = DbHashes 
+                        <$> readMultiple (dir </> "schemas") readSchemaHash
+                        <*> readMultiple (dir </> "roles") (simpleObjHashFileRead RoleHash)
 readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaHash
 readSchemaHash dir = SchemaHash (readObjName dir)
                             <$> readFileAsHash (dir </> "objhash")
@@ -64,7 +68,7 @@ concatReaders :: (MonadError Text m, MonadIO m, Monoid s) => [m s] -> m s
 concatReaders readers = mconcat <$> sequenceA readers
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
-toFiles (DbHashes (Map.elems -> schemas)) = concatMap objToFiles (map DbObject schemas)
+toFiles (DbHashes (Map.elems -> schemas) (Map.elems -> roles)) = concatMap objToFiles $ map DbObject schemas ++ map DbObject roles
     where
         objToFiles :: DbObject -> [(FilePath, ObjHash)]
         objToFiles obj =
@@ -90,11 +94,10 @@ persistHashesToDisk dbHashes dir = do
 
 readHashesFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbHashes
 readHashesFromDisk dir = do
-    schemaFolders <- map (dir </>) <$> listDirectory dir
-    schemaHashesE <- runExceptT $ traverse readSchemaHash schemaFolders
-    case schemaHashesE of
+    allHashesE <- runExceptT $ readAllHashes dir
+    case allHashesE of
         Left err -> throwIO $ userError $ "An error happened when reading hashes from disk: " <> unpack err
-        Right schemaHashes -> return $ DbHashes $ Map.fromList $ map (\s -> (objName s,s)) schemaHashes
+        Right allHashes -> return allHashes
 
 -- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
 copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()

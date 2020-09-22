@@ -36,7 +36,7 @@ spec = do
                 it "Bogus on-disk hashes makes applying migrations fail" $
                     \emptyTestDbInfo -> do
                         let
-                            bogusDbHashes = DbHashes Map.empty
+                            bogusDbHashes = DbHashes Map.empty Map.empty
                         void @IO $ do
                             applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ], onDiskHashes = Right bogusDbHashes }) True
                                 `shouldThrow`

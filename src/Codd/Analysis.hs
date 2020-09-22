@@ -85,7 +85,9 @@ checkMigration dbInfoApp mig =
 
 -- | TODO: It'd be interesting to show which changes we detected as destructive
 someDestructiveChangeHasBeenApplied :: DbHashes -> DbHashes -> Bool
-someDestructiveChangeHasBeenApplied (DbHashes (Map.elems -> sbf)) (DbHashes (Map.elems -> saf)) = anyDrop (map DbObject sbf) (map DbObject saf)
+someDestructiveChangeHasBeenApplied (DbHashes (Map.elems -> sbf) (Map.elems -> rbf)) (DbHashes (Map.elems -> saf) (Map.elems -> raf)) =
+    anyDrop (map DbObject sbf) (map DbObject saf)
+    || anyDrop (map DbObject rbf) (map DbObject raf)
 
 anyDrop :: [DbObject] -> [DbObject] -> Bool
 anyDrop objs1 objs2 =

@@ -1,6 +1,6 @@
 module TypesGen where
 
-import Codd.Hashing (readHashesFromDisk, persistHashesToDisk, DbHashes(..), SchemaHash(..), SchemaObjectHash(..), TableColumn(..), TableConstraint(..), TableTrigger(..), ObjHash(..), ObjName(..), objName)
+import Codd.Hashing
 import Data.Function (on)
 import Data.List (nubBy)
 import qualified Data.Map.Strict as Map
@@ -11,9 +11,10 @@ import Test.QuickCheck
 newtype DbHashesGen = DbHashesGen { unDbHashesGen :: DbHashes } deriving stock Show
 
 instance Arbitrary DbHashesGen where
-    arbitrary = DbHashesGen . DbHashes <$> uniqueMapOf 3 schemaHashGen objName
+    arbitrary = fmap DbHashesGen $ DbHashes <$> uniqueMapOf 3 schemaHashGen objName <*> uniqueMapOf 2 roleHashGen objName
         where
             schemaHashGen = SchemaHash <$> genObjName <*> genObjHash <*> uniqueMapOf 100 schemaObjGen objName
+            roleHashGen = RoleHash <$> genObjName <*> genObjHash
             schemaObjGen =
                 oneof [
                     TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName <*> uniqueMapOf 1 triggerGen objName
