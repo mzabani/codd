@@ -1,7 +1,7 @@
 module DbUtils where
 
 import Codd (withDbAndDrop)
-import Codd.Types (DbVcsInfo(..), AddedSqlMigration(..), DeploymentWorkflow(..))
+import Codd.Types (CoddSettings(..), AddedSqlMigration(..), DeploymentWorkflow(..), Include(..))
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..), addUTCTime, NominalDiffTime)
 import Database.PostgreSQL.Simple (ConnectInfo(..), defaultConnectInfo)
@@ -18,35 +18,33 @@ aroundConnInfo = around $ \act -> do
     cinfo <- testConnInfo
     act cinfo
 
--- | Doesn't create a Database, doesn't create anything. Just supplies the Test DbVcsInfo from Env Vars to your test.
-aroundTestDbInfo :: SpecWith DbVcsInfo -> Spec
-aroundTestDbInfo = around $ \act -> do
+testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
+testCoddSettings migs = do
     connInfo <- testConnInfo
-    act DbVcsInfo {
+    pure CoddSettings {
             superUserConnString = connInfo
             , dbName = "codd-test-db"
             , appUser = "postgres"
-            , sqlMigrations = Right []
+            , sqlMigrations = Right migs
             , onDiskHashes = Left ""
             , deploymentWorkflow = SimpleDeployment
+            , schemasToHash = Exclude [] -- Hash every possible internal PG schema too to make our tests tougher ;)
+            , extraRolesToHash = Exclude [] -- Same for roles
         }
 
-aroundFreshDatabase :: SpecWith DbVcsInfo -> Spec
+-- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
+aroundTestDbInfo :: SpecWith CoddSettings -> Spec
+aroundTestDbInfo = around $ \act -> do
+    coddSettings <- testCoddSettings []
+    act coddSettings
+
+aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 
-aroundDatabaseWithMigs :: [AddedSqlMigration] -> SpecWith DbVcsInfo -> Spec
+aroundDatabaseWithMigs :: [AddedSqlMigration] -> SpecWith CoddSettings -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
-    connInfo <- testConnInfo
-    let
-        dbInfo = DbVcsInfo {
-            superUserConnString = connInfo
-            , dbName = "codd-test-db"
-            , appUser = "postgres"
-            , sqlMigrations = Right startingMigs
-            , onDiskHashes = Left ""
-            , deploymentWorkflow = SimpleDeployment
-        }
-    withDbAndDrop dbInfo (\_ -> act dbInfo)
+    coddSettings <- testCoddSettings startingMigs
+    withDbAndDrop coddSettings (\_ -> act coddSettings)
 
 -- | Returns a Postgres UTC Timestamp that increases with its input parameter.
 getIncreasingTimestamp :: NominalDiffTime -> DB.UTCTimestamp

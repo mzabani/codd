@@ -1,7 +1,9 @@
-module Codd.Types (SqlMigration(..), AddedSqlMigration(..), SqlFilePath(..), DbVcsInfo(..), DeploymentWorkflow(..)) where
+module Codd.Types (SqlMigration(..), AddedSqlMigration(..), SqlFilePath(..), CoddSettings(..), DeploymentWorkflow(..), SqlRole(..), SqlSchema(..), Include(..), alsoInclude) where
 
 import Codd.Hashing.Types (DbHashes)
+import Data.String (IsString)
 import Data.Text (Text)
+import Database.PostgreSQL.Simple.ToField (ToField)
 import Database.PostgreSQL.Simple.Time (UTCTimestamp)
 import qualified Database.PostgreSQL.Simple as DB
 
@@ -9,10 +11,20 @@ newtype SqlFilePath = SqlFilePath { unSqlFilePath :: FilePath } deriving newtype
 
 data DeploymentWorkflow = SimpleDeployment | BlueGreenSafeDeploymentUpToAndIncluding UTCTimestamp
 
-data DbVcsInfo = DbVcsInfo {
+newtype SqlRole = SqlRole { unSqlRole :: Text } deriving newtype (Show, ToField, IsString)
+newtype SqlSchema = SqlSchema { unSqlSchema :: Text } deriving newtype (Show, ToField, IsString)
+
+data Include a = Include [a] | Exclude [a] | IncludeExclude [a] [a]
+alsoInclude :: [a] -> Include a -> Include a
+alsoInclude is = \case
+    Include xs -> Include (is ++ xs)
+    Exclude xs -> IncludeExclude is xs
+    IncludeExclude as xs -> IncludeExclude (as ++ is) xs
+
+data CoddSettings = CoddSettings {
     dbName :: Text
     -- ^ The name of the Database the Application will connect to
-    , appUser :: Text
+    , appUser :: SqlRole
     -- ^ The name of the User which will be created and authorized to access any assets created for the App's database.
     --   This is usually the App's User.
     , superUserConnString :: DB.ConnectInfo
@@ -26,6 +38,10 @@ data DbVcsInfo = DbVcsInfo {
     , deploymentWorkflow :: DeploymentWorkflow
     -- ^ Simple or Blue-Green-Safe deployment workflow? Simple means no destructive sections are allowed for any migrations and Blue-Green-Safe means
     -- developers have to keep a file which points to the timestamp of the last migration up to which and including it destructive sections must run the next time.
+    , schemasToHash :: Include SqlSchema
+    -- ^ Selection of Schemas in the DB that we should hash.
+    , extraRolesToHash :: Include SqlRole
+    -- ^ Selection of Roles to hash. Note that the appUser and the super user from superUserConnString are always included.
 }
 
 data SqlMigration = SqlMigration {

@@ -1,11 +1,12 @@
-module Codd.Environment (connStringParser, getAdminConnInfo, getDbVcsInfo, appUserInAppDatabaseConnInfo, superUserInAppDatabaseConnInfo) where
+module Codd.Environment (connStringParser, getAdminConnInfo, getCoddSettings, appUserInAppDatabaseConnInfo, superUserInAppDatabaseConnInfo) where
 
-import Codd.Types (DbVcsInfo(..), DeploymentWorkflow(..))
+import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), Include(..), SqlRole(..), SqlSchema(..))
 import Codd.Parsing (parseMigrationTimestamp)
 import Control.Applicative ((<|>))
 import Control.Monad (void, when)
+import Data.Bifunctor (bimap)
 import Database.PostgreSQL.Simple (ConnectInfo(..))
-import Data.Attoparsec.Text (Parser, char, decimal, endOfInput, parseOnly, peekChar, string)
+import Data.Attoparsec.Text (Parser, char, decimal, endOfInput, parseOnly, peekChar, string, skipSpace)
 import qualified Data.Attoparsec.Text as Parsec
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -53,6 +54,13 @@ connStringParser = do
               when (x == "") $ fail $ "Could not find a " <> idName <> " in the connection string."
               pure x
 
+-- | Considers backslash as an espace character for space.
+spaceSeparatedObjNameParser :: Parser [Text]
+spaceSeparatedObjNameParser = do
+    v <- parseWithEscapeChar (== ' ')
+    skipSpace
+    (endOfInput *> pure [v]) <|> fmap (v :) spaceSeparatedObjNameParser
+
 readEnv :: MonadIO m => String -> m Text
 readEnv var = maybe (error $ "Could not find environment variable '" ++ var ++ "'") Text.pack <$> lookupEnv var
 
@@ -74,21 +82,39 @@ getAdminConnInfo = do
         Left err -> error $ "Error parsing the connection string in environment variable ADMIN_DATABASE_URL: " ++ err
         Right connInfo -> pure connInfo
 
-getDbVcsInfo :: MonadIO m => m DbVcsInfo
-getDbVcsInfo = do
+getCoddSettings :: MonadIO m => m CoddSettings
+getCoddSettings = do
     adminConnInfo <- getAdminConnInfo
     appDbName <- readEnv "APP_DATABASE"
-    appUserName <- readEnv "APP_USERNAME"
+    appUserName <- SqlRole <$> readEnv "APP_USERNAME"
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
     -- TODO: Do we throw on empty sqlMigrationPaths?
     onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
     destructiveUpTo <- parseEnv SimpleDeployment (fmap BlueGreenSafeDeploymentUpToAndIncluding . parseMigrationTimestamp) "CODD_DESTROY_UP_TO_AND_INCLUDING"
-    pure DbVcsInfo { dbName = appDbName, appUser = appUserName, superUserConnString = adminConnInfo, sqlMigrations = Left sqlMigrationPaths, onDiskHashes = Left onDiskHashesDir, deploymentWorkflow = destructiveUpTo }
+    schemasToHash <- parseEnv (error "Please define the CODD_SCHEMAS environment variable with a space separated list of schema names")
+                              (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
+                              "CODD_SCHEMAS"
+    extraRolesToHash <- parseEnv (error "Please define the CODD_EXTRA_ROLES environment variable with a space separated list of extra roles")
+                              (fmap (Include . map SqlRole) . parseVar spaceSeparatedObjNameParser)
+                              "CODD_EXTRA_ROLES"
+    pure CoddSettings {
+        dbName = appDbName
+        , appUser = appUserName
+        , superUserConnString = adminConnInfo
+        , sqlMigrations = Left sqlMigrationPaths
+        , onDiskHashes = Left onDiskHashesDir
+        , deploymentWorkflow = destructiveUpTo
+        , schemasToHash = schemasToHash
+        , extraRolesToHash = extraRolesToHash
+        }
+
+    where
+        parseVar parser = bimap Text.pack id . parseOnly (parser <* endOfInput) . Text.pack
 
 -- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
-superUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo
-superUserInAppDatabaseConnInfo DbVcsInfo { superUserConnString, dbName } = superUserConnString { connectDatabase = Text.unpack dbName }
+superUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
+superUserInAppDatabaseConnInfo CoddSettings { superUserConnString, dbName } = superUserConnString { connectDatabase = Text.unpack dbName }
 
 -- | Returns a `ConnectInfo` that will connect to the App's Database with the App's User's credentials.
-appUserInAppDatabaseConnInfo :: DbVcsInfo -> ConnectInfo
-appUserInAppDatabaseConnInfo DbVcsInfo { superUserConnString, dbName, appUser } = superUserConnString { connectDatabase = Text.unpack dbName, connectUser = Text.unpack appUser }
+appUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
+appUserInAppDatabaseConnInfo CoddSettings { superUserConnString, dbName, appUser } = superUserConnString { connectDatabase = Text.unpack dbName, connectUser = Text.unpack (unSqlRole appUser) }

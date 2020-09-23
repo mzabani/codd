@@ -4,7 +4,7 @@ import qualified Codd as Codd
 import qualified Codd.Environment as Codd
 import qualified Codd.Hashing as Codd
 import qualified Codd.Internal as Codd
-import Codd.Types (DbVcsInfo(..), SqlFilePath(..))
+import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Commands.AddMigration (addMigration)
 import Commands.CheckMigration (checkMigrationFile)
 import Commands.VerifyDb (verifyDb)
@@ -49,17 +49,17 @@ optionalStrOption optFields = fmap nothingOnEmpty $ strOption (optFields <> valu
 main :: IO ()
 main = do
   parsedCmd <- execParser opts
-  dbVcsInfo <- Codd.getDbVcsInfo
+  dbVcsInfo <- Codd.getCoddSettings
   doWork dbVcsInfo parsedCmd
   where
     opts = info (cmdParser <**> helper)
       ( fullDesc
       )
 
-doWork :: DbVcsInfo -> Cmd -> IO ()
+doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo UpDev = do
   Codd.applyMigrations dbInfo False
-  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) Codd.readHashesFromDatabase
+  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
   onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") (onDiskHashes dbInfo)
   Codd.persistHashesToDisk hashes onDiskHashesDir
 doWork dbInfo UpDeploy = Codd.applyMigrations dbInfo True
@@ -67,5 +67,5 @@ doWork dbInfo (Analyze fp) = checkMigrationFile dbInfo fp
 doWork dbInfo (Add alsoApply destFolder fp) = addMigration dbInfo alsoApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = verifyDb dbInfo verbose
 doWork dbInfo (DbHashes dirToSave) = do
-  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) Codd.readHashesFromDatabase
+  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
   Codd.persistHashesToDisk hashes dirToSave

@@ -4,17 +4,17 @@ import qualified Codd as Codd
 import Codd.AppCommands (timestampAndMoveMigrationFile)
 import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
-import Codd.Hashing (readHashesFromDatabase, persistHashesToDisk)
+import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
 import Codd.Internal (connectAndDispose)
 import Codd.Parsing (parseSqlMigration)
-import Codd.Types (DbVcsInfo(..), SqlFilePath(..))
+import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import qualified Data.Text.IO as Text
 import System.FilePath (takeFileName)
 import UnliftIO.Directory (doesFileExist)
 
-addMigration :: DbVcsInfo -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
-addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations, onDiskHashes }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
+addMigration :: CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
+addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
   finalDir <- case (destFolder, sqlMigrations) of
         (Just f, _) -> pure f
         (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the SQL_MIGRATION_PATHS environment variable."
@@ -39,5 +39,5 @@ addMigration dbInfo@(Codd.DbVcsInfo { sqlMigrations, onDiskHashes }) alsoApply d
         putStrLn $ "Migration added to " ++ finalMigFile
         when alsoApply $ do
             Codd.applyMigrations dbInfo False
-            hashes <- connectAndDispose (superUserInAppDatabaseConnInfo dbInfo) readHashesFromDatabase
+            hashes <- connectAndDispose (superUserInAppDatabaseConnInfo dbInfo) (readHashesFromDatabaseWithSettings dbInfo)
             persistHashesToDisk hashes onDiskHashesDir

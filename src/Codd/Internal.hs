@@ -4,8 +4,8 @@ import Prelude hiding (readFile)
 
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
-import Codd.Types (DbVcsInfo(..), DeploymentWorkflow(..), SqlMigration(..), AddedSqlMigration(..))
-import Codd.Hashing (DbHashes, readHashesFromDatabase)
+import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), SqlMigration(..), AddedSqlMigration(..), SqlRole(..))
+import Codd.Hashing (DbHashes, readHashesFromDatabaseWithSettings)
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
@@ -45,11 +45,11 @@ beginCommitTxnBracket conn f = do
 beginRollbackTxnBracket :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
 beginRollbackTxnBracket conn f = (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
 
-applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a) -> DbVcsInfo-> Maybe DbHashes -> m a
-applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbName, appUser, sqlMigrations, deploymentWorkflow }) hashCheck = do
+applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a) -> CoddSettings-> Maybe DbHashes -> m a
+applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName, appUser, sqlMigrations, deploymentWorkflow }) hashCheck = do
     let
         unsafeDbName = dbIdentifier dbName
-        unsafeAppUser = dbIdentifier appUser
+        unsafeAppUser = dbIdentifier $ unSqlRole appUser
     liftIO $ putStr "Parse-checking all SQL Migrations... "
     parsedMigrations :: [AddedSqlMigration] <- either (\(sqlDirs :: [FilePath]) -> do
         sqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
@@ -92,7 +92,7 @@ applyMigrationsInternal txnBracket txnApp (DbVcsInfo { superUserConnString, dbNa
             case hashCheck of
                 Nothing -> pure ret
                 Just h -> do
-                    dbhashes <- readHashesFromDatabase conn
+                    dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
                     when (dbhashes /= h) $ throwIO $ userError $ "DB Hash check failed. Aborting applying migrations."
                     pure ret
     
@@ -113,7 +113,6 @@ baseApplyMigsBlock actionAfter conn deploymentWorkflow sqlMigrations = do
     -- let missingInOrder = [(mig, destApplied) | mig <- sqlMigrations, (missingName, destApplied) <- missing, migrationName mig == missingName]
     case deploymentWorkflow of
         BlueGreenSafeDeploymentUpToAndIncluding timestampLastMigration -> do
-            liftIO $ putStrLn $ "BlueGreen up to " ++ show timestampLastMigration
             missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.query conn "WITH allMigrations (name) AS (VALUES ?) SELECT allMigrations.name FROM allMigrations JOIN sql_migrations applied USING (name) WHERE applied.dest_section_applied_at IS NULL AND applied.migration_timestamp <= ?" (DB.In migNames, timestampLastMigration)
             liftIO $ putStrLn $ "Destructive sections of " ++ show missing
             let missingInOrder :: [AddedSqlMigration] = filter ((`elem` missing) . migrationName . addedSqlMig) sqlMigrations

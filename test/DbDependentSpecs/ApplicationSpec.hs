@@ -2,7 +2,7 @@ module DbDependentSpecs.ApplicationSpec where
 
 import Codd (withDbAndDrop, applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Types (DbVcsInfo(..), AddedSqlMigration(..), SqlMigration(..))
+import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..))
 import Codd.Hashing.Types (DbHashes(..))
 import Control.Monad (when, void)
 import qualified Data.Map.Strict as Map

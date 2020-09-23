@@ -2,7 +2,7 @@ module DbDependentSpecs.AnalysisSpec where
 
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Types (DbVcsInfo(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when)
 import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp)
 import qualified Database.PostgreSQL.Simple as DB

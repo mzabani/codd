@@ -2,10 +2,10 @@ module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), Destru
 
 -- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
-import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), readHashesFromDatabase, childrenObjs)
+import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), readHashesFromDatabaseWithSettings, childrenObjs)
 import Codd.Internal
 import Codd.Query (unsafeQuery1)
-import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..), DbVcsInfo(..))
+import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..), CoddSettings(..))
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Database.PostgreSQL.Simple as DB
@@ -35,7 +35,7 @@ migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (Destru
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.
 --   2. non-destructive migration is destructive without 'force' option (not a perfect algorithm, but helpful for most common cases).
 -- This function can only be used for Migrations that haven't been added yet.
-checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => DbVcsInfo -> SqlMigration -> m MigrationCheck
+checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m MigrationCheck
 checkMigration dbInfoApp mig =
     -- TODO: If there are no-txn non-destructive migrations, create a separate throw-away DB to do this
     -- TODO: What if this migration is itself no-txn ?
@@ -54,7 +54,7 @@ checkMigration dbInfoApp mig =
         getTxId conn = fmap DB.fromOnly $ unsafeQuery1 conn "SELECT txid_current()" ()
         
         runLast conn = do
-            hbef <- readHashesFromDatabase conn
+            hbef <- readHashesFromDatabaseWithSettings dbInfoApp conn
             txId1 <- getTxId conn
             -- TODO: because we are inside a transaction here, if the migration attempts to
             -- do something that can't be done in a transaction we should expect a specific exception..
@@ -64,8 +64,7 @@ checkMigration dbInfoApp mig =
             -- in case of bugs too.
             applySingleMigration conn ApplyNonDestructiveOnly thisMigrationAdded
             txId2 <- getTxId conn
-            haft <- readHashesFromDatabase conn
-            liftIO $ putStrLn $ "TxIds equal: " <> show (txId1 == txId2)
+            haft <- readHashesFromDatabaseWithSettings dbInfoApp conn
 
             -- If the non-destructive section ended the transaction, we should start a new one here!
             (txId3, txId4) <- (if txId1 == txId2 then id else beginRollbackTxnBracket conn) $ do

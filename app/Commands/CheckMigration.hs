@@ -2,13 +2,13 @@ module Commands.CheckMigration (checkMigrationFile) where
 
 import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Parsing (parseSqlMigration)
-import Codd.Types (DbVcsInfo, SqlFilePath(..))
+import Codd.Types (CoddSettings, SqlFilePath(..))
 import Control.Monad (unless, forM_)
 import qualified Data.Text.IO as Text
 import System.FilePath (takeFileName)
 import UnliftIO.Directory (doesFileExist)
 
-checkMigrationFile :: DbVcsInfo -> SqlFilePath -> IO ()
+checkMigrationFile :: CoddSettings -> SqlFilePath -> IO ()
 checkMigrationFile dbInfo (SqlFilePath fp) = do
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp

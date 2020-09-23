@@ -3,10 +3,10 @@ module DbDependentSpecs.InvariantsSpec where
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Environment (appUserInAppDatabaseConnInfo)
-import Codd.Hashing (readHashesFromDatabase)
+import Codd.Hashing (readHashesFromDatabaseWithSettings)
 import Codd.Internal (connectAndDispose)
 import Codd.Parsing (toMigrationTimestamp)
-import Codd.Types (DbVcsInfo(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
@@ -84,7 +84,7 @@ spec = do
                     let dbInfo = intactDbInfo {
                         sqlMigrations = Right [ lotsOfObjectsMigration ]
                     }
-                    dbHashes1 <- withDbAndDrop dbInfo (flip connectAndDispose readHashesFromDatabase)
+                    dbHashes1 <- withDbAndDrop dbInfo (flip connectAndDispose (readHashesFromDatabaseWithSettings dbInfo))
                     threadDelay (5 * 1000 * 1000)
-                    dbHashes2 <- withDbAndDrop dbInfo (flip connectAndDispose readHashesFromDatabase)
+                    dbHashes2 <- withDbAndDrop dbInfo (flip connectAndDispose (readHashesFromDatabaseWithSettings dbInfo))
                     dbHashes1 `shouldBe` dbHashes2

@@ -3,10 +3,10 @@ module DbDependentSpecs.HashingSpec where
 import Codd (applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
-import Codd.Hashing (readHashesFromDatabase)
+import Codd.Hashing (readHashesFromDatabaseWithSettings)
 import Codd.Internal (connectAndDispose)
 import Codd.Parsing (toMigrationTimestamp)
-import Codd.Types (DbVcsInfo(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void, foldM)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
@@ -128,8 +128,8 @@ spec = do
                 it "Because our DB hashing is so complex, let's make sure operations we know should change schema compatibility do" $ \emptyDbInfo -> do
                     let
                         connInfo = superUserInAppDatabaseConnInfo emptyDbInfo
-                        getHashes = connectAndDispose connInfo readHashesFromDatabase
-                    hashBeforeEverything <- getHashes
+                        getHashes sett = connectAndDispose connInfo (readHashesFromDatabaseWithSettings sett)
+                    hashBeforeEverything <- getHashes emptyDbInfo
                     void $
                         foldM (\(hashSoFar, appliedMigs :: [AddedSqlMigration]) (nextMig, nextMigModifiesSchema) -> do
                             let
@@ -138,7 +138,7 @@ spec = do
                                     sqlMigrations = Right newMigs
                                 }
                             applyMigrations dbInfo False
-                            dbHashesAfterMig <- getHashes
+                            dbHashesAfterMig <- getHashes dbInfo
                             case nextMigModifiesSchema of
                                 True -> dbHashesAfterMig `shouldNotBe` hashSoFar
                                 False -> dbHashesAfterMig `shouldBe` hashSoFar
