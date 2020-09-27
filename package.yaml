@@ -32,6 +32,7 @@ dependencies:
 - containers
 
 default-extensions:
+  - DeriveFunctor
   - DerivingStrategies
   - LambdaCase
   - FlexibleContexts
@@ -41,11 +42,14 @@ default-extensions:
   - MultiParamTypeClasses
   - NamedFieldPuns
   - OverloadedStrings
+  - TypeFamilies
   - RankNTypes
   - RecordWildCards
   - ScopedTypeVariables
+  - StandaloneDeriving
   - TupleSections
   - TypeApplications
+  - TypeFamilyDependencies
   - ViewPatterns
 
 library:
