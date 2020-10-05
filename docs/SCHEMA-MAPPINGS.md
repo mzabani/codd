@@ -227,3 +227,21 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html
 - rolconnlimit: For roles that can log in, this sets maximum number of concurrent connections this role can make. -1 means no limit.
 - rolpassword: Password (possibly encrypted); null if none. The format depends on the form of encryption used.
 - rolvaliduntil: Password expiry time (only used for password authentication); null if no expiration
+
+
+## Row Level Security Policis
+
+https://www.postgresql.org/docs/12/catalog-pg-policy.html
+
+### Columns included
+
+"polcmd",
+"polpermissive",
+OidArrayColumn PgAuthId "polroles",
+"pg_get_expr(polqual, polrelid)",
+"pg_get_expr(polwithcheck, polrelid)"
+
+### Ignored columns
+
+- polname: The name of the policy
+- polrelid:	The table to which the policy applies

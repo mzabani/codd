@@ -31,19 +31,13 @@ readSchemaHash dir = SchemaHash (readObjName dir)
 readTable, readView, readRoutine, readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaObjectHash
 readTable dir = TableHash (readObjName dir)
                         <$> readFileAsHash (dir </> "objhash")
-                        <*> readMultiple (dir </> "cols") readTableColumn
-                        <*> readMultiple (dir </> "constraints") readTableConstraint
-                        <*> readMultiple (dir </> "triggers") readTableTrigger
+                        <*> readMultiple (dir </> "cols") (simpleObjHashFileRead TableColumn)
+                        <*> readMultiple (dir </> "constraints") (simpleObjHashFileRead TableConstraint)
+                        <*> readMultiple (dir </> "triggers") (simpleObjHashFileRead TableTrigger)
+                        <*> readMultiple (dir </> "policies") (simpleObjHashFileRead TablePolicy)
 readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash
-
-readTableColumn :: (MonadError Text m, MonadIO m) => FilePath -> m TableColumn
-readTableColumn = simpleObjHashFileRead TableColumn
-readTableConstraint :: (MonadError Text m, MonadIO m) => FilePath -> m TableConstraint
-readTableConstraint = simpleObjHashFileRead TableConstraint
-readTableTrigger :: (MonadError Text m, MonadIO m) => FilePath -> m TableTrigger
-readTableTrigger = simpleObjHashFileRead TableTrigger
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName

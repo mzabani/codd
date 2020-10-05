@@ -254,6 +254,8 @@ getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
       -- constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "constraint_name" ["constraint_type", "is_deferrable", "initially_deferred"] "information_schema.table_constraints" (Just $ QueryFrag "constraint_schema=? AND table_name=?" (schemaName, tableName))
       constraints <- dataFetch $ GetHashesReq HTableConstraint [schemaName, tblName] (underTableFilter HTableConstraint schemaName tblName)
       triggers <- dataFetch $ GetHashesReq HTrigger [schemaName, tblName] (underTableFilter HTrigger schemaName tblName)
+      policies <- dataFetch $ GetHashesReq HPolicy [schemaName, tblName] (underTableFilter HPolicy schemaName tblName)
       pure $ TableHash tblName tableHash (listToMap $ map (uncurry TableColumn) columns)
                                          (listToMap $ map (uncurry TableConstraint) constraints)
                                          (listToMap $ map (uncurry TableTrigger) triggers)
+                                         (listToMap $ map (uncurry TablePolicy) policies)

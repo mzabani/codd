@@ -4,7 +4,7 @@ import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), J
 import Codd.Hashing.Types (HashableObject(..))
 
 data Pg10 = Pg10
-data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation deriving stock Show
+data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy deriving stock Show
 
 instance DbVersionHash Pg10 where
     type CatTable Pg10 = CatalogTable
@@ -18,6 +18,7 @@ instance DbVersionHash Pg10 where
         HTableConstraint -> (PgConstraint, Nothing)
         HTrigger -> (PgTrigger, Nothing)
         HRole -> (PgAuthId, Nothing)
+        HPolicy -> (PgPolicy, Nothing)
 
     tableName = \case
         PgNamespace -> "pg_namespace"
@@ -32,6 +33,7 @@ instance DbVersionHash Pg10 where
         PgTrigger -> "pg_trigger"
         PgAccessMethod -> "pg_am"
         PgCollation -> "pg_collation"
+        PgPolicy -> "pg_policy"
 
     fqObjNameCol = \case
         PgNamespace -> RegularColumn PgNamespace "nspname"
@@ -46,6 +48,7 @@ instance DbVersionHash Pg10 where
         PgTrigger -> RegularColumn PgTrigger "tgname"
         PgAccessMethod -> RegularColumn PgAccessMethod "amname"
         PgCollation -> RegularColumn PgCollation "collname"
+        PgPolicy -> RegularColumn PgPolicy "polname"
 
     fqTableIdentifyingCols tbl = fqObjNameCol tbl : case tbl of
         PgNamespace -> []
@@ -60,6 +63,7 @@ instance DbVersionHash Pg10 where
         PgTrigger -> []
         PgAccessMethod -> []
         PgCollation -> [ "collencoding" ]
+        PgPolicy -> []
 
     hashingColsOf = \case
         PgNamespace -> [ OidColumn PgAuthId "nspowner", "nspacl" ]
@@ -75,6 +79,7 @@ instance DbVersionHash Pg10 where
         PgTrigger -> [ OidColumn PgProc "tgfoid", "tgtype", "tgenabled", "tgisinternal", OidColumn PgClass "tgconstrrelid", OidColumn PgClass "tgconstrindid", OidColumn PgConstraint "tgconstraint", "tgdeferrable", "tginitdeferred", "tgnargs", "tgattr", "tgargs", "tgqual", "tgoldtable", "tgnewtable" ]
         PgAccessMethod -> error "pg_am cols missing"
         PgCollation -> error "pg_collation cols missing"
+        PgPolicy -> [ "polcmd", "polpermissive", OidArrayColumn PgAuthId "polroles", "pg_get_expr(polqual, polrelid)", "pg_get_expr(polwithcheck, polrelid)" ]
 
     filtersForSchemas includedSchemas = ([], [ ColumnIn (fqObjNameCol PgNamespace) includedSchemas ])
     filtersForRoles includedRoles = ([], [ ColumnIn (fqObjNameCol PgAuthId) includedRoles ])
@@ -90,4 +95,5 @@ instance DbVersionHash Pg10 where
         HColumn -> ([ JoinTable "attrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
         HTableConstraint -> ([ JoinTable "conrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
         HTrigger -> ([ JoinTable "tgrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
+        HPolicy -> ([ JoinTable "polrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ] )
         _ -> ([ ], [ ])

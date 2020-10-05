@@ -98,6 +98,13 @@ migrationsAndHashChange =
 
 
             -- ROW LEVEL SECURITY
+            , ("ALTER TABLE employee ENABLE ROW LEVEL SECURITY", True)
+            , ("CREATE POLICY some_policy ON employee USING (employee_name <> 'Some Name');", True)
+            , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee USING (employee_name <> 'Some Other Name');", True)
+            , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee FOR UPDATE USING (employee_name <> 'Some Other Name');", True)
+            , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee FOR UPDATE USING (employee_name <> 'Some Other Name') WITH CHECK (TRUE);", True)
+            , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee FOR UPDATE USING (employee_name <> 'Some Other Name') WITH CHECK (TRUE);", False)
+            , ("DROP POLICY some_policy ON employee;", True)
 
 
             -- PERMISSIONS

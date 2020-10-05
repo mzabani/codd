@@ -1,6 +1,5 @@
 # TODO
 
-- Check hashes after applying migrations on deployment and fail if they don't match!!
 - Don't expose SqlMigration(..), because to create it the SQL must go through the Parser to detect empty queries and Analysis to detect in-txn which don't work..
    Or do we allow those as runtime errors?
 - CLI

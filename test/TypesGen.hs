@@ -17,7 +17,7 @@ instance Arbitrary DbHashesGen where
             roleHashGen = RoleHash <$> genObjName <*> genObjHash
             schemaObjGen =
                 oneof [
-                    TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName <*> uniqueMapOf 1 triggerGen objName
+                    TableHash <$> genObjName <*> genObjHash <*> uniqueMapOf 20 colGen objName <*> uniqueMapOf 5 constraintGen objName <*> uniqueMapOf 1 triggerGen objName <*> uniqueMapOf 2 policyGen objName
                     , ViewHash <$> genObjName <*> genObjHash
                     , RoutineHash <$> genObjName <*> genObjHash
                     , SequenceHash <$> genObjName <*> genObjHash
@@ -25,6 +25,7 @@ instance Arbitrary DbHashesGen where
             colGen = TableColumn <$> genObjName <*> genObjHash
             constraintGen = TableConstraint <$> genObjName <*> genObjHash
             triggerGen = TableTrigger <$> genObjName <*> genObjHash
+            policyGen = TablePolicy <$> genObjName <*> genObjHash
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy = nubBy ((==) `on` uniqBy) <$> resize size (listOf gen)
