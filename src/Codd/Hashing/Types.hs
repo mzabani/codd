@@ -1,14 +1,18 @@
 module Codd.Hashing.Types where
 
+import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple.FromField (FromField)
 import Database.PostgreSQL.Simple.ToField (ToField)
+import GHC.Generics (Generic)
 import System.FilePath ((</>))
 
 data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableConstraint | HTrigger | HRole | HSequence
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass Hashable
 
 data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
@@ -97,9 +101,9 @@ fromPathFrag :: FilePath -> ObjName
 fromPathFrag fp = ObjName $ Text.pack fp
 
 newtype ObjHash = ObjHash { unObjHash :: Text }
-    deriving newtype (FromField, Eq, Ord, Show)
-newtype ObjName = ObjName { unObjName :: Text } 
-    deriving newtype (FromField, ToField, Eq, Ord, Show)
+    deriving newtype (FromField, Eq, Ord, Show, Hashable)
+newtype ObjName = ObjName { unObjName :: Text }
+    deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable)
 
 listToMap :: IsDbObject o => [o] -> Map ObjName o
 listToMap = Map.fromList . map (\obj -> (objName obj, obj))

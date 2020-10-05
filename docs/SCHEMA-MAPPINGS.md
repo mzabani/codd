@@ -18,7 +18,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-namespace.html
 
 ### Columns included
 
-JoinOid PgAuthId "nspowner",
+OidColumn PgAuthId "nspowner",
 "nspacl"
 
 ### Ignored columns
@@ -32,10 +32,10 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-class.html
 
 ### Columns included
 
-JoinOid PgType "reltype",
-JoinOid PgType "reloftype",
-JoinOid PgAuthId "relowner",
-JoinOid PgAccessMethod "relam",
+OidColumn PgType "reltype",
+OidColumn PgType "reloftype",
+OidColumn PgAuthId "relowner",
+OidColumn PgAccessMethod "relam",
 "relisshared",
 "relpersistence",
 "relkind",
@@ -75,15 +75,15 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-attribute.html
 
 ### Columns included
 
-JoinOid PgType "atttypid",
+OidColumn PgType "atttypid",
 "attnotnull",
-FullyQualifiedColumn "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM pg_catalog.pg_attrdef WHERE pg_attrdef.adrelid=pg_attribute.attrelid AND pg_attrdef.adnum=pg_attribute.attnum" -- This is what we use instead of "atthasdef", which is described as: This column has a default expression or generation expression, in which case there will be a corresponding entry in the pg_attrdef catalog that actually defines the expression. (Check attgenerated to determine whether this is a default or a generation expression.)
+PureSqlExpression "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM pg_catalog.pg_attrdef WHERE pg_attrdef.adrelid=pg_attribute.attrelid AND pg_attrdef.adnum=pg_attribute.attnum" -- This is what we use instead of "atthasdef", which is described as: This column has a default expression or generation expression, in which case there will be a corresponding entry in the pg_attrdef catalog that actually defines the expression. (Check attgenerated to determine whether this is a default or a generation expression.)
 "atthasmissing",
 "attidentity",
 "attgenerated",
 "attislocal",
 "attinhcount",
-JoinOid PgCollation "attcollation",
+OidColumn PgCollation "attcollation",
 "attacl",
 "attoptions",
 "attfdwoptions",
@@ -110,11 +110,9 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-proc.html
 
 ### Columns included
 
-JoinOid PgAuthId "proowner",
-JoinOid PgLanguage "prolang",
-"procost",
-"prorows",
-JoinOid PgType "provariadic",
+OidColumn PgAuthId "proowner",
+OidColumn PgLanguage "prolang",
+OidColumn PgType "provariadic",
 "prokind",
 "prosecdef",
 "proleakproof",
@@ -124,12 +122,13 @@ JoinOid PgType "provariadic",
 "proparallel",
 "pronargs",
 "pronargdefaults",
-JoinOid PgType "prorettype",
-JoinOidArray PgType "proargtypes",
+OidColumn PgType "prorettype",
+OidArrayColumn PgType "proargtypes",
+OidArrayColumn PgType "proallargtypes",
 "proargmodes",
 "proargnames",
 "proargdefaults",
-JoinOidArray PgType "protrftypes",
+OidArrayColumn PgType "protrftypes",
 "prosrc",
 "probin",
 "proconfig",
@@ -138,9 +137,10 @@ JoinOidArray PgType "protrftypes",
 ### Ignored columns
 
 - oid
+- proname
 - pronamespace
-- proallargtypes: An array with the data types of the function arguments. This includes all arguments (including OUT and INOUT arguments); however, if all the arguments are IN arguments, this field will be null. Note that subscripting is 1-based, whereas for historical reasons proargtypes is subscripted from 0.
-
+- procost
+- prorows
 
 ## Constraints
 
@@ -152,11 +152,11 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-constraint.html
 "condeferrable",
 "condeferred",
 "convalidated",
-JoinOid PgClass "conrelid",
-JoinOid PgType "contypid",
-JoinOid PgClass "conindid"
-JoinOid PgConstraint "conparentid",
-JoinOid PgClass "confrelid",
+OidColumn PgClass "conrelid",
+OidColumn PgType "contypid",
+OidColumn PgClass "conindid"
+OidColumn PgConstraint "conparentid",
+OidColumn PgClass "confrelid",
 "confupdtype",
 "confdeltype",
 "confmatchtype",
@@ -165,10 +165,10 @@ JoinOid PgClass "confrelid",
 "connoinherit",
 "conkey", -- TODO: Should we join on pg_attribute and use names of columns instead of their positions?
 "confkey",	-- TODO: Should we join on pg_attribute and use names of columns instead of their positions?
-JoinOidArray PgOperator "conpfeqop",
-JoinOidArray PgOperator "conppeqop",
-JoinOidArray PgOperator "conffeqop",
-JoinOidArray PgOperator "conexclop",
+OidArrayColumn PgOperator "conpfeqop",
+OidArrayColumn PgOperator "conppeqop",
+OidArrayColumn PgOperator "conffeqop",
+OidArrayColumn PgOperator "conexclop",
 "pg_get_constraintdef(pg_constraint.oid)" -- NOTE: The docs recommend using this functions instead of "conbin"
 
 ### Ignored columns
@@ -184,13 +184,13 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 
 ### Columns included
 
-JoinOid PgProc "tgfoid",
+OidColumn PgProc "tgfoid",
 "tgtype",
 "tgenabled",
 "tgisinternal",
-JoinOid PgClass "tgconstrrelid",
-JoinOid PgClass "tgconstrindid",
-JoinOid PgConstraint "tgconstraint",
+OidColumn PgClass "tgconstrrelid",
+OidColumn PgClass "tgconstrindid",
+OidColumn PgConstraint "tgconstraint",
 "tgdeferrable",
 "tginitdeferred",
 "tgnargs",

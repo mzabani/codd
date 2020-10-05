@@ -139,9 +139,17 @@ spec = do
                                 }
                             applyMigrations dbInfo False
                             dbHashesAfterMig <- getHashes dbInfo
+                            let migText = nonDestructiveSql $ addedSqlMig nextMig
                             case nextMigModifiesSchema of
-                                True -> dbHashesAfterMig `shouldNotBe` hashSoFar
-                                False -> dbHashesAfterMig `shouldBe` hashSoFar
+                                True -> do
+                                    if hashSoFar == dbHashesAfterMig then do
+                                        print hashSoFar
+                                        print dbHashesAfterMig
+                                        print migText
+                                        error "Equal but should not be"
+                                    else pure ()
+                                    -- (migText, dbHashesAfterMig) `shouldNotBe` (migText, hashSoFar)
+                                False -> (migText, dbHashesAfterMig) `shouldBe` (migText, hashSoFar)
 
                             return (dbHashesAfterMig, newMigs)
                         ) (hashBeforeEverything, []) migrationsAndHashChange

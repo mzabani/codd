@@ -1,9 +1,12 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Codd.Hashing.Database.Model where
 
 import Codd.Hashing.Types
+import Codd.Types (Include(..), SqlSchema, SqlRole)
 import Data.String (IsString(..))
 import Database.PostgreSQL.Simple (ToRow, Query)
 import qualified Database.PostgreSQL.Simple as DB
+import qualified Database.PostgreSQL.Simple.ToField as DB
 
 data QueryFrag = forall a. ToRow a => QueryFrag Query a
 instance IsString QueryFrag where
@@ -34,22 +37,32 @@ instance ToQueryFrag QueryFrag where
 
 instance DbVersionHash a => ToQueryFrag (CatalogTableColumn a) where
   toQueryFrag = \case
-    UnqualifiedColumn col -> col
-    FullyQualifiedColumn col -> col
-    JoinOid tbl col -> tableName tbl <> "." <> col
-    JoinOidArray tbl col -> tableName tbl <> "." <> col
+    RegularColumn tbl col -> tableName tbl <> "." <> col
+    OidColumn tbl col -> tableName tbl <> "." <> col
+    OidArrayColumn tbl col -> tableName tbl <> "." <> col
+    PureSqlExpression q -> q
 
--- | Stores the table's column name, a table to join to and the value to compare the joined table's objname to.
-data JoinFilter a = JoinFilter QueryFrag (CatTable a) ObjName
-mapJoinFilterTbl :: (CatTable a -> CatTable b) -> JoinFilter a -> JoinFilter b
-mapJoinFilterTbl f (JoinFilter q t n) = JoinFilter q (f t) n
+-- | Stores the name of the column with an OID and a table to join to based on equality for that column.
+data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a)
+mapJoinTableTbl :: (CatTable a -> CatTable b) -> JoinTable a -> JoinTable b
+mapJoinTableTbl f (JoinTable col t) = JoinTable (mapCatTableCol f col) (f t)
+
+data ColumnComparison a = forall b. DB.ToField b => ColumnEq (CatalogTableColumn a) b | forall b. DB.ToField b => ColumnIn (CatalogTableColumn a) (Include b)
+mapColumnComparisonTbl :: (CatTable a -> CatTable b) -> ColumnComparison a -> ColumnComparison b
+mapColumnComparisonTbl f = \case
+  ColumnEq col v -> ColumnEq (mapCatTableCol f col) v
+  ColumnIn col ivs -> ColumnIn (mapCatTableCol f col) ivs
+
+newtype WhereFilter = WhereFilter { unWhereFilter :: QueryFrag }
+instance IsString WhereFilter where
+  fromString = WhereFilter . fromString
 
 class DbVersionHash a where
   -- | We force injectivity of the associated type to make our lives easier. This does mean we need a separate type for each version of the same DB, sadly.
   type CatTable a = b | b -> a
   tableName :: CatTable a -> QueryFrag
   -- | Given an object we take hashes of, returns the catalog table and an appropriate `WHERE` filter to apply on it, if any.
-  hashableObjCatalogTable :: HashableObject -> (CatTable a, Maybe QueryFrag)
+  hashableObjCatalogTable :: HashableObject -> (CatTable a, Maybe WhereFilter)
   fqObjNameCol :: CatTable a -> CatalogTableColumn a
   -- | Returns a list with all columns that uniquely Identify an Object in a catalog table. Usually this is just the object's name, but in some cases
   --   can be more than one column.
@@ -58,22 +71,21 @@ class DbVersionHash a where
   -- namespace already.
   fqTableIdentifyingCols :: CatTable a -> [CatalogTableColumn a]
   hashingColsOf :: CatTable a -> [CatalogTableColumn a]
-  underSchemaFilter :: HashableObject -> ObjName -> [JoinFilter a]
-  underTableFilter :: HashableObject -> ObjName -> [JoinFilter a]
+  filtersForSchemas :: Include SqlSchema -> ([JoinTable a], [ColumnComparison a])
+  filtersForRoles :: Include SqlRole -> ([JoinTable a], [ColumnComparison a])
+  underSchemaFilter :: HashableObject -> ObjName -> ([JoinTable a], [ColumnComparison a])
+  -- | Receives schema and table name in this order.
+  underTableFilter :: HashableObject -> ObjName -> ObjName -> ([JoinTable a], [ColumnComparison a])
 
 
 -- | Just a helper that stores a straight column name or a col name which is an OID or an OID[], and another pg_catalog table to join on to use that object's name in the hashing instead.
-data CatalogTableColumn a = UnqualifiedColumn QueryFrag | FullyQualifiedColumn QueryFrag | JoinOid (CatTable a) QueryFrag | JoinOidArray (CatTable a) QueryFrag
+data CatalogTableColumn a = RegularColumn (CatTable a) QueryFrag | OidColumn (CatTable a) QueryFrag | OidArrayColumn (CatTable a) QueryFrag | PureSqlExpression QueryFrag
 mapCatTableCol :: (CatTable a -> CatTable b) -> CatalogTableColumn a -> CatalogTableColumn b
 mapCatTableCol f = \case
-  UnqualifiedColumn q -> UnqualifiedColumn q
-  FullyQualifiedColumn q -> FullyQualifiedColumn q
-  JoinOid t q -> JoinOid (f t) q
-  JoinOidArray t q -> JoinOidArray (f t) q
+  RegularColumn t c -> RegularColumn (f t) c
+  OidColumn t q -> OidColumn (f t) q
+  OidArrayColumn t q -> OidArrayColumn (f t) q
+  PureSqlExpression q -> PureSqlExpression q
 -- deriving instance Show a => Show (CatalogTableColumn a)
 instance IsString (CatalogTableColumn a) where
-  fromString = UnqualifiedColumn . fromString
-
--- | Fully qualified column name (returns table.colname)
-fqcn :: DbVersionHash a => CatTable a -> QueryFrag -> CatalogTableColumn a
-fqcn tbl col = FullyQualifiedColumn $ tableName tbl <> "." <> col
+  fromString s = PureSqlExpression $ QueryFrag (fromString s) ()

@@ -32,7 +32,10 @@ dependencies:
 - containers
 
 default-extensions:
+  - BangPatterns
+  - DeriveAnyClass
   - DeriveFunctor
+  - DeriveGeneric
   - DerivingStrategies
   - LambdaCase
   - FlexibleContexts
@@ -58,6 +61,8 @@ library:
     - -Wall
   dependencies:
     - attoparsec
+    - hashable
+    - haxl
     - time
 
 executables:

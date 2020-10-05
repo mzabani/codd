@@ -1,15 +1,15 @@
-module Codd.Hashing.Database.Pg12 (Pg12) where
+module Codd.Hashing.Database.Pg12 (Pg12(..)) where
 
-import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), JoinFilter(..), CatTable(..), mapCatTableCol, mapJoinFilterTbl)
+import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), JoinTable(..), CatTable(..), ColumnComparison, mapCatTableCol, mapJoinTableTbl, mapColumnComparisonTbl)
 import Codd.Hashing.Database.Pg10 (Pg10, CatalogTable(..))
 
-data Pg12
+data Pg12 = Pg12
 newtype CatalogTablePg12 = CatalogTablePg12 CatalogTable
 toPg12Col :: CatalogTableColumn Pg10 -> CatalogTableColumn Pg12
 toPg12Col = mapCatTableCol CatalogTablePg12
 
-toPg12JoinFilter :: JoinFilter Pg10 -> JoinFilter Pg12
-toPg12JoinFilter = mapJoinFilterTbl CatalogTablePg12
+toPg12Filters :: ([JoinTable Pg10], [ColumnComparison Pg10]) -> ([JoinTable Pg12], [ColumnComparison Pg12])
+toPg12Filters (jtbls, wherecols) = (map (mapJoinTableTbl CatalogTablePg12) jtbls, map (mapColumnComparisonTbl CatalogTablePg12) wherecols)
 
 instance DbVersionHash Pg12 where
     type CatTable Pg12 = CatalogTablePg12
@@ -23,11 +23,14 @@ instance DbVersionHash Pg12 where
 
     hashingColsOf (CatalogTablePg12 tbl) = map toPg12Col $ hashingColsOf @Pg10 tbl ++
         case tbl of
-            PgConstraint -> [ JoinOid PgConstraint "conparentid" ]
+            PgConstraint -> [ OidColumn PgConstraint "conparentid" ]
             PgAttribute -> [ "attgenerated", "atthasmissing", "attmissingval" ]
             PgProc -> [ "prokind" ]
             _ -> []
 
-    underSchemaFilter h n = map toPg12JoinFilter $ underSchemaFilter @Pg10 h n
+    filtersForSchemas includedSchemas = toPg12Filters $ filtersForSchemas @Pg10 includedSchemas
+    filtersForRoles includedRoles = toPg12Filters $ filtersForRoles @Pg10 includedRoles
+
+    underSchemaFilter h n = toPg12Filters $ underSchemaFilter @Pg10 h n
     
-    underTableFilter h n = map toPg12JoinFilter $ underTableFilter @Pg10 h n
+    underTableFilter h sn tn = toPg12Filters $ underTableFilter @Pg10 h sn tn

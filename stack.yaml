@@ -39,7 +39,9 @@ packages:
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
-# extra-deps: []
+extra-deps:
+- git: https://github.com/facebook/Haxl
+  commit: 2d3731ec7a9959c19f74baa5613ed1a3363ab798 # Use this until a fixed release. See https://github.com/facebook/Haxl/issues/124
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
