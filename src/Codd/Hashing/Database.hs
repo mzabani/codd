@@ -11,7 +11,7 @@ import Control.Monad (forM_)
 import Data.Hashable
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty(..))
-import Data.Maybe (maybeToList, fromMaybe, catMaybes)
+import Data.Maybe (fromMaybe, catMaybes)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Text as Text
@@ -57,13 +57,6 @@ instance DataSource HaxlEnv HashReq where
   fetch _ _ (pgVer, conn) = SyncFetch combineQueriesWithWhere
     where
       fst3 (a, _, _) = a
-      thd3 (_, _, c) = c
-      chunksOf :: Int -> [a] -> [[a]]
-      chunksOf n xs =
-        let 
-          (_, lastChunk, otherChunks) = foldr (\el (!chunkSize, chunkEls, previousChunks) -> if chunkSize == n-1 then (0, [], (el : chunkEls) : previousChunks) else (chunkSize + 1, el : chunkEls, previousChunks)) (0 :: Int, [], []) xs
-        in
-          if length lastChunk == 0 then otherChunks else lastChunk : otherChunks
 
       getResultsGroupedPerIdx :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, ObjHash)]
       getResultsGroupedPerIdx qip =
@@ -119,51 +112,6 @@ instance DataSource HaxlEnv HashReq where
           -- print allResults
           let mergedResults = mergeResults (map (\sff -> (uniqueIdx sff, rvar sff)) $ NE.toList sffs) allResults
           forM_ mergedResults $ \(rvar, res) -> putSuccess rvar res
-
-
-      -- Haxl batching and test run times for `nix-shell nix/test-shell-pg12.nix --run 'cabal run -O0 codd-test -- --match "/DbDependentSpecs/"'` as reported by `hspec`:
-      -- - With ORed batching: 46.0384s, 41.5533s, 42.603s
-      -- - With UNION ALL batching
-      --    - Chunks of 50: 94.8646s
-      --    - Chunks of 10: 88.5762
-      --    - Chunks of 1 (sequential execution): 83.9862
-      -- Because it seems UNION ALL batching is not even worth it, and ORed batching provides a significant speed-up,
-      -- I'll commit the code here but the next commit will remove it.
-      unionAllBatchQueries blockedFetches = do
-        -- putStrLn $ "Total fetches: " ++ show (length blockedFetches)
-        -- putStrLn $ "Total reqs: " ++ show (length allHashReqs)
-        -- putStrLn $ "Check total reqs in chunks: " ++ show (sum $ map length (chunksOf 5 allHashReqs))
-        let chunkedReqs = chunksOf 1 allHashReqs
-        if sum (map length chunkedReqs) /= length blockedFetches then error "Different number of fetches from reqs" else pure ()
-        forM_ chunkedReqs $ \hashReqs -> do
-            -- For now let's just UNION ALL with an identifier column for each separate Query.
-            -- However, postgres is really bad at running a query which is the union of thousands of subqueries, so split it up
-            -- in chunks.
-            let
-              finalQuery =
-                interspBy False "\n UNION ALL \n" $
-                  map
-                    (\(idx, qp, _) ->
-                      queryInPiecesToQueryFrag qp { selectExprs = QueryFrag "? AS artificial_idx, " (DB.Only idx) <> selectExprs qp })
-                    hashReqs
-
-            -- print finalQuery
-            -- putStrLn $ "REQUESTS: " ++ show (length hashReqs)
-            if (length hashReqs == 0) then error "0 length!" else pure ()
-            allResults <- withQueryFrag ("SELECT * FROM (" <> finalQuery <> ") subq ORDER BY subq.artificial_idx") (DB.query conn)
-            -- putStrLn "All results fetched"
-            let
-              -- CAREFUL! Results must come ordered from the DB for this to be correct
-              resultsSortedByIdx :: [NE.NonEmpty (Int, ObjName, ObjHash)]
-              resultsSortedByIdx = NE.groupWith (\(idx, _, _) -> idx) allResults
-
-              resultsForAllVars :: [(ResultVar [(ObjName, ObjHash)], [(ObjName, ObjHash)])]
-              resultsForAllVars = mergeResults (map (\(i, _, rvar) -> (i, rvar)) hashReqs) resultsSortedByIdx
-
-            forM_ resultsForAllVars $ \(rvar, res) -> putSuccess rvar res
-        where
-          allHashReqs :: [(Int, QueryInPieces, ResultVar [(ObjName, ObjHash)])]
-          allHashReqs = zipWith (\a (b, c) -> (a, b, c)) [1..]  [(queryObjNamesAndHashesQuery pgVer hobj joinFilters, r) | BlockedFetch (GetHashesReq hobj _ joinFilters) r <- blockedFetches ]
 
 data PgVersion = forall a. DbVersionHash a => PgVersion a
 
