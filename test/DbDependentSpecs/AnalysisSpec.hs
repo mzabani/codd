@@ -86,7 +86,7 @@ spec = do
 
             context "Transaction ending migrations" $ do
                 aroundFreshDatabase $
-                    it "Non-destructive section containng COMMIT detected correctly" $
+                    it "Non-destructive section containing COMMIT detected correctly" $
                         \emptyTestDbInfo ->
                             let
                                 commitTxnMig = SqlMigration {
@@ -100,7 +100,7 @@ spec = do
                             in
                             isNonDestTxnClosing <$> (checkMigration emptyTestDbInfo commitTxnMig) `shouldReturn` True
                 aroundFreshDatabase $
-                    it "Non-destructive section containng ROLLBACK detected correctly" $
+                    it "Non-destructive section containing ROLLBACK detected correctly" $
                         \emptyTestDbInfo ->
                             let
                                 rollbackTxnMig = SqlMigration {

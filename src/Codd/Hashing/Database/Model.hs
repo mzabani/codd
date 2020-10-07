@@ -43,9 +43,10 @@ instance DbVersionHash a => ToQueryFrag (CatalogTableColumn a) where
     PureSqlExpression q -> q
 
 -- | Stores the name of the column with an OID and a table to join to based on equality for that column.
-data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a)
+data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a) | LeftJoinTable (CatalogTableColumn a) (CatTable a) (CatalogTableColumn a)
 mapJoinTableTbl :: (CatTable a -> CatTable b) -> JoinTable a -> JoinTable b
 mapJoinTableTbl f (JoinTable col t) = JoinTable (mapCatTableCol f col) (f t)
+mapJoinTableTbl f (LeftJoinTable col1 t col2) = LeftJoinTable (mapCatTableCol f col1) (f t) (mapCatTableCol f col2)
 
 data ColumnComparison a = forall b. DB.ToField b => ColumnEq (CatalogTableColumn a) b | forall b. DB.ToField b => ColumnIn (CatalogTableColumn a) (Include b)
 mapColumnComparisonTbl :: (CatTable a -> CatTable b) -> ColumnComparison a -> ColumnComparison b
@@ -71,11 +72,12 @@ class DbVersionHash a where
   -- namespace already.
   fqTableIdentifyingCols :: CatTable a -> [CatalogTableColumn a]
   hashingColsOf :: CatTable a -> [CatalogTableColumn a]
-  filtersForSchemas :: Include SqlSchema -> ([JoinTable a], [ColumnComparison a])
-  filtersForRoles :: Include SqlRole -> ([JoinTable a], [ColumnComparison a])
-  underSchemaFilter :: HashableObject -> ObjName -> ([JoinTable a], [ColumnComparison a])
+  joinsFor :: HashableObject -> [JoinTable a]
+  filtersForSchemas :: Include SqlSchema -> [ColumnComparison a]
+  filtersForRoles :: Include SqlRole -> [ColumnComparison a]
+  underSchemaFilter :: HashableObject -> ObjName -> [ColumnComparison a]
   -- | Receives schema and table name in this order.
-  underTableFilter :: HashableObject -> ObjName -> ObjName -> ([JoinTable a], [ColumnComparison a])
+  underTableFilter :: HashableObject -> ObjName -> ObjName -> [ColumnComparison a]
 
 
 -- | Just a helper that stores a straight column name or a col name which is an OID or an OID[], and another pg_catalog table to join on to use that object's name in the hashing instead.

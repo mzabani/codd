@@ -74,17 +74,16 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
         -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
         --       We should find a better way to do this in the future.
         liftIO $ DB.withTransaction conn $ do
-            tblAlreadyExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ?" (DB.Only ("sql_migrations" :: String))
+            schemaAlreadyExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = ?" (DB.Only ("codd_schema" :: String))
+            tblAlreadyExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ? AND schemaname = ?" ("sql_migrations" :: String, "codd_schema" :: String)
+            when (not schemaAlreadyExists) $ execvoid_ conn $ "CREATE SCHEMA codd_schema"
             when (not tblAlreadyExists) $ do
-                execvoid_ conn $ "CREATE TABLE sql_migrations ( " <>
+                execvoid_ conn $ "CREATE TABLE codd_schema.sql_migrations ( " <>
                     " migration_timestamp timestamptz not null" <>
                     ", non_dest_section_applied_at timestamptz not null " <>
                     ", dest_section_applied_at timestamptz " <>
                     ", name text not null " <>
                     ", unique (name), unique (migration_timestamp))"
-                execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO " <> unsafeAppUser
-                execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO " <> unsafeAppUser
-                execvoid_ conn $ "ALTER DEFAULT PRIVILEGES FOR USER postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " <> unsafeAppUser
         
         -- Run all Migrations in a single transaction now
         txnBracket conn $ do
@@ -107,19 +106,19 @@ mainAppApplyMigsBlock = baseApplyMigsBlock (const $ pure ())
 
 baseApplyMigsBlock :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a) -> DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a
 baseApplyMigsBlock actionAfter conn deploymentWorkflow sqlMigrations = do
-    execvoid_ conn "LOCK sql_migrations IN ACCESS EXCLUSIVE MODE"
+    execvoid_ conn "LOCK codd_schema.sql_migrations IN ACCESS EXCLUSIVE MODE"
     let migNames = map (migrationName . addedSqlMig) sqlMigrations
     -- ^ missing can include migrations whose dest. sections haven't been applied yet (those will have True in their tuples)
     -- let missingInOrder = [(mig, destApplied) | mig <- sqlMigrations, (missingName, destApplied) <- missing, migrationName mig == missingName]
     case deploymentWorkflow of
         BlueGreenSafeDeploymentUpToAndIncluding timestampLastMigration -> do
-            missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.query conn "WITH allMigrations (name) AS (VALUES ?) SELECT allMigrations.name FROM allMigrations JOIN sql_migrations applied USING (name) WHERE applied.dest_section_applied_at IS NULL AND applied.migration_timestamp <= ?" (DB.In migNames, timestampLastMigration)
+            missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.query conn "WITH allMigrations (name) AS (VALUES ?) SELECT allMigrations.name FROM allMigrations JOIN codd_schema.sql_migrations applied USING (name) WHERE applied.dest_section_applied_at IS NULL AND applied.migration_timestamp <= ?" (DB.In migNames, timestampLastMigration)
             liftIO $ putStrLn $ "Destructive sections of " ++ show missing
             let missingInOrder :: [AddedSqlMigration] = filter ((`elem` missing) . migrationName . addedSqlMig) sqlMigrations
             liftIO $ putStrLn $ "[ " <> show (length missingInOrder) <> " with still unapplied destructive sections ]"
             forM_ missingInOrder $ applySingleMigration conn ApplyDestructiveOnly
         _ -> pure ()
-    missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.returning conn "WITH allMigrations (name) AS (VALUES (?)) SELECT allMigrations.name FROM allMigrations LEFT JOIN sql_migrations applied USING (name) WHERE applied.name IS NULL" (map DB.Only migNames)
+    missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.returning conn "WITH allMigrations (name) AS (VALUES (?)) SELECT allMigrations.name FROM allMigrations LEFT JOIN codd_schema.sql_migrations applied USING (name) WHERE applied.name IS NULL" (map DB.Only migNames)
     let missingInOrder :: [AddedSqlMigration] = filter ((`elem` missing) . migrationName . addedSqlMig) sqlMigrations
     liftIO $ putStrLn $ "[ " <> show (length missingInOrder) <> " with still unapplied non-destructive sections ]"
     forM_ missingInOrder $ applySingleMigration conn ApplyNonDestructiveOnly
@@ -141,12 +140,12 @@ applySingleMigration conn deploymentWorkflow (AddedSqlMigration sqlMig migTimest
                     Just nonDestSql -> execvoid_ conn $ DB.Query nonDestSql
                 -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
                 -- since every migration will have both sections marked as ran sequentially.
-                liftIO $ void $ DB.execute conn "INSERT INTO sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
+                liftIO $ void $ DB.execute conn "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
             ApplyDestructiveOnly -> do
                 liftIO $ putStr $ "Applying destructive section of " <> fn
                 case mDestSql of
                     Nothing -> pure ()
                     Just destSql -> execvoid_ conn $ DB.Query destSql
-                liftIO $ void $ DB.execute conn "UPDATE sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
+                liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
                 -- TODO: Assert 1 row was updated
     liftIO $ putStrLn " [ OK ]"

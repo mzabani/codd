@@ -8,8 +8,11 @@ newtype CatalogTablePg11 = CatalogTablePg11 CatalogTable
 toPg11Col :: CatalogTableColumn Pg10 -> CatalogTableColumn Pg11
 toPg11Col = mapCatTableCol CatalogTablePg11
 
-toPg11Filters :: ([JoinTable Pg10], [ColumnComparison Pg10]) -> ([JoinTable Pg11], [ColumnComparison Pg11])
-toPg11Filters (jtbls, wherecols) = (map (mapJoinTableTbl CatalogTablePg11) jtbls, map (mapColumnComparisonTbl CatalogTablePg11) wherecols)
+toPg11Joins :: [JoinTable Pg10] -> [JoinTable Pg11]
+toPg11Joins = map (mapJoinTableTbl CatalogTablePg11)
+
+toPg11Filters :: [ColumnComparison Pg10] -> [ColumnComparison Pg11]
+toPg11Filters = map (mapColumnComparisonTbl CatalogTablePg11)
 
 instance DbVersionHash Pg11 where
     type CatTable Pg11 = CatalogTablePg11
@@ -27,6 +30,8 @@ instance DbVersionHash Pg11 where
             PgProc -> [ "prokind" ]
             PgAttribute -> [ "atthasmissing", "attmissingval" ]
             _ -> []
+
+    joinsFor h = toPg11Joins $ joinsFor @Pg10 h
 
     filtersForSchemas includedSchemas = toPg11Filters $ filtersForSchemas @Pg10 includedSchemas
     filtersForRoles includedRoles = toPg11Filters $ filtersForRoles @Pg10 includedRoles

@@ -16,7 +16,7 @@ data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HTableCons
 
 data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash) deriving stock (Show, Eq)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash) deriving stock (Show, Eq)
--- TODO: schema search path, collations, row level security policies, permissions per table, per column... What else?
+-- TODO: schema search path, collations, Full Text dictionaries, operators, permissions per table, per column... What else?
 data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) (Map ObjName TablePolicy) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash deriving stock (Show, Eq)
 data TableColumn = TableColumn ObjName ObjHash deriving stock (Show, Eq)
 data TableConstraint = TableConstraint ObjName ObjHash deriving stock (Show, Eq)

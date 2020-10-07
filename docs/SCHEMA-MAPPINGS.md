@@ -4,7 +4,7 @@ A complete list of all columns that affect our DB hashing algorithm can be found
 The rationale behind not including a column is that we don't want/need to include columns that satisfy any of these criteria:
 
 - Are DB-instance-dependent: plain OIDs always satisfy this.
-- Are already accounted for in a hierarchical on-disk ancestor (so that if the ancestor's name changes it already reflects in the final hashes).
+- Are already accounted for in a hierarchical on-disk ancestor or descendant.
 - Affect naming of folders and/or files in the on-disk hashes.
 - Are redundant, i.e. at least one other column will always change when the ignored column changes.
 - Most importantly: do not affect any possible query's results for the Application User. On-Disk size of objects, user's password and others fall in this category.
@@ -68,6 +68,26 @@ OidColumn PgAccessMethod "relam",
 -- relrewrite	oid	pg_class.oid	For new relations being written during a DDL operation that requires a table rewrite, this contains the OID of the original relation; otherwise 0. That state is only visible internally; this field should never contain anything other than 0 for a user-visible relation.
 -- relfrozenxid	xid	 	All transaction IDs before this one have been replaced with a permanent (“frozen”) transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent transaction ID wraparound or to allow pg_xact to be shrunk. Zero (InvalidTransactionId) if the relation is not a table.
 -- relminmxid	xid	 	All multixact IDs before this one have been replaced by a transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent multixact ID wraparound or to allow pg_multixact to be shrunk. Zero (InvalidMultiXactId) if the relation is not a table.
+
+## Sequences
+
+This comes from https://www.postgresql.org/docs/12/catalog-pg-sequence.html
+
+### Columns included
+
+OidColumn PgType "seqtypid",
+"seqstart",
+"seqincrement",
+"seqmax",
+"seqmin",
+"seqcache",
+"seqcycle"
+
+Plus, all columns we include from pg_class are also included for sequences.
+
+### Ignored columns
+
+- seqrelid	oid	pg_class.oid	The OID of the pg_class entry for this sequence
 
 ## Columns, Constraints/Indices and other Table-related attributes
 
@@ -206,9 +226,9 @@ OidColumn PgConstraint "tgconstraint",
 - tgname
 - tgrelid: The table this trigger is on
 
-## Roles
+## Roles and role settings
 
-This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html
+This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and https://www.postgresql.org/docs/12/catalog-pg-db-role-setting.html
 
 ### Columns included
 
@@ -218,9 +238,12 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html
 "rolcreatedb",
 "rolcanlogin",
 "rolreplication",
-"rolbypassrls"
+"rolbypassrls",
+RegularColumn PgRoleSettings "setconfig"
 
 ### Ignored columns
+
+Ignored from pg_authid:
 
 - oid
 - rolname
@@ -228,6 +251,10 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html
 - rolpassword: Password (possibly encrypted); null if none. The format depends on the form of encryption used.
 - rolvaliduntil: Password expiry time (only used for password authentication); null if no expiration
 
+Ignored from pg_db_role_setting:
+
+- setdatabase	oid	pg_database.oid	The OID of the database the setting is applicable to, or zero if not database-specific
+- setrole	oid	pg_authid.oid	The OID of the role the setting is applicable to, or zero if not role-specific
 
 ## Row Level Security Policis
 

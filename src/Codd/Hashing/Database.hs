@@ -24,7 +24,7 @@ import GHC.Stack (HasCallStack)
 import UnliftIO (MonadUnliftIO, MonadIO(..))
 
 data HashReq a where
-  GetHashesReq :: HashableObject -> [ObjName] -> (forall b. DbVersionHash b => ([JoinTable b], [ColumnComparison b])) -> HashReq [(ObjName, ObjHash)]
+  GetHashesReq :: HashableObject -> [ObjName] -> (forall b. DbVersionHash b => [ColumnComparison b]) -> HashReq [(ObjName, ObjHash)]
   deriving stock (Typeable)
 
 instance Eq (HashReq a) where
@@ -87,7 +87,7 @@ instance DataSource HaxlEnv HashReq where
       combineQueriesWithWhere blockedFetches = do
         let
           allHashReqs :: [SameQueryFormatFetch]
-          allHashReqs = zipWith (\i (a, b, c, d) -> SameQueryFormatFetch i a b c d) [1..] [ (hobj, ids, queryObjNamesAndHashesQuery pgVer hobj joinFilters, r) | BlockedFetch (GetHashesReq hobj ids joinFilters) r <- blockedFetches ]
+          allHashReqs = zipWith (\i (a, b, c, d) -> SameQueryFormatFetch i a b c d) [1..] [ (hobj, ids, queryObjNamesAndHashesQuery pgVer hobj (joinsFor hobj, joinFilters), r) | BlockedFetch (GetHashesReq hobj ids joinFilters) r <- blockedFetches ]
 
           fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch]
           fetchesPerQueryFormat = NE.groupAllWith hobj allHashReqs
@@ -188,7 +188,10 @@ queryObjNamesAndHashesQuery (PgVersion (_ :: a)) hobj getJoinTables = fullQuery
     (objTbl :: CatTable a, nonIdWhere) = hashableObjCatalogTable hobj
     objNameCol = concatenatedIdentityColsOfInContext objTbl
     (joinTbls, whereFilters) = getJoinTables @a
-    joins = foldMap (\(JoinTable col joinTbl) -> "\n JOIN " <> tableName joinTbl <> " ON " <> col <<> "=" <>> RegularColumn joinTbl "oid") joinTbls
+    joins = foldMap joinStatement joinTbls
+    joinStatement = \case
+      JoinTable col joinTbl -> "\n JOIN " <> tableName joinTbl <> " ON " <> col <<> "=" <>> RegularColumn joinTbl "oid"
+      LeftJoinTable col1 joinTbl col2 -> "\n LEFT JOIN " <> tableName joinTbl <> " ON " <> col1 <<> "=" <>> col2
     toWhereFrag (ColumnEq col v) = col <<> QueryFrag "=?" (DB.Only v)
     toWhereFrag (ColumnIn col vs) = includeSql vs (col <<> "")
     idWheres =

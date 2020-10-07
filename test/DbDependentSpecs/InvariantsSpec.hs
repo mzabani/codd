@@ -2,7 +2,7 @@ module DbDependentSpecs.InvariantsSpec where
 
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Environment (appUserInAppDatabaseConnInfo)
+import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings)
 import Codd.Internal (connectAndDispose)
 import Codd.Parsing (toMigrationTimestamp)
@@ -58,7 +58,7 @@ spec = do
                     -- that we test for it here anyway.
                     \dbInfo ->
                         let
-                            appConnInfo = appUserInAppDatabaseConnInfo dbInfo
+                            appConnInfo = superUserInAppDatabaseConnInfo dbInfo
                             veryCloseUtcTimes =
                                 zip [0..] $
                                     map (UTCTime (fromGregorian 2020 1 1)) [0, 0.5, 1, 1.5, 2, 3, 4, 5]

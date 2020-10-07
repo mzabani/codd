@@ -4,7 +4,7 @@ import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), J
 import Codd.Hashing.Types (HashableObject(..))
 
 data Pg10 = Pg10
-data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy deriving stock Show
+data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings deriving stock Show
 
 instance DbVersionHash Pg10 where
     type CatTable Pg10 = CatalogTable
@@ -12,7 +12,7 @@ instance DbVersionHash Pg10 where
         HSchema -> (PgNamespace, Nothing)
         HTable -> (PgClass, Just "pg_class.relkind IN ('r', 'f', 'p')")
         HView -> (PgClass, Just "pg_class.relkind IN ('v', 'm')")
-        HSequence -> (PgClass, Just "pg_class.relkind = 'S'")
+        HSequence -> (PgSequence, Nothing)
         HRoutine -> (PgProc, Nothing)
         HColumn -> (PgAttribute, Just "NOT pg_attribute.attisdropped")
         HTableConstraint -> (PgConstraint, Nothing)
@@ -34,6 +34,8 @@ instance DbVersionHash Pg10 where
         PgAccessMethod -> "pg_am"
         PgCollation -> "pg_collation"
         PgPolicy -> "pg_policy"
+        PgSequence -> "pg_sequence"
+        PgRoleSettings -> "pg_db_role_setting"
 
     fqObjNameCol = \case
         PgNamespace -> RegularColumn PgNamespace "nspname"
@@ -49,6 +51,8 @@ instance DbVersionHash Pg10 where
         PgAccessMethod -> RegularColumn PgAccessMethod "amname"
         PgCollation -> RegularColumn PgCollation "collname"
         PgPolicy -> RegularColumn PgPolicy "polname"
+        PgSequence -> fqObjNameCol PgClass
+        PgRoleSettings -> error "We shouldn't be querying PgRoleSettings like this!"
 
     fqTableIdentifyingCols tbl = fqObjNameCol tbl : case tbl of
         PgNamespace -> []
@@ -64,13 +68,15 @@ instance DbVersionHash Pg10 where
         PgAccessMethod -> []
         PgCollation -> [ "collencoding" ]
         PgPolicy -> []
+        PgSequence -> []
+        PgRoleSettings -> []
 
     hashingColsOf = \case
         PgNamespace -> [ OidColumn PgAuthId "nspowner", "nspacl" ]
         PgClass -> [ OidColumn PgType "reltype", OidColumn PgType "reloftype", OidColumn PgAuthId "relowner", OidColumn PgAccessMethod "relam", "relisshared", "relpersistence", "relkind", "relrowsecurity", "relforcerowsecurity", "relreplident", "relispartition", "relacl", "reloptions", "relpartbound" ]
         PgProc -> [ OidColumn PgAuthId "proowner", OidColumn PgLanguage "prolang", OidColumn PgType "provariadic", "prosecdef", "proleakproof", "proisstrict", "proretset", "provolatile", "proparallel", "pronargs", "pronargdefaults", OidColumn PgType "prorettype", OidArrayColumn PgType "proargtypes", OidArrayColumn PgType "proallargtypes", "proargmodes", "proargnames", "proargdefaults", OidArrayColumn PgType "protrftypes", "prosrc", "probin", "proconfig", "proacl" ]
         PgConstraint -> [ "contype", "condeferrable", "condeferred", "convalidated", OidColumn PgClass "conrelid", OidColumn PgType "contypid", OidColumn PgClass "conindid", OidColumn PgClass "confrelid", "confupdtype", "confdeltype", "confmatchtype", "conislocal", "coninhcount", "connoinherit", "conkey", "confkey", OidArrayColumn PgOperator "conpfeqop", OidArrayColumn PgOperator "conppeqop", OidArrayColumn PgOperator "conffeqop", OidArrayColumn PgOperator "conexclop", PureSqlExpression "pg_get_constraintdef(pg_constraint.oid)" ]
-        PgAuthId -> [ "rolsuper", "rolinherit", "rolcreaterole", "rolcreatedb", "rolcanlogin", "rolreplication", "rolbypassrls" ]
+        PgAuthId -> [ "rolsuper", "rolinherit", "rolcreaterole", "rolcreatedb", "rolcanlogin", "rolreplication", "rolbypassrls", RegularColumn PgRoleSettings "setconfig" ]
         PgLanguage -> error "pglanguage cols missing"
         PgType -> error "pgtype cols missing"
         PgOperator -> error "pgoperator cols missing"
@@ -80,20 +86,34 @@ instance DbVersionHash Pg10 where
         PgAccessMethod -> error "pg_am cols missing"
         PgCollation -> error "pg_collation cols missing"
         PgPolicy -> [ "polcmd", "polpermissive", OidArrayColumn PgAuthId "polroles", "pg_get_expr(polqual, polrelid)", "pg_get_expr(polwithcheck, polrelid)" ]
+        PgSequence -> [ OidColumn PgType "seqtypid", "seqstart", "seqincrement", "seqmax", "seqmin", "seqcache", "seqcycle" ] ++ hashingColsOf PgClass
+        PgRoleSettings -> []
 
-    filtersForSchemas includedSchemas = ([], [ ColumnIn (fqObjNameCol PgNamespace) includedSchemas ])
-    filtersForRoles includedRoles = ([], [ ColumnIn (fqObjNameCol PgAuthId) includedRoles ])
+    joinsFor = \case
+        HTable -> [ JoinTable "relnamespace" PgNamespace ]
+        HView -> [ JoinTable "relnamespace" PgNamespace ]
+        HRoutine -> [ JoinTable "pronamespace" PgNamespace ]
+        HSequence -> [ JoinTable "seqrelid" PgClass, JoinTable "relnamespace" PgNamespace ]
+        HColumn -> [ JoinTable "attrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ]
+        HTableConstraint -> [ JoinTable "conrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ]
+        HTrigger -> [ JoinTable "tgrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ]
+        HRole -> [ LeftJoinTable "oid" PgRoleSettings "setrole" ]
+        HPolicy -> [ JoinTable "polrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ]
+        _ -> []
+
+    filtersForSchemas includedSchemas = [ ColumnIn (fqObjNameCol PgNamespace) includedSchemas ]
+    filtersForRoles includedRoles = [ ColumnIn (fqObjNameCol PgAuthId) includedRoles ]
 
     underSchemaFilter hobj schemaName = case hobj of
-        HTable -> ([ JoinTable "relnamespace" PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName ])
-        HView -> ([ JoinTable "relnamespace" PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName ])
-        HRoutine -> ([ JoinTable "pronamespace" PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName ])
-        HSequence -> ([ JoinTable "relnamespace" PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName ])
-        _ -> ([], [])
+        HTable -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName ]
+        HView -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName ]
+        HRoutine -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName ]
+        HSequence -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName ]
+        _ -> []
     
     underTableFilter hobj schemaName tblName = case hobj of
-        HColumn -> ([ JoinTable "attrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
-        HTableConstraint -> ([ JoinTable "conrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
-        HTrigger -> ([ JoinTable "tgrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ])
-        HPolicy -> ([ JoinTable "polrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ], [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ] )
-        _ -> ([ ], [ ])
+        HColumn -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ]
+        HTableConstraint -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ]
+        HTrigger -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ]
+        HPolicy -> [ ColumnEq (fqObjNameCol PgNamespace) schemaName, ColumnEq (fqObjNameCol PgClass) tblName ]
+        _ -> []
