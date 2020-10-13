@@ -89,6 +89,12 @@ Plus, all columns we include from pg_class are also included for sequences.
 
 - seqrelid	oid	pg_class.oid	The OID of the pg_class entry for this sequence
 
+
+### TODO
+
+- Table that owns Sequence is not hashed.
+- The `RESTART` value of the sequence also isn't hashed.
+
 ## Columns, Constraints/Indices and other Table-related attributes
 
 This comes from https://www.postgresql.org/docs/12/catalog-pg-attribute.html

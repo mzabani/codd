@@ -65,12 +65,14 @@ migrationsAndHashChange =
             , ("ALTER SEQUENCE some_seq CYCLE", True)
             , ("ALTER SEQUENCE some_seq CACHE 2", True)
             -- , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", True)
-            -- ^ Couldn't find owner table in the pg_catalog..
+            -- ^ TODO: Couldn't find owner table in the pg_catalog..
 
             -- TODO: Column Collations
 
             -- CHECK CONSTRAINTS
             , ("ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')", True)
+            , ("ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')", False)
+            , ("ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY')", True)
 
             -- FOREIGN KEYS
             , ("CREATE TABLE employee_car (employee_id INT NOT NULL, car_model TEXT NOT NULL)", True)
@@ -111,6 +113,22 @@ migrationsAndHashChange =
 
 
             -- TRIGGERS
+            , ("ALTER TABLE employee ADD COLUMN name TEXT", True)
+            , ("CREATE FUNCTION employee_name_rename_set_new() RETURNS TRIGGER AS $$\n"
+               <> "BEGIN\n NEW.name = NEW.employee_name;\n RETURN NEW;\n END\n $$ LANGUAGE plpgsql;", True)
+            , ("CREATE TRIGGER employee_old_app_update_column_name"
+                <> "\n BEFORE UPDATE ON employee"
+                <> "\n FOR EACH ROW"
+                <> "\n WHEN (OLD.employee_name IS DISTINCT FROM NEW.employee_name)"
+                <> "\n EXECUTE PROCEDURE employee_name_rename_set_new()", True)
+            , ("DROP TRIGGER employee_old_app_update_column_name ON employee; CREATE TRIGGER employee_old_app_update_column_name"
+                <> "\n BEFORE UPDATE ON employee"
+                <> "\n FOR EACH ROW"
+                <> "\n EXECUTE PROCEDURE employee_name_rename_set_new()", True)
+                -- ^ No WHEN in the recreated trigger
+            , ("DROP TRIGGER employee_old_app_update_column_name ON employee", True)
+            , ("ALTER TABLE employee DROP COLUMN employee_name", True)
+            , ("ALTER TABLE employee RENAME COLUMN name TO employee_name", True)
 
 
             -- ROW LEVEL SECURITY
