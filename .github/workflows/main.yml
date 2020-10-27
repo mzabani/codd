@@ -31,7 +31,7 @@ jobs:
         skipPush: true
 
     - name: Build codd
-      run: nix-shell --run "cabal build codd-exe"
+      run: nix-build -A codd.components.exes.codd-exe
 
     - name: Run tests
       run: nix-shell --run "./scripts/run-tests.sh"
