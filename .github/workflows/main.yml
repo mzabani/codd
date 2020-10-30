@@ -25,6 +25,11 @@ jobs:
         submodules: recursive
     
     - uses: cachix/install-nix-action@v10
+      with:
+        extra_nix_config: |
+          substituters = https://hydra.iohk.io
+          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+
     - uses: cachix/cachix-action@v6
       with:
         name: mzabani
