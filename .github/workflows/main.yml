@@ -29,15 +29,18 @@ jobs:
         # For install-nix-action v11 (which is failing for some reason): nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           extra-substituters = https://hydra.iohk.io
-          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
 
     - uses: cachix/cachix-action@v6
       with:
         name: mzabani
         skipPush: true
 
-    - name: Build codd
-      run: nix-build --option extra-substituters https://hydra.iohk.io -A codd.components.exes.codd-exe
+    - name: Build codd library
+      run: nix-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.library
+
+    - name: Build codd executable
+      run: nix-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.exes.codd-exe
 
     - name: Run tests
-      run: nix-shell --option extra-substituters https://hydra.iohk.io --run "./scripts/run-tests.sh"
+      run: nix-shell --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= --run "./scripts/run-tests.sh"
