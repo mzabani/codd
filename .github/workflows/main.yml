@@ -37,7 +37,7 @@ jobs:
         skipPush: true
 
     - name: Build codd
-      run: nix-build -A codd.components.exes.codd-exe
+      run: nix-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.exes.codd-exe
 
     - name: Run tests
       run: nix-shell --run "./scripts/run-tests.sh"
