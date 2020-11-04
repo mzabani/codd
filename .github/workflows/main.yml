@@ -28,8 +28,8 @@ jobs:
       with:
         # For install-nix-action v11 (which is failing for some reason): nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
-          extra-substituters = https://hydra.iohk.io
-          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+          extra-substituters = https://hydra.iohk.io https://mzabani.cachix.org
+          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=
 
     - uses: cachix/cachix-action@v6
       with:

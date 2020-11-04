@@ -86,6 +86,8 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    system-build-tools:
+    - hspec-discover
     dependencies:
     - attoparsec
     - codd
