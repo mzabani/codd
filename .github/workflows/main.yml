@@ -43,4 +43,4 @@ jobs:
       run: nix-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.exes.codd-exe
 
     - name: Run tests
-      run: nix-shell --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= --run "./scripts/run-tests.sh"
+      run: ./scripts/run-tests.sh --with-nix
