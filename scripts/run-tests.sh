@@ -9,7 +9,7 @@ if [[ $WITH_NIX ]]; then
 fi
 
 # Tests which are not Postgres-version dependent first
-# ./scripts/run-test.sh "$WITH_NIX" --skip "/DbDependentSpecs/"
+./scripts/run-test.sh "$WITH_NIX" --skip "/DbDependentSpecs/"
 
 # Postgres-version dependent tests for each possible version next
 # Postgres 12
