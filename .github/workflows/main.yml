@@ -36,10 +36,10 @@ jobs:
         name: mzabani
         skipPush: true
 
-    - name: Cache the Nix Store
+    - name: Nix Store Caching
       uses: actions/cache@v2
       with:
-        path: /nix/store
+        path: /nix/
         key: ${{ runner.os }}-build
 
     - name: Build codd library
