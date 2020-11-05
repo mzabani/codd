@@ -8,7 +8,7 @@
         buildInputs = [ postgres-service ];
         shellHook = ''
             set -e
-            trap "pg_ctl stop" EXIT INT
+            trap "${postgres}/bin/pg_ctl stop" EXIT INT
             echo Going to initialize Postgres..
             export PGDATA="${pgDataDir}"
             export PGPORT="5434"
