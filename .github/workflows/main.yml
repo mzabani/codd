@@ -36,11 +36,12 @@ jobs:
         name: mzabani
         skipPush: true
 
-    - name: Nix Store Caching
-      uses: actions/cache@v2
-      with:
-        path: /nix/
-        key: ${{ runner.os }}-build
+    # Wish this could be done, but there's a permissions problem. See https://github.com/actions/cache/issues/133
+    # - name: Nix Store Caching
+    #   uses: actions/cache@v2
+    #   with:
+    #     path: /nix/
+    #     key: ${{ runner.os }}-build
 
     - name: Build codd library
       run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.library
