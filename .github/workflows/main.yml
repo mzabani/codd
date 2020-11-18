@@ -52,5 +52,10 @@ jobs:
     - name: Build codd tests
       run: nix-build --no-out-link -A codd.components.tests.codd-test
 
+    - name: Build codd with musl libc
+      run: nix-build --no-out-link nix/docker/codd-exe.nix
+
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
+
+    
