@@ -31,7 +31,7 @@ jobs:
           extra-substituters = https://hydra.iohk.io https://mzabani.cachix.org
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=
 
-    - uses: cachix/cachix-action@v6
+    - uses: cachix/cachix-action@v8
       with:
         name: mzabani
         skipPush: true
