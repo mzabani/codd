@@ -43,8 +43,8 @@ jobs:
     #     path: /nix/
     #     key: ${{ runner.os }}-build
 
-    - name: Print nix.conf file
-      run: cat ~/.config/nix/nix.conf
+    # - name: Print nix.conf file
+    #   run: cat ~/.config/nix/nix.conf
 
     - name: Build codd library
       run: nix-build --no-out-link -A codd.components.library
