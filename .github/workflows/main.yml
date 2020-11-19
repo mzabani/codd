@@ -47,10 +47,10 @@ jobs:
       run: cat ~/.config/nix/nix.conf
 
     - name: Build codd library
-      run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.library
+      run: nix-build --no-out-link -A codd.components.library
 
     - name: Build codd executable
-      run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.exes.codd
+      run: nix-build --no-out-link -A codd.components.exes.codd
 
     - name: Build codd tests
       run: nix-build --no-out-link -A codd.components.tests.codd-test
