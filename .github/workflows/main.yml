@@ -43,6 +43,9 @@ jobs:
     #     path: /nix/
     #     key: ${{ runner.os }}-build
 
+    - name: Print nix.conf file
+      run: cat ~/.config/nix/nix.conf
+
     - name: Build codd library
       run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.library
 
@@ -53,7 +56,9 @@ jobs:
       run: nix-build --no-out-link -A codd.components.tests.codd-test
 
     - name: Build codd with musl libc
-      run: nix-build --no-out-link nix/docker/codd-exe.nix
+      run: nix-build --no-out-link -A codd.components.exes.codd-exe nix/nixpkgsMusl.nix
+      # It's not possible to build docker images on github CI due to lack of nested virtualization
+      # run: nix-build --no-out-link nix/docker/codd-exe.nix
 
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
