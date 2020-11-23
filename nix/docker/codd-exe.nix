@@ -1,6 +1,6 @@
 let
   pkgs = import ../nixpkgsMusl.nix;
-  codd-exe = (import ../../default.nix { inherit pkgs; }).codd.components.exes.codd;
+  codd-exe = import ../codd-exe-musl.nix;
 
 in pkgs.dockerTools.buildImage {
   name = "codd";

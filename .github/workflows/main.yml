@@ -56,7 +56,7 @@ jobs:
       run: nix-build --no-out-link -A codd.components.tests.codd-test
 
     - name: Build codd with musl libc
-      run: nix-build --no-out-link nix/codd-musl.nix
+      run: nix-build --no-out-link nix/codd-exe-musl.nix
       # It's not possible to build docker images on github CI due to lack of nested virtualization
       # run: nix-build --no-out-link nix/docker/codd-exe.nix
 
