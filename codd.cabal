@@ -1,10 +1,10 @@
 cabal-version: 2.0
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
+-- This file has been generated from package.yaml by hpack version 0.34.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 6d7ef1db55aef702ba9168bc93fd4a584ce352f1f3d21bd6f88e18274d8c1458
+-- hash: 3171c519add2cef790edcecf5d612c0cc14d41e58a722932a0b455b69da49aeb
 
 name:           codd
 version:        0.1.0.0
@@ -67,7 +67,7 @@ library
     , unliftio-core
   default-language: Haskell2010
 
-executable codd-exe
+executable codd
   main-is: Main.hs
   other-modules:
       Commands.AddMigration

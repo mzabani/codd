@@ -1,6 +1,6 @@
 let
     pkgs = import ./nix/nixpkgs.nix;
-    hsPkgs = import ./default.nix;
+    hsPkgs = import ./default.nix { inherit pkgs; };
 
     postgres-init = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_12; inherit pkgs; };
 in

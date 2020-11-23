@@ -24,17 +24,17 @@ jobs:
       with:
         submodules: recursive
     
-    - uses: cachix/install-nix-action@v10
+    - uses: cachix/install-nix-action@v12
       with:
-        # For install-nix-action v11 (which is failing for some reason): nix_path: nixpkgs=channel:nixos-unstable
+        nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
-          extra-substituters = https://hydra.iohk.io https://mzabani.cachix.org
-          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=
+          substituters = https://cache.nixos.org https://mzabani.cachix.org https://hydra.iohk.io https://mzabani.cachix.org
+          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - uses: cachix/cachix-action@v6
-      with:
-        name: mzabani
-        skipPush: true
+    # - uses: cachix/cachix-action@v8
+    #   with:
+    #     name: mzabani
+    #     skipPush: true
 
     # Wish this could be done, but there's a permissions problem. See https://github.com/actions/cache/issues/133
     # - name: Nix Store Caching
@@ -43,14 +43,24 @@ jobs:
     #     path: /nix/
     #     key: ${{ runner.os }}-build
 
+    # - name: Print nix.conf file
+    #   run: cat ~/.config/nix/nix.conf
+
     - name: Build codd library
-      run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.library
+      run: nix-build --no-out-link -A codd.components.library
 
     - name: Build codd executable
-      run: nix-build --no-out-link --option extra-substituters https://hydra.iohk.io --option trusted-public-keys hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= -A codd.components.exes.codd-exe
+      run: nix-build --no-out-link -A codd.components.exes.codd
 
     - name: Build codd tests
       run: nix-build --no-out-link -A codd.components.tests.codd-test
 
+    - name: Build codd with musl libc
+      run: nix-build --no-out-link nix/codd-exe-musl.nix
+      # It's not possible to build docker images on github CI due to lack of nested virtualization
+      # run: nix-build --no-out-link nix/docker/codd-exe.nix
+
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
+
+    
