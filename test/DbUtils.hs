@@ -26,12 +26,11 @@ testCoddSettings migs = do
     pure CoddSettings {
             superUserConnString = connInfo
             , dbName = "codd-test-db"
-            , appUser = "codd-test-user"
             , sqlMigrations = Right migs
             , onDiskHashes = Left ""
             , deploymentWorkflow = SimpleDeployment
             , schemasToHash = Exclude [] -- Hash every possible internal PG schema too to make our tests tougher ;)
-            , extraRolesToHash = Include [ "extra-codd-test-user" ] -- Important for HashingSpec
+            , extraRolesToHash = Include [ "codd-test-user", "extra-codd-test-user" ] -- Important for HashingSpec
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
