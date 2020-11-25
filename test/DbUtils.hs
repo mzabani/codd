@@ -2,7 +2,7 @@ module DbUtils where
 
 import Codd (withDbAndDrop)
 import Codd.Internal (connectAndDispose)
-import Codd.Types (CoddSettings(..), AddedSqlMigration(..), DeploymentWorkflow(..), Include(..))
+import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..), DeploymentWorkflow(..), Include(..))
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..), addUTCTime, NominalDiffTime)
 import Database.PostgreSQL.Simple (ConnectInfo(..), defaultConnectInfo)
@@ -23,10 +23,28 @@ aroundConnInfo = around $ \act -> do
 testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
 testCoddSettings migs = do
     connInfo <- testConnInfo
+    -- In all our tests, we simulate a scenario where one App User already exists
+    let
+        migTimestamp = getIncreasingTimestamp (-1000)
+        createTestUserMig = AddedSqlMigration SqlMigration {
+            migrationName = show migTimestamp <> "-create-test-user.sql"
+            , nonDestructiveSql = Just $ "DO\n"
+<> "$do$\n"
+<> "BEGIN\n"
+<> "   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-test-user') THEN\n"
+<> "      CREATE USER \"codd-test-user\";\n"
+<> "   END IF;\n"
+<> "END\n"
+<> "$do$; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
+            , nonDestructiveForce = True
+            , nonDestructiveInTxn = True
+            , destructiveSql = Nothing
+            , destructiveInTxn = True
+        } migTimestamp
     pure CoddSettings {
             superUserConnString = connInfo
             , dbName = "codd-test-db"
-            , sqlMigrations = Right migs
+            , sqlMigrations = Right (createTestUserMig : migs)
             , onDiskHashes = Left ""
             , deploymentWorkflow = SimpleDeployment
             , schemasToHash = Exclude [] -- Hash every possible internal PG schema too to make our tests tougher ;)
