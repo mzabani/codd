@@ -24,9 +24,6 @@ alsoInclude is = \case
 data CoddSettings = CoddSettings {
     dbName :: Text
     -- ^ The name of the Database the Application will connect to
-    , appUser :: SqlRole
-    -- ^ The name of the User which will be created and authorized to access any assets created for the App's database.
-    --   This is usually the App's User.
     , superUserConnString :: DB.ConnectInfo
     -- ^ A Connection String which has the power to create databases, grant privileges and a lot more.
     , sqlMigrations :: Either [FilePath] [AddedSqlMigration]
@@ -41,7 +38,7 @@ data CoddSettings = CoddSettings {
     , schemasToHash :: Include SqlSchema
     -- ^ Selection of Schemas in the DB that we should hash.
     , extraRolesToHash :: Include SqlRole
-    -- ^ Selection of Roles to hash. Note that the appUser and the super user from superUserConnString are always included.
+    -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from superUserConnString is always included in hashing automatically and needs not be added here.
 }
 
 data SqlMigration = SqlMigration {

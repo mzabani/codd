@@ -4,7 +4,7 @@ import Prelude hiding (readFile)
 
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
-import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), SqlMigration(..), AddedSqlMigration(..), SqlRole(..))
+import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), SqlMigration(..), AddedSqlMigration(..))
 import Codd.Hashing (DbHashes, readHashesFromDatabaseWithSettings)
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -46,10 +46,9 @@ beginRollbackTxnBracket :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a 
 beginRollbackTxnBracket conn f = (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
 
 applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a) -> CoddSettings-> Maybe DbHashes -> m a
-applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName, appUser, sqlMigrations, deploymentWorkflow }) hashCheck = do
+applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }) hashCheck = do
     let
         unsafeDbName = dbIdentifier dbName
-        unsafeAppUser = dbIdentifier $ unSqlRole appUser
     liftIO $ putStr "Parse-checking all SQL Migrations... "
     parsedMigrations :: [AddedSqlMigration] <- either (\(sqlDirs :: [FilePath]) -> do
         sqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
@@ -63,11 +62,7 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
     liftIO $ putStr "Going to apply sql migrations... "
     connectAndDispose superUserConnString $ \conn -> do
         dbExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_database WHERE datname = ?" (DB.Only dbName)
-        userExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_catalog.pg_roles WHERE rolname = ?" (DB.Only appUser)
         when (not dbExists) $ execvoid_ conn $ "CREATE DATABASE " <> unsafeDbName
-        when (not userExists) $ do
-            noErrors $ execvoid_ conn $ "CREATE USER " <> unsafeAppUser
-            noErrors $ execvoid_ conn $ "GRANT CONNECT ON DATABASE " <> unsafeDbName <> " TO " <> unsafeAppUser
     
     let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = Text.unpack dbName }
     ret <- connectAndDispose appDbSuperUserConnString $ \conn -> do
@@ -99,7 +94,7 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
     return ret
 
     where isSingleTrue v = v == [ DB.Only True ]
-          noErrors f = catchAny f (const (pure ()))
+          _noErrors f = catchAny f (const (pure ()))
 
 mainAppApplyMigsBlock :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m ()
 mainAppApplyMigsBlock = baseApplyMigsBlock (const $ pure ())

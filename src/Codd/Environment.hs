@@ -1,4 +1,4 @@
-module Codd.Environment (connStringParser, getAdminConnInfo, getCoddSettings, appUserInAppDatabaseConnInfo, superUserInAppDatabaseConnInfo) where
+module Codd.Environment (connStringParser, getAdminConnInfo, getCoddSettings, superUserInAppDatabaseConnInfo) where
 
 import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), Include(..), SqlRole(..), SqlSchema(..))
 import Codd.Parsing (parseMigrationTimestamp)
@@ -86,7 +86,6 @@ getCoddSettings :: MonadIO m => m CoddSettings
 getCoddSettings = do
     adminConnInfo <- getAdminConnInfo
     appDbName <- readEnv "APP_DATABASE"
-    appUserName <- SqlRole <$> readEnv "APP_USERNAME"
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
     -- TODO: Do we throw on empty sqlMigrationPaths?
     onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
@@ -99,7 +98,6 @@ getCoddSettings = do
                               "CODD_EXTRA_ROLES"
     pure CoddSettings {
         dbName = appDbName
-        , appUser = appUserName
         , superUserConnString = adminConnInfo
         , sqlMigrations = Left sqlMigrationPaths
         , onDiskHashes = Left onDiskHashesDir
@@ -114,7 +112,3 @@ getCoddSettings = do
 -- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
 superUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
 superUserInAppDatabaseConnInfo CoddSettings { superUserConnString, dbName } = superUserConnString { connectDatabase = Text.unpack dbName }
-
--- | Returns a `ConnectInfo` that will connect to the App's Database with the App's User's credentials.
-appUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
-appUserInAppDatabaseConnInfo CoddSettings { superUserConnString, dbName, appUser } = superUserConnString { connectDatabase = Text.unpack dbName, connectUser = Text.unpack (unSqlRole appUser) }

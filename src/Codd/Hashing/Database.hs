@@ -209,7 +209,7 @@ queryInPiecesToQueryFrag QueryInPieces{..} = "SELECT " <> selectExprs <> " FROM 
       (Just w1, Just w2) -> Just $ parens w1 <> " AND " <> parens w2
 
 readHashesFromDatabaseWithSettings :: (MonadUnliftIO m, MonadIO m, HasCallStack) => CoddSettings -> DB.Connection -> m DbHashes
-readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, appUser, schemasToHash, extraRolesToHash } conn = do
+readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash } conn = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
   postgresVersion <- liftIO $ DB.query conn "SHOW server_version" ()
@@ -217,7 +217,7 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, appUser, 
   case postgresVersion of
     [ DB.Only strVersion ] -> do
       let majorVersion :: Int = truncate $ read @Float strVersion
-      let rolesToHash = alsoInclude [appUser, SqlRole . Text.pack . DB.connectUser $ superUserConnString] extraRolesToHash
+      let rolesToHash = alsoInclude [SqlRole . Text.pack . DB.connectUser $ superUserConnString] extraRolesToHash
       case majorVersion of
         10 -> readHashesFromDatabase (PgVersion Pg10) conn schemasToHash rolesToHash
         11 -> readHashesFromDatabase (PgVersion Pg11) conn schemasToHash rolesToHash
