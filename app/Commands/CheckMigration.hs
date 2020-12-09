@@ -1,8 +1,8 @@
 module Commands.CheckMigration (checkMigrationFile) where
 
 import Codd.Analysis (checkMigration, migrationErrors)
-import Codd.Parsing (parseSqlMigration)
-import Codd.Types (CoddSettings, SqlFilePath(..))
+import Codd.Parsing (parseSqlMigrationNew)
+import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (unless, forM_)
 import qualified Data.Text.IO as Text
 import System.FilePath (takeFileName)
@@ -13,7 +13,7 @@ checkMigrationFile dbInfo (SqlFilePath fp) = do
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
   sqlMigContents <- Text.readFile fp
-  let parsedSqlMigE = parseSqlMigration (takeFileName fp) sqlMigContents
+  let parsedSqlMigE = parseSqlMigrationNew (deploymentWorkflow dbInfo) (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
     Right sqlMig -> do

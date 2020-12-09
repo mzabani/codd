@@ -1,9 +1,9 @@
-module Codd.Parsing (parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
+module Codd.Parsing (parseSqlMigration, parseSqlMigrationSimpleWorkflow, parseSqlMigrationNew, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
 
-import Codd.Types (SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..))
 import Control.Applicative ((<|>))
 import Control.Monad (void, guard)
-import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, takeText)
+import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, sepBy1, takeText)
 import qualified Data.Attoparsec.Text as Parsec
 import Data.Bifunctor (bimap)
 import qualified Data.Char as Char
@@ -20,7 +20,7 @@ data SectionOption = OptForce Bool | OptInTxn Bool | OptDest Bool deriving stock
 optionParser :: Parser SectionOption
 optionParser = do
     skipJustSpace
-    x <- force <|> nonDest <|> dest <|> inTxn <|> noTxn
+    x <- force <|> nonDest <|> dest <|> inTxn <|> noTxn <|> fail "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
     skipJustSpace
     return x
     where
@@ -40,12 +40,25 @@ coddComment = do
     void $ string "codd:"
     skipJustSpace
 
+migrationParserSimpleWorkflow :: Parser ([SectionOption], Text)
+migrationParserSimpleWorkflow = do
+    -- "codd: opts" is completely optional when using the simple workflow
+    opts <- (do
+        -- Any amount of white space, then a first codd comment, then SQL
+        skipSpace
+        coddComment
+        opts <- optionParser `sepBy1` (char ',')
+        endOfLine
+        pure opts) <|> pure []
+    allSql <- takeText
+    pure (opts, allSql)
+
 migrationParser :: Parser ([SectionOption], Text, Maybe ([SectionOption], Text))
 migrationParser = do
     -- Any amount of white space, then first codd comment
     skipSpace
     coddComment <> fail "The first non-white-space line in your migration must begin with '-- codd:'"
-    opts1 <- optionParser `sepBy` (char ',') <|> fail "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
+    opts1 <- optionParser `sepBy` (char ',')
     endOfLine
     firstSectionSql <- everythingUpToCodd
     singleSection <- atEnd
@@ -112,6 +125,37 @@ nothingIfEmptyQuery t
     where notJustBlanksAndCommentsParser :: Parser Bool
           notJustBlanksAndCommentsParser = skipBlanksAndCommentsNoFail >> (not <$> atEnd)
 
+parseSqlMigrationSimpleWorkflow :: String -> Text -> Either Text SqlMigration
+parseSqlMigrationSimpleWorkflow name t = bimap Text.pack id migE >>= toMig
+    where
+        migE = parseOnly (migrationParserSimpleWorkflow <* endOfInput) t
+        dupOpts (sort -> opts) = any (==True) $ zipWith (==) opts (drop 1 opts)
+        checkOpts :: [SectionOption] -> Maybe Text
+        checkOpts opts
+            | isDest opts = Just "Simple deployment workflow does not allow for a SQL section explicitly marked as Destructive"
+            | inTxn opts && noTxn opts = Just "Choose either in-txn, no-txn or leave blank for the default of in-txn"
+            | dupOpts opts = Just "Some options are duplicated"
+            | otherwise = Nothing
+        isDest opts = OptDest True `elem` opts
+        inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
+        noTxn opts = OptInTxn False `elem` opts
+
+        mkMig :: ([SectionOption], Text) -> SqlMigration
+        mkMig (opts, sql) = SqlMigration {
+            migrationName = name
+            , nonDestructiveSql = Just sql
+            , nonDestructiveForce = True
+            , nonDestructiveInTxn = inTxn opts
+            , destructiveSql = Nothing
+            , destructiveInTxn = True
+        }
+
+        toMig :: ([SectionOption], Text) -> Either Text SqlMigration
+        toMig x@(ops, sql) =
+            case (checkOpts ops, nothingIfEmptyQuery sql) of
+                (Just err, _) -> Left err
+                (_, Nothing) -> Left "SQL migration is completely empty"
+                _ -> Right $ mkMig x
 
 parseSqlMigration :: String -> Text -> Either Text SqlMigration
 parseSqlMigration name t = bimap Text.pack id migE >>= toMig
@@ -160,8 +204,12 @@ parseSqlMigration name t = bimap Text.pack id migE >>= toMig
                         (_, _, True, True)  -> Left "There can't be two destructive sections"
                         (_, _, False, False)  -> Left "There can't be two non-destructive sections"
 
-parseAddedSqlMigration :: String -> Text -> Either Text AddedSqlMigration
-parseAddedSqlMigration name t = AddedSqlMigration <$> parseSqlMigration name t <*> parseMigrationTimestamp name
+parseSqlMigrationNew :: DeploymentWorkflow -> String -> Text -> Either Text SqlMigration
+parseSqlMigrationNew SimpleDeployment name sql = parseSqlMigrationSimpleWorkflow name sql
+parseSqlMigrationNew (BlueGreenSafeDeploymentUpToAndIncluding _) name sql = parseSqlMigration name sql
+
+parseAddedSqlMigration :: DeploymentWorkflow -> String -> Text -> Either Text AddedSqlMigration
+parseAddedSqlMigration depFlow name t = AddedSqlMigration <$> parseSqlMigrationNew depFlow name t <*> parseMigrationTimestamp name
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
 -- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime

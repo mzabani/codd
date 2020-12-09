@@ -49,21 +49,13 @@ applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a
 applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }) hashCheck = do
     let
         unsafeDbName = dbIdentifier dbName
-    liftIO $ putStr "Parse-checking all SQL Migrations... "
-    parsedMigrations :: [AddedSqlMigration] <- either (\(sqlDirs :: [FilePath]) -> do
-        sqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
-                filesInDir <- listDirectory dir
-                return $ fmap (\fn -> (fn, dir </> fn)) $ filter (".sql" `List.isSuffixOf`) filesInDir
-        sqlMigrationsContents :: [(FilePath, ByteString)] <- liftIO $ sqlMigrationFiles `forM` \(fn, fp) -> (fn,) <$> readFile fp
-        -- TODO: decodeUtf8Lenient. Also, better exceptions with MonadThrow ?
-        return $ either (error "Failed to parse-check Migrations") id $ traverse (\(fn, decodeUtf8 -> sql) -> parseAddedSqlMigration fn sql) sqlMigrationsContents
-        ) (return . id) sqlMigrations
-    liftIO $ putStrLn "[ OK ]"
-    liftIO $ putStr "Going to apply sql migrations... "
+    liftIO $ putStr "Checking if Database exists and creating it if necessary... "
     connectAndDispose superUserConnString $ \conn -> do
         dbExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_database WHERE datname = ?" (DB.Only dbName)
         when (not dbExists) $ execvoid_ conn $ "CREATE DATABASE " <> unsafeDbName
+    liftIO $ putStrLn "[ OK ]"
     
+    liftIO $ putStr "Checking if Codd Schema exists and creating it if necessary... "
     let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = Text.unpack dbName }
     ret <- connectAndDispose appDbSuperUserConnString $ \conn -> do
         -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
@@ -79,6 +71,24 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
                     ", dest_section_applied_at timestamptz " <>
                     ", name text not null " <>
                     ", unique (name), unique (migration_timestamp))"
+        liftIO $ putStrLn "[ OK ]"
+
+        -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
+        liftIO $ putStr "Checking in the Database which SQL migrations have already run to completion... "
+        alreadyCompleted :: [FilePath] <- fmap (map DB.fromOnly) $ liftIO $ DB.withTransaction conn $ query conn "SELECT name FROM codd_schema.sql_migrations WHERE dest_section_applied_at IS NOT NULL" ()
+        liftIO $ putStrLn "[ OK ]"
+
+        liftIO $ putStr "Parse-checking all pending SQL Migrations... "
+        parsedMigrations :: [AddedSqlMigration] <- either (\(sqlDirs :: [FilePath]) -> do
+            allSqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
+                    filesInDir <- listDirectory dir
+                    return $ map (\fn -> (fn, dir </> fn)) $ filter (".sql" `List.isSuffixOf`) filesInDir
+            let pendingSqlMigrationFiles = filter (\(n, _) -> n `notElem` alreadyCompleted) allSqlMigrationFiles
+            sqlMigrationsContents :: [(FilePath, ByteString)] <- liftIO $ pendingSqlMigrationFiles `forM` \(fn, fp) -> (fn,) <$> readFile fp
+            -- TODO: decodeUtf8Lenient ?
+            return $ either (error "Failed to parse-check Migrations") id $ traverse (\(fn, decodeUtf8 -> sql) -> parseAddedSqlMigration deploymentWorkflow fn sql) sqlMigrationsContents
+            ) (return . id) sqlMigrations
+        liftIO $ putStrLn "[ OK ]"
         
         -- Run all Migrations in a single transaction now
         txnBracket conn $ do

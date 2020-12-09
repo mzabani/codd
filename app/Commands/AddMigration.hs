@@ -6,7 +6,7 @@ import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
 import Codd.Internal (connectAndDispose)
-import Codd.Parsing (parseSqlMigration)
+import Codd.Parsing (parseSqlMigrationNew)
 import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import qualified Data.Text.IO as Text
@@ -14,7 +14,7 @@ import System.FilePath (takeFileName)
 import UnliftIO.Directory (doesFileExist)
 
 addMigration :: CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
-addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
+addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow }) alsoApply destFolder sqlFp@(SqlFilePath fp) = do
   finalDir <- case (destFolder, sqlMigrations) of
         (Just f, _) -> pure f
         (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the SQL_MIGRATION_PATHS environment variable."
@@ -24,7 +24,8 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes }) alsoAppl
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
   sqlMigContents <- Text.readFile fp
-  let parsedSqlMigE = parseSqlMigration (takeFileName fp) sqlMigContents
+  print deploymentWorkflow
+  let parsedSqlMigE = parseSqlMigrationNew deploymentWorkflow (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
     Right sqlMig -> do
