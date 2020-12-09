@@ -130,6 +130,10 @@ OidColumn PgCollation "attcollation",
 -- attalign	char	 	A copy of pg_type.typalign of this column's type  
 -- attisdropped	bool	 	This column has been dropped and is no longer valid. A dropped column is still physically present in the table, but is ignored by   the parser and so cannot be accessed via SQL.  
 
+### Notes
+
+System columns are created for every table and are _ignored_ by Codd. These are listed in https://www.postgresql.org/docs/12/ddl-system-columns.html.
+
 ## Procedures/Functions/Routines
 
 This comes from https://www.postgresql.org/docs/12/catalog-pg-proc.html

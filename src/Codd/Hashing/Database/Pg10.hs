@@ -14,7 +14,7 @@ instance DbVersionHash Pg10 where
         HView -> (PgClass, Just "pg_class.relkind IN ('v', 'm')")
         HSequence -> (PgSequence, Nothing)
         HRoutine -> (PgProc, Nothing)
-        HColumn -> (PgAttribute, Just "NOT pg_attribute.attisdropped")
+        HColumn -> (PgAttribute, Just "NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')")
         HTableConstraint -> (PgConstraint, Nothing)
         HTrigger -> (PgTrigger, Nothing)
         HRole -> (PgAuthId, Nothing)
