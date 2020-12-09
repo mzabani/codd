@@ -1,4 +1,4 @@
-module Codd.Parsing (parseSqlMigration, parseSqlMigrationSimpleWorkflow, parseSqlMigrationNew, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
+module Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, nothingIfEmptyQuery, toMigrationTimestamp) where
 
 import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..))
 import Control.Applicative ((<|>))
@@ -157,8 +157,8 @@ parseSqlMigrationSimpleWorkflow name t = bimap Text.pack id migE >>= toMig
                 (_, Nothing) -> Left "SQL migration is completely empty"
                 _ -> Right $ mkMig x
 
-parseSqlMigration :: String -> Text -> Either Text SqlMigration
-parseSqlMigration name t = bimap Text.pack id migE >>= toMig
+parseSqlMigrationBGS :: String -> Text -> Either Text SqlMigration
+parseSqlMigrationBGS name t = bimap Text.pack id migE >>= toMig
     where
         migE = parseOnly (migrationParser <* endOfInput) t
         dupOpts (sort -> opts) = any (==True) $ zipWith (==) opts (drop 1 opts)
@@ -204,12 +204,12 @@ parseSqlMigration name t = bimap Text.pack id migE >>= toMig
                         (_, _, True, True)  -> Left "There can't be two destructive sections"
                         (_, _, False, False)  -> Left "There can't be two non-destructive sections"
 
-parseSqlMigrationNew :: DeploymentWorkflow -> String -> Text -> Either Text SqlMigration
-parseSqlMigrationNew SimpleDeployment name sql = parseSqlMigrationSimpleWorkflow name sql
-parseSqlMigrationNew (BlueGreenSafeDeploymentUpToAndIncluding _) name sql = parseSqlMigration name sql
+parseSqlMigration :: DeploymentWorkflow -> String -> Text -> Either Text SqlMigration
+parseSqlMigration SimpleDeployment name sql = parseSqlMigrationSimpleWorkflow name sql
+parseSqlMigration (BlueGreenSafeDeploymentUpToAndIncluding _) name sql = parseSqlMigrationBGS name sql
 
 parseAddedSqlMigration :: DeploymentWorkflow -> String -> Text -> Either Text AddedSqlMigration
-parseAddedSqlMigration depFlow name t = AddedSqlMigration <$> parseSqlMigrationNew depFlow name t <*> parseMigrationTimestamp name
+parseAddedSqlMigration depFlow name t = AddedSqlMigration <$> parseSqlMigration depFlow name t <*> parseMigrationTimestamp name
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
 -- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime

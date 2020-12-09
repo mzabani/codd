@@ -6,7 +6,7 @@ import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
 import Codd.Internal (connectAndDispose)
-import Codd.Parsing (parseSqlMigrationNew)
+import Codd.Parsing (parseSqlMigration)
 import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import qualified Data.Text.IO as Text
@@ -24,8 +24,7 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deployment
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
   sqlMigContents <- Text.readFile fp
-  print deploymentWorkflow
-  let parsedSqlMigE = parseSqlMigrationNew deploymentWorkflow (takeFileName fp) sqlMigContents
+  let parsedSqlMigE = parseSqlMigration deploymentWorkflow (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
     Right sqlMig -> do
