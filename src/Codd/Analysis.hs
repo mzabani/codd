@@ -41,11 +41,17 @@ checkMigration dbInfoApp mig =
     -- TODO: What if this migration is itself no-txn ?
     -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
     -- conflicts that aren't caught by on-disk hashes are detected by developers
-    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfoBlueGreen Nothing
+    applyMigrationsInternal beginRollbackTxnBracket applyMigs dbInfoForExistingMigs Nothing
     where
         thisMigrationAdded = AddedSqlMigration mig DB.PosInfinity
 
-        dbInfoBlueGreen = dbInfoApp { deploymentWorkflow = BlueGreenSafeDeploymentUpToAndIncluding DB.PosInfinity }
+        dbInfoForExistingMigs =
+            dbInfoApp {
+                deploymentWorkflow =
+                    case deploymentWorkflow dbInfoApp of
+                        SimpleDeployment -> SimpleDeployment
+                        BlueGreenSafeDeploymentUpToAndIncluding _ -> BlueGreenSafeDeploymentUpToAndIncluding DB.PosInfinity
+                }
 
         applyMigs :: DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m MigrationCheck
         applyMigs conn applyType allMigs = baseApplyMigsBlock runLast conn applyType allMigs
