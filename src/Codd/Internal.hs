@@ -4,14 +4,16 @@ import Prelude hiding (readFile)
 
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
-import Codd.Types (CoddSettings(..), DeploymentWorkflow(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Codd.Hashing (DbHashes, readHashesFromDatabaseWithSettings)
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, mapMaybe)
 import qualified Data.List as List
 import Data.List (sortOn)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -28,8 +30,8 @@ dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 
 -- | Tries to connect until a connection succeeds or until a timeout, executes the supplied action and disposes of the opened Connection.
-connectAndDispose :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> (DB.Connection -> m a) -> m a
-connectAndDispose connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
+withConnection :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> (DB.Connection -> m a) -> m a
+withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
   where
       wrappedAction n eitherConn = do
           case eitherConn of
@@ -45,19 +47,29 @@ beginCommitTxnBracket conn f = do
 beginRollbackTxnBracket :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
 beginRollbackTxnBracket conn f = (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
 
-applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a -> m a) -> (DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a) -> CoddSettings-> Maybe DbHashes -> m a
-applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }) hashCheck = do
+type TxnBracket m = forall a. DB.Connection -> m a -> m a
+
+checkExpectedHashesAfterAction :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> Maybe DbHashes -> DB.Connection -> m ()
+checkExpectedHashesAfterAction coddSettings mExpectedHashes conn = do
+    case mExpectedHashes of
+        Nothing -> pure ()
+        Just expectedHashes -> do
+            dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
+            when (dbhashes /= expectedHashes) $ throwIO $ userError $ "DB Hash check failed."
+
+applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => TxnBracket m -> (DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a) -> CoddSettings -> m a
+applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName }) = do
     let
         unsafeDbName = dbIdentifier dbName
     liftIO $ putStr "Checking if Database exists and creating it if necessary... "
-    connectAndDispose superUserConnString $ \conn -> do
+    withConnection superUserConnString $ \conn -> do
         dbExists <- isSingleTrue <$> query conn "SELECT TRUE FROM pg_database WHERE datname = ?" (DB.Only dbName)
         when (not dbExists) $ execvoid_ conn $ "CREATE DATABASE " <> unsafeDbName
     liftIO $ putStrLn "[ OK ]"
     
     liftIO $ putStr "Checking if Codd Schema exists and creating it if necessary... "
     let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = Text.unpack dbName }
-    ret <- connectAndDispose appDbSuperUserConnString $ \conn -> do
+    ret <- withConnection appDbSuperUserConnString $ \conn -> do
         -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
         --       We should find a better way to do this in the future.
         liftIO $ DB.withTransaction conn $ do
@@ -73,32 +85,8 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
                     ", unique (name), unique (migration_timestamp))"
         liftIO $ putStrLn "[ OK ]"
 
-        -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
-        liftIO $ putStr "Checking in the Database which SQL migrations have already run to completion... "
-        alreadyCompleted :: [FilePath] <- fmap (map DB.fromOnly) $ liftIO $ DB.withTransaction conn $ query conn "SELECT name FROM codd_schema.sql_migrations WHERE dest_section_applied_at IS NOT NULL" ()
-        liftIO $ putStrLn "[ OK ]"
-
-        liftIO $ putStr "Parse-checking all pending SQL Migrations... "
-        parsedMigrations :: [AddedSqlMigration] <- either (\(sqlDirs :: [FilePath]) -> do
-            allSqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
-                    filesInDir <- listDirectory dir
-                    return $ map (\fn -> (fn, dir </> fn)) $ filter (".sql" `List.isSuffixOf`) filesInDir
-            let pendingSqlMigrationFiles = filter (\(n, _) -> n `notElem` alreadyCompleted) allSqlMigrationFiles
-            sqlMigrationsContents :: [(FilePath, ByteString)] <- liftIO $ pendingSqlMigrationFiles `forM` \(fn, fp) -> (fn,) <$> readFile fp
-            -- TODO: decodeUtf8Lenient ?
-            return $ either (error "Failed to parse-check Migrations") id $ traverse (\(fn, decodeUtf8 -> sql) -> parseAddedSqlMigration deploymentWorkflow fn sql) sqlMigrationsContents
-            ) (return . id) sqlMigrations
-        liftIO $ putStrLn "[ OK ]"
-        
-        -- Run all Migrations in a single transaction now
-        txnBracket conn $ do
-            ret <- txnApp conn deploymentWorkflow parsedMigrations
-            case hashCheck of
-                Nothing -> pure ret
-                Just h -> do
-                    dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
-                    when (dbhashes /= h) $ throwIO $ userError $ "DB Hash check failed. Aborting applying migrations."
-                    pure ret
+        blocksOfMigsToRun <- collectPendingMigrations coddSettings
+        txnApp conn txnBracket blocksOfMigsToRun
     
     liftIO $ putStrLn "All migrations applied successfully"
     return ret
@@ -106,40 +94,107 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
     where isSingleTrue v = v == [ DB.Only True ]
           _noErrors f = catchAny f (const (pure ()))
 
-mainAppApplyMigsBlock :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m ()
-mainAppApplyMigsBlock = baseApplyMigsBlock (const $ pure ())
+-- | Parses on-disk migrations and checks for destructive SQL sections of migrations on the Database to collect which migrations must run,
+-- grouped by in-txn/no-txn. The Database must already exist and Codd's schema must have been created.
+collectPendingMigrations :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> m [BlockOfMigrations]
+collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }) = do
+    let appDbSuperUserConnString = superUserConnString { DB.connectDatabase = Text.unpack dbName }
+    withConnection appDbSuperUserConnString $ \conn -> do
+        -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
+        liftIO $ putStr "Checking in the Database which SQL migrations have already run to completion... "
+        migsThatHaveRunSomeSection :: [(FilePath, Bool)] <- liftIO $ DB.withTransaction conn $ query conn "SELECT name, dest_section_applied_at IS NOT NULL FROM codd_schema.sql_migrations" ()
+        let migsCompleted = mapMaybe (\(n, f) -> if f then Just n else Nothing) migsThatHaveRunSomeSection
+            migsToRunDestSection = mapMaybe (\(n, f) -> if f then Nothing else Just n) migsThatHaveRunSomeSection
+        liftIO $ putStrLn "[ OK ]"
 
-baseApplyMigsBlock :: (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a) -> DB.Connection -> DeploymentWorkflow -> [AddedSqlMigration] -> m a
-baseApplyMigsBlock actionAfter conn deploymentWorkflow sqlMigrations = do
-    execvoid_ conn "LOCK codd_schema.sql_migrations IN ACCESS EXCLUSIVE MODE"
-    let migNames = map (migrationName . addedSqlMig) sqlMigrations
-    -- ^ missing can include migrations whose dest. sections haven't been applied yet (those will have True in their tuples)
-    -- let missingInOrder = [(mig, destApplied) | mig <- sqlMigrations, (missingName, destApplied) <- missing, migrationName mig == missingName]
-    case deploymentWorkflow of
-        BlueGreenSafeDeploymentUpToAndIncluding timestampLastMigration -> do
-            missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.query conn "WITH allMigrations (name) AS (VALUES ?) SELECT allMigrations.name FROM allMigrations JOIN codd_schema.sql_migrations applied USING (name) WHERE applied.dest_section_applied_at IS NULL AND applied.migration_timestamp <= ?" (DB.In migNames, timestampLastMigration)
-            liftIO $ putStrLn $ "Destructive sections of " ++ show missing
-            let missingInOrder :: [AddedSqlMigration] = filter ((`elem` missing) . migrationName . addedSqlMig) sqlMigrations
-            liftIO $ putStrLn $ "[ " <> show (length missingInOrder) <> " with still unapplied destructive sections ]"
-            forM_ missingInOrder $ applySingleMigration conn ApplyDestructiveOnly
-        _ -> pure ()
-    missing :: [FilePath] <- liftIO $ map DB.fromOnly <$> DB.returning conn "WITH allMigrations (name) AS (VALUES (?)) SELECT allMigrations.name FROM allMigrations LEFT JOIN codd_schema.sql_migrations applied USING (name) WHERE applied.name IS NULL" (map DB.Only migNames)
-    let missingInOrder :: [AddedSqlMigration] = filter ((`elem` missing) . migrationName . addedSqlMig) sqlMigrations
-    liftIO $ putStrLn $ "[ " <> show (length missingInOrder) <> " with still unapplied non-destructive sections ]"
-    forM_ missingInOrder $ applySingleMigration conn ApplyNonDestructiveOnly
+        liftIO $ putStr "Parse-checking all pending SQL Migrations... "
+        pendingParsedMigrations :: [MigrationToRun] <-
+            either
+                (\(sqlDirs :: [FilePath]) -> do
+                    allSqlMigrationFiles :: [(FilePath, FilePath)] <- fmap (sortOn fst) $ fmap concat $ forM sqlDirs $ \dir -> do
+                            filesInDir <- listDirectory dir
+                            return $ map (\fn -> (fn, dir </> fn)) $ filter (".sql" `List.isSuffixOf`) filesInDir
+                    let pendingSqlMigrationFiles = mapMaybe (\case (n, fp) | n `elem` migsCompleted -> Nothing
+                                                                            | n `elem` migsToRunDestSection -> Just ((n, fp), ApplyDestructiveOnly)
+                                                                            | otherwise -> Just ((n, fp), ApplyNonDestructiveOnly))
+                                                                allSqlMigrationFiles
+                    sqlMigrationsContents :: [((FilePath, ByteString), ApplySingleMigration)] <- liftIO $ pendingSqlMigrationFiles `forM` \((fn, fp), ap) -> readFile fp >>= (\contents -> pure ((fn, contents), ap))
+                    -- TODO: decodeUtf8Lenient ?
+                    return $ either (error "Failed to parse-check pending Migrations") id $ traverse (\((fn, decodeUtf8 -> sql), ap) -> (flip MigrationToRun ap) <$> parseAddedSqlMigration deploymentWorkflow fn sql) sqlMigrationsContents
+                )
+                (\(ams :: [AddedSqlMigration]) ->
+                    return 
+                        $ mapMaybe
+                            (\case a@(AddedSqlMigration mig _)
+                                                | migrationName mig `elem` migsCompleted -> Nothing
+                                                | migrationName mig `elem` migsToRunDestSection -> Just $ MigrationToRun a ApplyDestructiveOnly
+                                                | otherwise -> Just $ MigrationToRun a ApplyNonDestructiveOnly)
+                        $ sortOn (\(AddedSqlMigration _ ts) -> ts) ams
+                )
+            sqlMigrations
+        -- ^ TODO: We are assuming manually provided AddedSqlMigrations are to have only their non-destructive sections run. This is an insufficient model for blue-green-safe deployments. Fix later.
+        liftIO $ putStrLn "[ OK ]"
+        
+        -- Run all Migrations now. Group them in blocks of consecutive transactions by in-txn/no-txn.
+        return $ NE.groupWith runInTxn pendingParsedMigrations
 
-    actionAfter conn
+mainAppApplyMigsBlock :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> Maybe DbHashes -> DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m ()
+mainAppApplyMigsBlock coddSettings mExpectedHashes conn txnBracket pendingMigBlocks = do
+    let actionAfter = checkExpectedHashesAfterAction coddSettings mExpectedHashes
+    baseApplyMigsBlock actionAfter conn txnBracket pendingMigBlocks
 
-data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly
+-- | Note: "actionAfter" runs in the same transaction if all supplied migrations are in-txn, or separately, and not in an explicit transaction, otherwise.
+baseApplyMigsBlock :: forall m a. (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a) -> DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a
+baseApplyMigsBlock actionAfter conn txnBracket blocksOfMigs =
+    case blocksOfMigs of
+        [] -> txnBracket conn $ actionAfter conn
+        (b1 : [])
+            | blockInTxn b1 -> runBlock actionAfter b1
+        _ -> do
+            forM_ blocksOfMigs $ runBlock (const (pure ()))
+            actionAfter conn
+
+    where
+        runMigs migs = forM_ migs $ \(MigrationToRun asqlmig ap) -> applySingleMigration conn ap asqlmig
+        runBlock :: (DB.Connection -> m b) -> BlockOfMigrations -> m b
+        runBlock act migBlock = do
+            if blockInTxn migBlock then
+                txnBracket conn $ do
+                    runMigs migBlock
+                    act conn
+            else do
+                runMigs migBlock
+                act conn
+
+data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
+
+data MigrationToRun = MigrationToRun AddedSqlMigration ApplySingleMigration deriving stock Show
+runInTxn :: MigrationToRun -> Bool
+runInTxn (MigrationToRun (AddedSqlMigration m _) ap) =
+    case ap of
+        ApplyDestructiveOnly -> destructiveInTxn m
+        ApplyNonDestructiveOnly -> nonDestructiveInTxn m
+
+type BlockOfMigrations = NonEmpty MigrationToRun
+blockInTxn :: BlockOfMigrations -> Bool
+blockInTxn (m1 :| _) = runInTxn m1
 
 applySingleMigration :: MonadIO m => DB.Connection -> ApplySingleMigration -> AddedSqlMigration -> m ()
-applySingleMigration conn deploymentWorkflow (AddedSqlMigration sqlMig migTimestamp) = do
+applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
     let fn = migrationName sqlMig
         mNonDestSql = encodeUtf8 <$> nonDestructiveSql sqlMig
         mDestSql = encodeUtf8 <$> destructiveSql sqlMig
-    case deploymentWorkflow of
+    -- TODO: Some no-txn statements such as 'CREATE/DROP DATABASE' cannot be sent
+    -- to the server in a single call to DB.execute or they will fail!
+    -- It's probably nice to detect such an error in no-txn migrations and print
+    -- a helpful tip, asking users to split these commands into one per migration file.
+    case ap of
             ApplyNonDestructiveOnly -> do
-                liftIO $ putStr $ "Applying non-destructive section of " <> fn
+                if isNothing mDestSql then
+                    liftIO $ putStr $ "Applying " <> fn
+                else
+                    liftIO $ putStr $ "Applying non-destructive section of " <> fn
+                
                 case mNonDestSql of
                     Nothing -> pure ()
                     Just nonDestSql -> execvoid_ conn $ DB.Query nonDestSql

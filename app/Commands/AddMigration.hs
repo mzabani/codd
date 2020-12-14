@@ -5,7 +5,7 @@ import Codd.AppCommands (timestampAndMoveMigrationFile)
 import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
-import Codd.Internal (connectAndDispose)
+import Codd.Internal (withConnection)
 import Codd.Parsing (parseSqlMigration)
 import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
@@ -39,5 +39,5 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deployment
         putStrLn $ "Migration added to " ++ finalMigFile
         when alsoApply $ do
             Codd.applyMigrations dbInfo False
-            hashes <- connectAndDispose (superUserInAppDatabaseConnInfo dbInfo) (readHashesFromDatabaseWithSettings dbInfo)
+            hashes <- withConnection (superUserInAppDatabaseConnInfo dbInfo) (readHashesFromDatabaseWithSettings dbInfo)
             persistHashesToDisk hashes onDiskHashesDir

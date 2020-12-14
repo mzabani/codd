@@ -3,7 +3,7 @@ module Codd (CoddSettings(..), applyMigrations, withDbAndDrop) where
 import Prelude hiding (readFile)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDisk)
-import Codd.Internal (connectAndDispose, applyMigrationsInternal, dbIdentifier, beginCommitTxnBracket, mainAppApplyMigsBlock)
+import Codd.Internal (withConnection, applyMigrationsInternal, dbIdentifier, beginCommitTxnBracket, mainAppApplyMigsBlock)
 import Codd.Types (CoddSettings(..))
 import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO(..))
@@ -12,11 +12,11 @@ import qualified Database.PostgreSQL.Simple as DB
 import UnliftIO.Exception (bracket)
 
 
--- | Creates the new Database if necessary and applies every single migration.
+-- | Creates the new Database if it doesn't yet exist and applies every single migration.
 applyMigrations :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> Bool -> m ()
 applyMigrations dbInfo@CoddSettings { onDiskHashes } checkHashes = do
-    onDiskHashCheck <- if checkHashes then Just <$> either readHashesFromDisk pure onDiskHashes else pure Nothing
-    applyMigrationsInternal beginCommitTxnBracket mainAppApplyMigsBlock dbInfo onDiskHashCheck
+    expectedDbHash <- if checkHashes then Just <$> either readHashesFromDisk pure onDiskHashes else pure Nothing
+    applyMigrationsInternal beginCommitTxnBracket (mainAppApplyMigsBlock dbInfo expectedDbHash) dbInfo
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards. Useful for testing.
@@ -24,4 +24,4 @@ withDbAndDrop :: MonadUnliftIO m => CoddSettings -> (DB.ConnectInfo -> m a) -> m
 withDbAndDrop dbInfo f = bracket (applyMigrations dbInfo False) dropDb (const $ f (superUserInAppDatabaseConnInfo dbInfo))
   where
       dropDb _ = do
-          connectAndDispose (superUserConnString dbInfo) $ \conn -> void $ liftIO $ DB.execute_ conn $ "DROP DATABASE IF EXISTS " <> dbIdentifier (dbName dbInfo)
+          withConnection (superUserConnString dbInfo) $ \conn -> void $ liftIO $ DB.execute_ conn $ "DROP DATABASE IF EXISTS " <> dbIdentifier (dbName dbInfo)

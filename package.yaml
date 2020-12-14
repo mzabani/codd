@@ -59,6 +59,8 @@ library:
   source-dirs: src
   ghc-options:
     - -Wall
+    - -Wincomplete-uni-patterns
+    - -Wpartial-fields
   dependencies:
     - attoparsec
     - hashable
@@ -74,6 +76,8 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     - -Wall
+    - -Wincomplete-uni-patterns
+    - -Wpartial-fields
     dependencies:
     - codd
     - optparse-applicative
