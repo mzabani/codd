@@ -59,7 +59,7 @@ main = do
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo UpDev = do
   Codd.applyMigrations dbInfo False
-  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
+  hashes <- Codd.withConnection (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
   onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") (onDiskHashes dbInfo)
   Codd.persistHashesToDisk hashes onDiskHashesDir
 doWork dbInfo UpDeploy = Codd.applyMigrations dbInfo True
@@ -67,5 +67,5 @@ doWork dbInfo (Analyze fp) = checkMigrationFile dbInfo fp
 doWork dbInfo (Add alsoApply destFolder fp) = addMigration dbInfo alsoApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = verifyDb dbInfo verbose
 doWork dbInfo (DbHashes dirToSave) = do
-  hashes <- Codd.connectAndDispose (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
+  hashes <- Codd.withConnection (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
   Codd.persistHashesToDisk hashes dirToSave

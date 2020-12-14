@@ -50,4 +50,4 @@ data SqlMigration = SqlMigration {
     , destructiveInTxn :: Bool
 } deriving stock (Eq, Show)
 
-data AddedSqlMigration = AddedSqlMigration { addedSqlMig :: SqlMigration, addedSqlTimestamp :: UTCTimestamp }
+data AddedSqlMigration = AddedSqlMigration { addedSqlMig :: SqlMigration, addedSqlTimestamp :: UTCTimestamp } deriving stock Show

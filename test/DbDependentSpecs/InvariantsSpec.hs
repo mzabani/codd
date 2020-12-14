@@ -4,7 +4,7 @@ import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings)
-import Codd.Internal (connectAndDispose)
+import Codd.Internal (withConnection)
 import Codd.Parsing (toMigrationTimestamp)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void)
@@ -66,7 +66,7 @@ spec = do
                             migTimes = nubBy (\(_, t1, _) (_, t2, _) -> t1 == t2) $
                                 map (\(n, t) -> let (roundedUtcTime, dbTime) = toMigrationTimestamp t in (n, roundedUtcTime, dbTime)) veryCloseUtcTimes
                         in
-                        connectAndDispose appConnInfo $ \conn -> do
+                        withConnection appConnInfo $ \conn -> do
                             void $ DB.executeMany conn "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)" migTimes
                             timesFromDb1 :: [(Int, UTCTime, UTCTime)] <- DB.query conn "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1" ()
                             timesFromDb2 :: [(Int, UTCTime, DB.UTCTimestamp)] <- DB.query conn "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1" ()
@@ -84,7 +84,7 @@ spec = do
                     let dbInfo = intactDbInfo {
                         sqlMigrations = Right [ lotsOfObjectsMigration ]
                     }
-                    dbHashes1 <- withDbAndDrop dbInfo (flip connectAndDispose (readHashesFromDatabaseWithSettings dbInfo))
+                    dbHashes1 <- withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
                     threadDelay (5 * 1000 * 1000)
-                    dbHashes2 <- withDbAndDrop dbInfo (flip connectAndDispose (readHashesFromDatabaseWithSettings dbInfo))
+                    dbHashes2 <- withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
                     dbHashes1 `shouldBe` dbHashes2

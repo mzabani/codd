@@ -1,7 +1,7 @@
 module DbUtils where
 
 import Codd (withDbAndDrop)
-import Codd.Internal (connectAndDispose)
+import Codd.Internal (withConnection)
 import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..), DeploymentWorkflow(..), Include(..))
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..), addUTCTime, NominalDiffTime)
@@ -66,7 +66,7 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     withDbAndDrop coddSettings $ \_ ->
         act coddSettings 
             `finally`
-                connectAndDispose
+                withConnection
                     (superUserConnString coddSettings)
                     -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB instance. So we reset these things here, always.
                     (\conn -> liftIO $ DB.execute conn "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; DROP ROLE IF EXISTS \"extra-codd-test-user\";" ())

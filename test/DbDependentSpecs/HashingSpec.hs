@@ -4,7 +4,7 @@ import Codd (applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Environment (superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings)
-import Codd.Internal (connectAndDispose)
+import Codd.Internal (withConnection)
 import Codd.Parsing (toMigrationTimestamp)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void, foldM)
@@ -182,7 +182,7 @@ spec = do
                 it "Because our DB hashing is so complex, let's make sure operations we know should change schema compatibility do" $ \emptyDbInfo -> do
                     let
                         connInfo = superUserInAppDatabaseConnInfo emptyDbInfo
-                        getHashes sett = connectAndDispose connInfo (readHashesFromDatabaseWithSettings sett)
+                        getHashes sett = withConnection connInfo (readHashesFromDatabaseWithSettings sett)
                     hashBeforeEverything <- getHashes emptyDbInfo
                     void $
                         foldM (\(hashSoFar, appliedMigs :: [AddedSqlMigration]) (nextMig, nextMigModifiesSchema) -> do
@@ -209,5 +209,5 @@ spec = do
                         ) (hashBeforeEverything, []) migrationsAndHashChange
                     
                     -- Let's make sure we're actually applying the migrations by fetching some data..
-                    connectAndDispose connInfo (\conn -> DB.query conn "SELECT employee_id, employee_name FROM employee WHERE employee_name='Marcelo'" ())
+                    withConnection connInfo (\conn -> DB.query conn "SELECT employee_id, employee_name FROM employee WHERE employee_name='Marcelo'" ())
                         `shouldReturn` [ (1 :: Int, "Marcelo" :: String) ]
