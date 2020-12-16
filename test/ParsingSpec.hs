@@ -1,5 +1,6 @@
 module ParsingSpec where
 
+import Codd.Internal.MultiQueryStatement (parseMultiStatement)
 import Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
 import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
@@ -12,25 +13,80 @@ import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 
 newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
-instance Arbitrary RandomSql where
-    arbitrary = fmap RandomSql $ frequency [
-            (1, pure "")
-            , (50, randomSqlGen)
-            ]
+newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
-        where
-            semiCommaGen = frequency [(5, pure ";"), (1, pure "")]
-            emptyLineGen = pure "\n"
-            lineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
-            -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
-            -- is so low that we can just ignore it
-            commentGen = ("-- " <>) <$> lineGen
-            lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen), (1, emptyLineGen) ]
-            randomSqlGen = Text.concat <$> listOf1 lineOrCommentGen
+genSql :: Bool -> Gen Text
+genSql onlySyntaticallyValid =
+    frequency [
+        (if onlySyntaticallyValid then 0 else 1, pure "")
+        , (50, randomSqlGen)
+        ]
+
+    where
+        emptyLineGen = pure "\n"
+        bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
+        cleanerSqlLineGen = elements [
+            "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+            , "DO"
+                                <> "\n$do$"
+                                <> "\nBEGIN"
+                                <> "\n   IF NOT EXISTS ("
+                                <> "\n      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN"
+                                <> "\n"
+                                <> "\n      CREATE USER \"codd-user\";"
+                                <> "\n   END IF;"
+                                <> "\nEND"
+                                <> "\n$do$;"
+            , "CREATE TABLE \"escaped--table /* nasty */\";"
+            ]
+        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (3, cleanerSqlLineGen) ]
+        -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
+        -- is so low that we can just ignore it
+        commentGen = ("-- " <>) <$> lineGen
+        lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen), (1, emptyLineGen) ]
+        randomSqlGen = Text.concat <$> listOf1 lineOrCommentGen
+
+instance Arbitrary RandomSql where
+    arbitrary = fmap RandomSql (genSql False)
+
+instance Arbitrary SyntaticallyValidRandomSql where
+    arbitrary = fmap SyntaticallyValidRandomSql (genSql True)
 
 spec :: Spec
 spec = do
     describe "Parsing tests" $ do
+        context "Multi Query Statement Parser" $ do
+            it "Single command with and without semi-colon" $ do
+                    let
+                        estm1 = parseMultiStatement "CREATE TABLE hello;"
+                        estm2 = parseMultiStatement "CREATE TABLE hello"
+                    estm1 `shouldBe` Right [ "CREATE TABLE hello;" ]
+                    estm2 `shouldBe` Right [ "CREATE TABLE hello" ]
+            it "Multiple commands with comments and other stuff" $ do
+                    let
+                        blocks = ["CREATE TABLE hello;"," SELECT 'so\\'m -- not a comment' FROM ahahaha;","YEAH\n\n-- comment\nABC;"
+                                    , "\nDO"
+                                    <> "\n$do$"
+                                    <> "\nBEGIN"
+                                    <> "\n   IF NOT EXISTS ("
+                                    <> "\n      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN"
+                                    <> "\n"
+                                    <> "\n      CREATE USER \"codd-user\";"
+                                    <> "\n   END IF;"
+                                    <> "\nEND"
+                                    <> "\n$do$;"
+                                    , "ALTER TABLE \"some-table\";"
+                                    , "/* some comment ***** with asterisks */ GO" ]
+                        estm = parseMultiStatement $ Text.concat blocks
+                    estm `shouldBe` Right blocks
+            it "Statements concatenation matches original and statements end with semi-colon" $ do
+                    property $ \(unSyntRandomSql -> plainSql) ->
+                        let estms = parseMultiStatement plainSql
+                        in
+                        case estms of
+                            Left e -> estms `shouldNotSatisfy` isLeft -- pure () -- Not every generated SQL is valid, and we only care about valid SQL for this parser
+                            Right stms -> do
+                                Text.concat stms `shouldBe` plainSql
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
                 it "Plain Sql Migration, missing optional options" $ do

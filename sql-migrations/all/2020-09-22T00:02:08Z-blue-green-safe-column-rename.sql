@@ -1,4 +1,4 @@
--- codd: non-destructive
+-- codd: non-destructive, no-txn
 
 -- README:
 -- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps

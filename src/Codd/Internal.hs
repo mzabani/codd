@@ -2,6 +2,7 @@ module Codd.Internal where
 
 import Prelude hiding (readFile)
 
+import Codd.Internal.MultiQueryStatement (mqStatement_)
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
@@ -17,9 +18,8 @@ import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.Text.Encoding (decodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
-import qualified Database.PostgreSQL.Simple.Types as DB
 import System.FilePath ((</>))
 import UnliftIO (MonadUnliftIO, toIO)
 import UnliftIO.Concurrent (threadDelay)
@@ -182,30 +182,24 @@ blockInTxn (m1 :| _) = runInTxn m1
 applySingleMigration :: MonadIO m => DB.Connection -> ApplySingleMigration -> AddedSqlMigration -> m ()
 applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
     let fn = migrationName sqlMig
-        mNonDestSql = encodeUtf8 <$> nonDestructiveSql sqlMig
-        mDestSql = encodeUtf8 <$> destructiveSql sqlMig
-    -- TODO: Some no-txn statements such as 'CREATE/DROP DATABASE' cannot be sent
-    -- to the server in a single call to DB.execute or they will fail!
-    -- It's probably nice to detect such an error in no-txn migrations and print
-    -- a helpful tip, asking users to split these commands into one per migration file.
     case ap of
             ApplyNonDestructiveOnly -> do
-                if isNothing mDestSql then
+                if isNothing (destructiveSql sqlMig) then
                     liftIO $ putStr $ "Applying " <> fn
                 else
                     liftIO $ putStr $ "Applying non-destructive section of " <> fn
                 
-                case mNonDestSql of
+                case nonDestructiveSql sqlMig of
                     Nothing -> pure ()
-                    Just nonDestSql -> execvoid_ conn $ DB.Query nonDestSql
+                    Just nonDestSql -> mqStatement_ conn nonDestSql
                 -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
                 -- since every migration will have both sections marked as ran sequentially.
                 liftIO $ void $ DB.execute conn "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
             ApplyDestructiveOnly -> do
                 liftIO $ putStr $ "Applying destructive section of " <> fn
-                case mDestSql of
+                case destructiveSql sqlMig of
                     Nothing -> pure ()
-                    Just destSql -> execvoid_ conn $ DB.Query destSql
+                    Just destSql -> mqStatement_ conn destSql
                 liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
                 -- TODO: Assert 1 row was updated
     liftIO $ putStrLn " [ OK ]"
