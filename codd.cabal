@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: c683d0e70c4060f196dab893bba8e6947bf272a8f26de41f9e76fdf449ca86e9
+-- hash: 75ca9fe9877ab96a88cf1f2b1accc5662c9706837de061f975cf691f375817c8
 
 name:           codd
 version:        0.1.0.0
@@ -40,6 +40,7 @@ library
       Codd.Hashing.Disk
       Codd.Hashing.Types
       Codd.Internal
+      Codd.Internal.MultiQueryStatement
       Codd.Parsing
       Codd.Prelude
       Codd.Query
