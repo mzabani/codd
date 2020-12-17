@@ -6,6 +6,7 @@ import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
 import qualified Data.Char as Char
 import Data.Either (isLeft)
+import Data.Maybe (isJust)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Test.Hspec
@@ -38,6 +39,7 @@ genSql onlySyntaticallyValid =
                                 <> "\nEND"
                                 <> "\n$do$;"
             , "CREATE TABLE \"escaped--table /* nasty */\";"
+            , "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
             ]
         lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (3, cleanerSqlLineGen) ]
         -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
@@ -75,8 +77,8 @@ spec = do
                                     <> "\n   END IF;"
                                     <> "\nEND"
                                     <> "\n$do$;"
-                                    , "ALTER TABLE \"some-table\";"
-                                    , "/* some comment ***** with asterisks */ GO" ]
+                                    , "ALTER TABLE \"some-table\";/* some comment ***** with asterisks */ "
+                                    , "GO" ]
                         estm = parseMultiStatement $ Text.concat blocks
                     estm `shouldBe` Right blocks
             it "Statements concatenation matches original and statements end with semi-colon" $ do
@@ -87,6 +89,9 @@ spec = do
                             Left e -> estms `shouldNotSatisfy` isLeft -- pure () -- Not every generated SQL is valid, and we only care about valid SQL for this parser
                             Right stms -> do
                                 Text.concat stms `shouldBe` plainSql
+                                -- forM_ (init stms) $ \stm -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
+                                -- The condition above does not always hold: fragments can end with comments..
+                                forM_ (init stms) $ \stm -> nothingIfEmptyQuery stm `shouldSatisfy` isJust
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
                 it "Plain Sql Migration, missing optional options" $ do

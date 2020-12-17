@@ -2,12 +2,12 @@ module Codd.Internal.MultiQueryStatement (mqStatement_, parseMultiStatement) whe
 
 import Prelude hiding (takeWhile)
 
-import Debug.Trace (traceShowId)
 import Codd.Query (execvoid_)
 import Control.Applicative ((<|>))
 import Control.Monad (void, forM_)
-import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfLine, endOfInput, endOfLine, manyTill, many1, parseOnly, peekChar, skipMany, skipSpace, skipWhile, string, sepBy, sepBy1, takeText, takeWhile, takeWhile1)
+import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfInput, many1, parseOnly, peekChar, string, takeWhile)
 import qualified Data.Attoparsec.Text as Parsec
+import qualified Data.Char as Char
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -45,28 +45,28 @@ singleStatementParser = do
     mc <- peekChar
     case mc of
         Nothing -> if t1 == "" then fail "Empty input" else pure t1 -- This could be a single statement without a semi-colon
-        Just c -> do
-            s <-
-                if c == ';' then char ';' *> pure (Text.snoc t1 ';')
-                else do
-                    (_, t2) <- traceShowId <$> blockParser
-                    -- After reading an entire block, we still need to find a semi-colon to get a statement from start to finish!
-                    -- One exception: eof
-                    done <- atEnd
-                    if done then pure $ t1 <> t2
-                    else do
-                        more <- singleStatementParser
-                        pure $ t1 <> t2 <> more
-                
+        Just ';' -> do
+            void $ char ';'
             -- To avoid trailing comments being parsed as a separate command, look for a comment now as well
-            pure s
+            trailingComment <- commentParser <|> pure ""
+            pure $ Text.snoc t1 ';' <> trailingComment
+        Just _ -> do
+            (_, t2) <- blockParser
+            -- After reading an entire block, we still need to find a semi-colon to get a statement from start to finish!
+            -- One exception: eof
+            done <- atEnd
+            if done then pure $ t1 <> t2
+            else do
+                more <- singleStatementParser
+                pure $ t1 <> t2 <> more
 
-
--- commentParser :: Parser Text
--- commentParser = comment1 <|> comment2
---     where
---         comment1 = string "--" >> manyTill anyChar (endOfInput <|> endOfLine)
---         comment2 = string "/*" >> manyTill anyChar (string "*/")
+commentParser :: Parser Text
+commentParser = do
+    s1 <- takeWhile Char.isSpace
+    (commentType, commentInit) <- (DoubleDashComment,) <$> string "--" <|> (CStyleComment,) <$> string "/*"
+    bRemaining <- blockInnerContentsParser commentType
+    s2 <- takeWhile Char.isSpace
+    pure $ s1 <> commentInit <> bRemaining <> s2
 
 data BlockType = DoubleDashComment | CStyleComment | DollarQuotedBlock Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock Show
 
@@ -75,7 +75,7 @@ isPossibleStartingChar c = c == '-' || c == '/' || c == '"' || c == '$' || c == 
 
 isPossibleEndingChar :: BlockType -> Char -> Bool
 isPossibleEndingChar DoubleDashComment c = c == '\n'
-isPossibleEndingChar CStyleComment c = c == '/'
+isPossibleEndingChar CStyleComment c = c == '*'
 isPossibleEndingChar (DollarQuotedBlock _) c = c == '$'
 isPossibleEndingChar DoubleQuotedIdentifier c = c == '"'
 isPossibleEndingChar SingleQuotedString c = c == '\''
@@ -99,7 +99,7 @@ blockEndingParser :: BlockType -> Parser Text
 blockEndingParser =
     \case
         DoubleDashComment -> eol <|> (pure "" <* endOfInput)
-        CStyleComment -> string "/*"
+        CStyleComment -> string "*/"
         DollarQuotedBlock q -> string q -- TODO: CASE INSENSITIVE!
         DoubleQuotedIdentifier -> string "\""
         SingleQuotedString -> string "'"
@@ -109,24 +109,12 @@ eol = string "\n" <|> string "\t\n"
 
 blockParser :: Parser (BlockType, Text)
 blockParser = do
-    (bt, bBegin) <- traceShowId <$> blockBeginParser
-    -- pure (bt, bBegin)
-    bRemaining <- takeUntilQuote2 bt
-    -- bRemaining <- traceShowId <$> takeWhile (not . isPossibleEndingChar bt)
-    -- bEnd <- traceShowId <$> blockEndingParser bt
+    (bt, bBegin) <- blockBeginParser
+    bRemaining <- blockInnerContentsParser bt
     pure $ (bt, bBegin <> bRemaining)
 
--- takeUntilQuote :: Maybe BlockType -> Parser (BlockType, Text)
--- takeUntilQuote Nothing = do
---     t <- takeWhile (\c -> c /= '-' && c /= '/' && c /= '"' && c /= '$' && c /= '\'') -- All the chars that begin blocks
---     done <- atEndblockBeginParser
---     if atEnd then pure (t, Nothing)
---     else do
---         firstQuotedChar <- anyChar
---         fmap (first (flip Text.snoc firstQuotedChar)) $ (,"\n") <$> string "--" <|> (,"*/") <$> string "/*"
-
-takeUntilQuote2 :: BlockType -> Parser Text
-takeUntilQuote2 (traceShowId -> bt) = do
+blockInnerContentsParser :: BlockType -> Parser Text
+blockInnerContentsParser bt = do
     t <- case bt of
             SingleQuotedString -> parseWithEscapeChar (== '\'') -- TODO: '' escaping!!
             DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- TODO: "" escaping
@@ -139,9 +127,9 @@ takeUntilQuote2 (traceShowId -> bt) = do
             Nothing -> do
                 -- Could mean we found e.g. '*' inside a C-Style comment block, but not followed by '/'
                 c <- anyChar
-                remain <- takeUntilQuote2 bt
+                remain <- blockInnerContentsParser bt
                 pure $ Text.snoc t c <> remain
-            Just endingQuote -> pure $ traceShowId $ t <> endingQuote
+            Just endingQuote -> pure $ t <> endingQuote
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Does not consume the ending char.
