@@ -1,4 +1,4 @@
-module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration, someDestructiveChangeHasBeenApplied, migrationErrors) where
+module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration, canRunEverythingInASingleTransaction, someDestructiveChangeHasBeenApplied, migrationErrors) where
 
 -- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
@@ -32,6 +32,12 @@ migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (Destru
     ++ if (nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig) then [ "Non-destructive section ends Transactions when run, and that is not allowed." ] else []
     ++ if (destSectionEndsTransaction && destructiveInTxn sqlMig) then [ "Destructive section ends Transactions when run, and that is not allowed." ] else []
 
+-- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
+canRunEverythingInASingleTransaction :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m Bool
+canRunEverythingInASingleTransaction settings mig = do
+    pendingMigBlocks <- collectPendingMigrations settings
+    -- TODO: In Blue-Green-Safe mode, how do we decide this?
+    return $ all blockInTxn pendingMigBlocks && nonDestructiveInTxn mig && destructiveSql mig == Nothing
 
 -- | Checks if there are any problems, including:
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.

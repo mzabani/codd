@@ -18,8 +18,9 @@ import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8)
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
+import qualified Database.PostgreSQL.Simple.Types as DB
 import System.FilePath ((</>))
 import UnliftIO (MonadUnliftIO, toIO)
 import UnliftIO.Concurrent (threadDelay)
@@ -145,9 +146,9 @@ mainAppApplyMigsBlock coddSettings mExpectedHashes conn txnBracket pendingMigBlo
 
 -- | Note: "actionAfter" runs in the same transaction if all supplied migrations are in-txn, or separately, and not in an explicit transaction, otherwise.
 baseApplyMigsBlock :: forall m a. (MonadUnliftIO m, MonadIO m) => (DB.Connection -> m a) -> DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a
-baseApplyMigsBlock actionAfter conn txnBracket blocksOfMigs =
+baseApplyMigsBlock actionAfter conn txnBracket blocksOfMigs = do
     case blocksOfMigs of
-        [] -> txnBracket conn $ actionAfter conn
+        [] -> actionAfter conn
         (b1 : [])
             | blockInTxn b1 -> runBlock actionAfter b1
         _ -> do
@@ -158,7 +159,7 @@ baseApplyMigsBlock actionAfter conn txnBracket blocksOfMigs =
         runMigs migs = forM_ migs $ \(MigrationToRun asqlmig ap) -> applySingleMigration conn ap asqlmig
         runBlock :: (DB.Connection -> m b) -> BlockOfMigrations -> m b
         runBlock act migBlock = do
-            if blockInTxn migBlock then
+            if blockInTxn migBlock then do
                 txnBracket conn $ do
                     runMigs migBlock
                     act conn
@@ -191,7 +192,14 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                 
                 case nonDestructiveSql sqlMig of
                     Nothing -> pure ()
-                    Just nonDestSql -> mqStatement_ conn nonDestSql
+                    Just nonDestSql ->
+                        -- This is ugly, but we don't trust "mqStatement_" that much yet, so if we happen
+                        -- to be in a transaction, we have the luxury of not relying on our Sql Parser..
+                        -- At least until it becomes more trustworthy
+                        if nonDestructiveInTxn sqlMig then
+                            execvoid_ conn $ DB.Query $ encodeUtf8 nonDestSql
+                        else
+                            mqStatement_ conn nonDestSql
                 -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
                 -- since every migration will have both sections marked as ran sequentially.
                 liftIO $ void $ DB.execute conn "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
@@ -199,7 +207,11 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                 liftIO $ putStr $ "Applying destructive section of " <> fn
                 case destructiveSql sqlMig of
                     Nothing -> pure ()
-                    Just destSql -> mqStatement_ conn destSql
+                    Just destSql ->
+                        if destructiveInTxn sqlMig then
+                            execvoid_ conn $ DB.Query $ encodeUtf8 destSql
+                        else
+                            mqStatement_ conn destSql
                 liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
                 -- TODO: Assert 1 row was updated
     liftIO $ putStrLn " [ OK ]"

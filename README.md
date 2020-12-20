@@ -82,15 +82,16 @@ After doing this, I recommend exploring your `DB_ONDISK_HASHES` folder. Everythi
 
 ## More about SQL Migrations
 
-Codd will always run every pending migration in a single transaction. Even if there's more than one pending migrations (you can add them without the `--apply` flag and then call `codd up-dev` to run them all) they will all run in the same transaction.
+Codd will always run every pending migration in a single transaction. Even if there's more than one pending migrations (you can add them with the `--dont-apply` flag and then call `codd up-dev` to run them all) they will all run in the same transaction.
 
-However, not any SQL can run inside a transaction. In Postgres, altering `enum` types and using the newly created `enum` values cannot run in the same transaction.
+However, not all SQL can run inside a transaction. In Postgres, altering `enum` types and using the newly created `enum` values cannot run in the same transaction.
 Because of that, there's a way to specify that a SQL migration cannot run in a transaction, as is exemplified below:
 
 
 ````sql
 -- codd: no-txn
 ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
+UPDATE employee SET employee_experience='intern';
 ````
 
 Codd will parse the comment in the first line and figure that this migration can't run in a Transaction.

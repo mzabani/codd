@@ -18,7 +18,7 @@ nano add-num-children-column.sql
 ALTER TABLE employee ADD COLUMN num_children INT NOT NULL DEFAULT 0;
 
 # Ok, now the SQL migration needs to be added and applied in this branch
-codd add --apply add-num-children-column.sql
+codd add add-num-children-column.sql
 
 # The migration has been timestamped and moved to a pre-configured directory
 # And the on-disk hashes now reflect the change too
