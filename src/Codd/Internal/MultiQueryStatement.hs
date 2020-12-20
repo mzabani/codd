@@ -30,11 +30,16 @@ mqStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
 mqStatement_ conn q =
     -- Fallback into regular command in case of parsing error
     case parseOnly (multiStatementParser <* endOfInput) q of
-        Left _ -> execvoid_ conn $ DB.Query (encodeUtf8 q)
-        Right stms -> forM_ stms $ \sql -> do
-            liftIO $ putStrLn "/////// Running"
-            liftIO $ print sql
-            execvoid_ conn (DB.Query $ encodeUtf8 sql)
+        Left _ -> singleStatementExec
+        Right stms ->
+            if Text.concat stms /= q then do
+                liftIO $ putStrLn $ "Note: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
+                singleStatementExec
+            else
+                forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
+
+    where
+        singleStatementExec = execvoid_ conn $ DB.Query (encodeUtf8 q)
 
 parseMultiStatement :: Text -> Either String [Text]
 parseMultiStatement = parseOnly (multiStatementParser <* endOfInput)
