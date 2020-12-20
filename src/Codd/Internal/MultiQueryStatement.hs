@@ -33,7 +33,7 @@ mqStatement_ conn q =
         Left _ -> singleStatementExec
         Right stms ->
             if Text.concat stms /= q then do
-                liftIO $ putStrLn $ "Note: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
+                liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
                 singleStatementExec
             else
                 forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
