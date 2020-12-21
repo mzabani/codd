@@ -27,7 +27,7 @@ APP_DATABASE=codd-experiments
 # A list of directories where SQL migration files will be found/added to. Do note that you can have e.g. a testing environment with an extra folder
 # for itself to hold data migrations you don't want on Production.
 # It's recommended to always have your "all migrations" folder first.
-SQL_MIGRATION_PATHS=sql-migrations/all:sql-migrations/dev
+SQL_MIGRATION_PATHS=sql-migrations/all:sql-migrations/dev-only
 
 # Folder where files will be created with checksums of DB objects. This folder will be wiped clean by codd every time it's necessary
 DB_ONDISK_HASHES=sql-migrations/on-disk-hashes
@@ -104,7 +104,7 @@ _Codd_ will parse the comment in the first line and figure that this migration c
 If you already have a Database and would like to start using _Codd_, here's a suggestion on how to approach the problem:
 
 1. Configure your `.env` file as explained in this guide.
-2. In that configuration have an extra `dev-only` folder to hold SQL migrations.
+2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
 3. Run `pg_dump --column-inserts -N codd_schema your_database > bootstrap-migration.sql`
 4. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
 5. Run `dropdb your_database; codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
