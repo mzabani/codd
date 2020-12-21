@@ -13,7 +13,7 @@ import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
-import UnliftIO (MonadIO)
+import UnliftIO (MonadIO, liftIO)
 
 -- Multi-query statements are automatically enveloped in a single transaction by the server. This happens because according to
 -- https://www.postgresql.org/docs/12/libpq-exec.html, "Multiple queries sent in a single PQexec call are processed in a single transaction,
@@ -30,8 +30,16 @@ mqStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
 mqStatement_ conn q =
     -- Fallback into regular command in case of parsing error
     case parseOnly (multiStatementParser <* endOfInput) q of
-        Left _ -> execvoid_ conn $ DB.Query (encodeUtf8 q)
-        Right stms -> forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
+        Left _ -> singleStatementExec
+        Right stms ->
+            if Text.concat stms /= q then do
+                liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
+                singleStatementExec
+            else
+                forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
+
+    where
+        singleStatementExec = execvoid_ conn $ DB.Query (encodeUtf8 q)
 
 parseMultiStatement :: Text -> Either String [Text]
 parseMultiStatement = parseOnly (multiStatementParser <* endOfInput)

@@ -1,33 +1,33 @@
 # What is Codd?
 
-Codd is a tool to help teams of Developers version-control their Databases locally and for Deployment. It provides a few main features:
+_Codd_ is a tool to help teams of Developers version-control their Databases locally and for Deployment. It provides a few main features:
 
-- A way to apply pending SQL migrations in a single DB Transaction when possible.  
-- A one-file-per-database-object approach to checksum your Database, helping minimize chances that your Production Database differs from your Development Database and ensuring that Merge Conflicts only arise when two developers alter the same Database object.  
+- A checksum of your entire Database to help minimize chances that your Production Database differs from your Development Database. This checksum is done in a way such that different developers writing SQL migrations that affect the same Database objects become merge conflicts, but touching distinct DB objects does not lead to conflicts.  
+- A way to apply pending SQL migrations in a single DB Transaction when possible, rolling back in case checksums mismatch before committing.  
 - **It is only compatible with PostgreSQL >= 10. No other databases are currently supported.**
 
 ## Installing Codd
 
-Currently we provide Codd through Docker. Run codd for the first time with `docker run --rm mzabani/codd codd --help`.
+Currently we provide _Codd_ through Docker. Run codd for the first time with `docker run --rm mzabani/codd codd --help`.
 
 ## Configuring Codd
 
-Codd will hash DB Objects to ensure Database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects - such as schemas and roles - it will consider, and connection strings for it to connect.
+_Codd_ will hash DB Objects to ensure Database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects - such as schemas and roles - it will consider, and connection strings for it to connect.
 
-Let's take a look at an example `.env` file for Codd. These environment variables must be defined when running the `codd` executable.
+Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
 # This connection string must be for an ADMIN user, the database must exist and the user must have access to it
 ADMIN_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres
 
-# The name of the Database the App uses. It does not need to exist and will be created automatically by Codd if necessary
+# The name of the Database the App uses. It does not need to exist and will be created automatically by _Codd_ if necessary
 APP_DATABASE=codd-experiments
 
 # A list of directories where SQL migration files will be found/added to. Do note that you can have e.g. a testing environment with an extra folder
 # for itself to hold data migrations you don't want on Production.
 # It's recommended to always have your "all migrations" folder first.
-SQL_MIGRATION_PATHS=sql-migrations/all:sql-migrations/dev
+SQL_MIGRATION_PATHS=sql-migrations/all:sql-migrations/dev-only
 
 # Folder where files will be created with checksums of DB objects. This folder will be wiped clean by codd every time it's necessary
 DB_ONDISK_HASHES=sql-migrations/on-disk-hashes
@@ -82,21 +82,31 @@ After doing this, I recommend exploring your `DB_ONDISK_HASHES` folder. Everythi
 
 ## More about SQL Migrations
 
-Codd will always run every pending migration in a single transaction. Even if there's more than one pending migrations (you can add them without the `--apply` flag and then call `codd up-dev` to run them all) they will all run in the same transaction.
+_Codd_ will - when possible - run every pending migration in a single transaction. Even if there's more than one pending migration, such as what typically happens when deploying and running migrations in Production, they will all run in the same transaction.
 
-However, not any SQL can run inside a transaction. In Postgres, altering `enum` types and using the newly created `enum` values cannot run in the same transaction.
+However, not all SQL can run inside a transaction. In Postgres, altering `enum` types and using the newly created `enum` values cannot run in the same transaction.
 Because of that, there's a way to specify that a SQL migration cannot run in a transaction, as is exemplified below:
 
 
 ````sql
 -- codd: no-txn
 ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
+UPDATE employee SET employee_experience='intern';
 ````
 
-Codd will parse the comment in the first line and figure that this migration can't run in a Transaction.
+_Codd_ will parse the comment in the first line and figure that this migration can't run in a Transaction.
 
-**IMPORTANT:** By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database state in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs, and if you do need them make sure that they won't make the previously deployed application fail if they run partially.
-**IMPORTANT 2:** Codd will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly.
+**Important note:** By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database state in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
+**Important note 2:** _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly.
 
+## Start using Codd in an existing Database
 
-[![asciicast](https://asciinema.org/a/wTdnsKvPV6rl9LTGC8B2pICuC.svg)](https://asciinema.org/a/wTdnsKvPV6rl9LTGC8B2pICuC)
+If you already have a Database and would like to start using _Codd_, here's a suggestion on how to approach the problem:
+
+1. Configure your `.env` file as explained in this guide.
+2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
+3. Run `pg_dump --column-inserts -N codd_schema your_database > bootstrap-migration.sql`
+4. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
+5. Run `dropdb your_database; codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
+6. You should now have your Database back and managed through _Codd_.
+7. Make sure your Production `.env` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
