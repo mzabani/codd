@@ -58,6 +58,13 @@ checkExpectedHashesAfterAction coddSettings mExpectedHashes conn = do
             dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
             when (dbhashes /= expectedHashes) $ throwIO $ userError $ "DB Hash check failed."
 
+-- | Creates the App's Database and Codd's schema if it does not yet exist.
+createEmptyDbIfNecessary :: forall m. (MonadUnliftIO m, MonadIO m) => CoddSettings -> m ()
+createEmptyDbIfNecessary settings = applyMigrationsInternal beginCommitTxnBracket applyZeroMigs settings
+    where
+        applyZeroMigs :: DB.Connection -> TxnBracket m -> [NonEmpty MigrationToRun] -> m ()
+        applyZeroMigs conn txnBracket _ = baseApplyMigsBlock (const $ pure ()) conn txnBracket []
+
 applyMigrationsInternal :: (MonadUnliftIO m, MonadIO m) => TxnBracket m -> (DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a) -> CoddSettings -> m a
 applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName }) = do
     let

@@ -35,6 +35,7 @@ migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (Destru
 -- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
 canRunEverythingInASingleTransaction :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m Bool
 canRunEverythingInASingleTransaction settings mig = do
+    createEmptyDbIfNecessary settings
     pendingMigBlocks <- collectPendingMigrations settings
     -- TODO: In Blue-Green-Safe mode, how do we decide this?
     return $ all blockInTxn pendingMigBlocks && nonDestructiveInTxn mig && destructiveSql mig == Nothing
@@ -45,6 +46,8 @@ canRunEverythingInASingleTransaction settings mig = do
 -- This function can only be used for Migrations that haven't been added yet.
 checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m MigrationCheck
 checkMigration dbInfoApp@(CoddSettings { superUserConnString, dbName }) mig = do
+    createEmptyDbIfNecessary dbInfoApp
+
     -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
     -- conflicts that aren't caught by on-disk hashes are detected by developers
 
