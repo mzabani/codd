@@ -19,7 +19,7 @@ addMigration :: CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
 addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow }) dontApply destFolder sqlFp@(SqlFilePath fp) = do
   finalDir <- case (destFolder, sqlMigrations) of
         (Just f, _) -> pure f
-        (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the SQL_MIGRATION_PATHS environment variable."
+        (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the CODD_MIGRATION_DIRS environment variable."
         (Nothing, Left (f:_)) -> pure f
         (Nothing, Right _) -> error "This is a bug in the add command. Please report it."
   onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") onDiskHashes

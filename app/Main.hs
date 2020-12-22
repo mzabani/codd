@@ -29,7 +29,7 @@ analyzeParser = Analyze <$> argument sqlFilePathReader (metavar "SQL-MIGRATION-P
 
 addParser :: Parser Cmd
 addParser = Add <$> switch (long "dont-apply" <> help "Do not apply any pending migrations, including the one being added.")
-                <*> optionalStrOption (long "dest-folder" <> help "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'SQL_MIGRATION_PATHS' environment variable will be used" <> metavar "DESTFOLDER")
+                <*> optionalStrOption (long "dest-folder" <> help "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'CODD_MIGRATION_DIRS' environment variable will be used" <> metavar "DESTFOLDER")
                 <*> argument sqlFilePathReader (metavar "SQL-MIGRATION-PATH" <> help "The complete path of the .sql file to be added")
 
 dbHashesParser :: Parser Cmd

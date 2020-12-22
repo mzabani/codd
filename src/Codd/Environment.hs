@@ -76,19 +76,19 @@ parseEnv defaultValue parser var = do
 
 getAdminConnInfo :: MonadIO m => m ConnectInfo
 getAdminConnInfo = do
-    adminConnStr <- readEnv "ADMIN_DATABASE_URL"
+    adminConnStr <- readEnv "CODD_ADMIN_CONNECTION"
     let connInfoE = parseOnly (connStringParser <* endOfInput) adminConnStr
     case connInfoE of
-        Left err -> error $ "Error parsing the connection string in environment variable ADMIN_DATABASE_URL: " ++ err
+        Left err -> error $ "Error parsing the connection string in environment variable CODD_ADMIN_CONNECTION: " ++ err
         Right connInfo -> pure connInfo
 
 getCoddSettings :: MonadIO m => m CoddSettings
 getCoddSettings = do
     adminConnInfo <- getAdminConnInfo
-    appDbName <- readEnv "APP_DATABASE"
-    sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "SQL_MIGRATION_PATHS" -- No escaping colons in PATH (really?) so no escaping here either
+    appDbName <- readEnv "CODD_APPDB"
+    sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     -- TODO: Do we throw on empty sqlMigrationPaths?
-    onDiskHashesDir <- Text.unpack <$> readEnv "DB_ONDISK_HASHES"
+    onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
     destructiveUpTo <- parseEnv SimpleDeployment (fmap BlueGreenSafeDeploymentUpToAndIncluding . parseMigrationTimestamp) "CODD_DESTROY_UP_TO_AND_INCLUDING"
     schemasToHash <- parseEnv (error "Please define the CODD_SCHEMAS environment variable with a space separated list of schema names")
                               (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
