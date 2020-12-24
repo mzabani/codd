@@ -8,6 +8,7 @@ import Codd.Query (unsafeQuery1)
 import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..))
 import Codd.Hashing.Types (DbHashes(..))
 import Control.Monad (when, void)
+import Control.Monad.Logger (runStdoutLoggingT)
 import qualified Data.Map.Strict as Map
 import DbUtils (aroundFreshDatabase, getIncreasingTimestamp)
 import qualified Database.PostgreSQL.Simple as DB
@@ -34,14 +35,14 @@ spec = do
             aroundFreshDatabase $ do
                 it "SQL containing characters typical to placeholders does not throw" $
                     \emptyTestDbInfo -> do
-                        void @IO $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) False
+                        void @IO $ runStdoutLoggingT $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) False
 
                 it "Bogus on-disk hashes makes applying migrations fail" $
                     \emptyTestDbInfo -> do
                         let
                             bogusDbHashes = DbHashes Map.empty Map.empty
                         void @IO $ do
-                            applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ], onDiskHashes = Right bogusDbHashes }) True
+                            runStdoutLoggingT (applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ], onDiskHashes = Right bogusDbHashes }) True)
                                 `shouldThrow`
                                     anyIOException
 
@@ -111,7 +112,7 @@ spec = do
                                 } (getIncreasingTimestamp 4)
                                 ]
                         
-                        void @IO $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right migs }) False
+                        void @IO $ runStdoutLoggingT $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right migs }) False
                         withConnection (superUserInAppDatabaseConnInfo emptyTestDbInfo) $ \conn -> do
                             (countTxIds :: Int, countInterns :: Int, totalRows :: Int) <- unsafeQuery1 conn "SELECT (SELECT COUNT(DISTINCT txid) FROM any_table), (SELECT COUNT(*) FROM any_table WHERE experience='intern'), (SELECT COUNT(*) FROM any_table);" ()
                             countTxIds `shouldBe` 4

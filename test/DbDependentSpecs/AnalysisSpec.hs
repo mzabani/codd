@@ -4,6 +4,7 @@ import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when)
+import Control.Monad.Logger (runStdoutLoggingT)
 import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
@@ -65,24 +66,24 @@ spec = do
                 aroundFreshDatabase $
                     it "Create Table is non-destructive" $
                         \emptyTestDbInfo ->
-                            isMigrationDestructive <$> (checkMigration emptyTestDbInfo (addedSqlMig createTableMig)) `shouldReturn` False
+                            isMigrationDestructive <$> (runStdoutLoggingT $ checkMigration emptyTestDbInfo (addedSqlMig createTableMig)) `shouldReturn` False
 
                 aroundDatabaseWithMigs [ createTableMig ] $
                     it "Adding columns is non-destructive" $
                         \dbInfo ->
-                            isMigrationDestructive <$> (checkMigration dbInfo (addedSqlMig addColumnMig)) `shouldReturn` False
+                            isMigrationDestructive <$> (runStdoutLoggingT $ checkMigration dbInfo (addedSqlMig addColumnMig)) `shouldReturn` False
 
             context "Obviously destructive actions detected as such" $ do
                 aroundFreshDatabase $
                     it "Dropping columns is destructive" $
                         \emptyTestDbInfo ->
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropColumnMig)) `shouldReturn` True
+                            isMigrationDestructive <$> (runStdoutLoggingT $ checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropColumnMig)) `shouldReturn` True
 
                 aroundFreshDatabase $
                     it "Dropping tables is destructive" $
                         \emptyTestDbInfo -> do
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
-                            isMigrationDestructive <$> (checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig, dropColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
+                            isMigrationDestructive <$> (runStdoutLoggingT $ checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
+                            isMigrationDestructive <$> (runStdoutLoggingT $ checkMigration (mkDbInfo emptyTestDbInfo [ createTableMig, addColumnMig, dropColumnMig ]) (addedSqlMig dropTableMig)) `shouldReturn` True
 
             context "Transaction ending migrations" $ do
                 aroundFreshDatabase $
@@ -98,7 +99,7 @@ spec = do
                                     , destructiveInTxn = True
                                 }
                             in
-                            isNonDestTxnClosing <$> (checkMigration emptyTestDbInfo commitTxnMig) `shouldReturn` True
+                            isNonDestTxnClosing <$> (runStdoutLoggingT $ checkMigration emptyTestDbInfo commitTxnMig) `shouldReturn` True
                 aroundFreshDatabase $
                     it "Non-destructive section containing ROLLBACK detected correctly" $
                         \emptyTestDbInfo ->
@@ -112,7 +113,7 @@ spec = do
                                     , destructiveInTxn = True
                                 }
                             in
-                            isNonDestTxnClosing <$> (checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` True
+                            isNonDestTxnClosing <$> (runStdoutLoggingT $ checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` True
                 aroundFreshDatabase $
                     it "Destructive section that ends transactions when non-destructive section also ends Transactions detected correctly" $
                         \emptyTestDbInfo ->
@@ -126,7 +127,7 @@ spec = do
                                     , destructiveInTxn = True
                                 }
                             in
-                            isDestTxnClosing <$> (checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` True
+                            isDestTxnClosing <$> (runStdoutLoggingT $ checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` True
                 aroundFreshDatabase $
                     it "Destructive section that does not end transactions when non-destructive section also ends Transactions detected correctly" $
                         \emptyTestDbInfo ->
@@ -140,4 +141,4 @@ spec = do
                                     , destructiveInTxn = True
                                 }
                             in
-                            isDestTxnClosing <$> (checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` False
+                            isDestTxnClosing <$> (runStdoutLoggingT $ checkMigration emptyTestDbInfo rollbackTxnMig) `shouldReturn` False

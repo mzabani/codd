@@ -8,6 +8,7 @@ import Codd.Internal (withConnection)
 import Codd.Parsing (toMigrationTimestamp)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void)
+import Control.Monad.Logger (runStdoutLoggingT)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..))
@@ -84,7 +85,7 @@ spec = do
                     let dbInfo = intactDbInfo {
                         sqlMigrations = Right [ lotsOfObjectsMigration ]
                     }
-                    dbHashes1 <- withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
+                    dbHashes1 <- runStdoutLoggingT $ withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
                     threadDelay (5 * 1000 * 1000)
-                    dbHashes2 <- withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
+                    dbHashes2 <- runStdoutLoggingT $ withDbAndDrop dbInfo (flip withConnection (readHashesFromDatabaseWithSettings dbInfo))
                     dbHashes1 `shouldBe` dbHashes2
