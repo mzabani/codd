@@ -22,14 +22,14 @@ description:         Please see the README on GitHub at <https://github.com/mzab
 dependencies:
 - base >= 4.7 && < 5
 - bytestring
+- containers
 - filepath
-- hspec-core
+- monad-logger
 - mtl
 - postgresql-simple
 - text
 - unliftio
 - unliftio-core
-- containers
 
 default-extensions:
   - BangPatterns
@@ -96,6 +96,7 @@ tests:
     - attoparsec
     - codd
     - hspec
+    - hspec-core
     - hspec-expectations
     - QuickCheck
     - time

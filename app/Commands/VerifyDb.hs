@@ -5,11 +5,13 @@ import Codd.Types (CoddSettings(..))
 import Codd.Hashing (readHashesFromDatabaseWithSettings, readHashesFromDisk)
 import Codd.Internal (withConnection)
 import Control.Monad (when)
+import Control.Monad.Logger (MonadLoggerIO)
 import System.Exit (ExitCode(..), exitWith)
 import System.IO (hPutStrLn, stderr)
+import UnliftIO (MonadUnliftIO, liftIO)
 
-verifyDb :: CoddSettings -> Bool -> IO ()
-verifyDb dbInfoWithAllMigs@CoddSettings { onDiskHashes } verbose = do
+verifyDb :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> m ()
+verifyDb dbInfoWithAllMigs@CoddSettings { onDiskHashes } = do
   let dbInfoDontApplyAnything = dbInfoWithAllMigs {
     sqlMigrations = Right []
   }
@@ -17,7 +19,7 @@ verifyDb dbInfoWithAllMigs@CoddSettings { onDiskHashes } verbose = do
   onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") onDiskHashes
   dbHashes <- withConnection adminConnInfo (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
   diskHashes <- readHashesFromDisk onDiskHashesDir
-  when (dbHashes /= diskHashes) $ do
-    when verbose $ hPutStrLn stderr "DB and on-disk hashes do not match."
+  when (dbHashes /= diskHashes) $ liftIO $ do
+    hPutStrLn stderr "DB and on-disk hashes do not match."
     exitWith (ExitFailure 1)
-  when verbose $ putStrLn "DB and on-disk hashes match."
+  liftIO $ putStrLn "DB and on-disk hashes match."

@@ -4,28 +4,31 @@ import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Parsing (parseSqlMigration)
 import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (unless, forM_)
+import Control.Monad.Logger (MonadLoggerIO)
+import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import System.FilePath (takeFileName)
+import UnliftIO (MonadUnliftIO, liftIO)
 import UnliftIO.Directory (doesFileExist)
 
-checkMigrationFile :: CoddSettings -> SqlFilePath -> IO ()
+checkMigrationFile :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> SqlFilePath -> m ()
 checkMigrationFile dbInfo (SqlFilePath fp) = do
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
-  sqlMigContents <- Text.readFile fp
+  sqlMigContents <- liftIO $ Text.readFile fp
   let parsedSqlMigE = parseSqlMigration (deploymentWorkflow dbInfo) (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
     Right sqlMig -> do
       migCheck <- checkMigration dbInfo sqlMig
-      putStrLn "--- Parsed SQL migration:"
-      print sqlMig
+      liftIO $ putStrLn "--- Parsed SQL migration:"
+      liftIO $ print sqlMig
       
-      putStrLn "\n--- Check results:"
-      print migCheck
+      liftIO $ putStrLn "\n--- Check results:"
+      liftIO $ print migCheck
 
       let migErrors = migrationErrors sqlMig migCheck
-      if migErrors == [] then putStrLn "\n--- No errors. Can be added."
-      else do
+      if migErrors == [] then liftIO $ putStrLn "\n--- No errors. Can be added."
+      else liftIO $ do
         putStrLn "\n--- Has errors:"
-        forM_ migErrors putStrLn
+        forM_ migErrors (putStrLn . Text.unpack)

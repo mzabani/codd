@@ -7,9 +7,11 @@ import Codd.Internal
 import Codd.Query (unsafeQuery1, query)
 import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..), CoddSettings(..))
 import Control.Monad (void, when)
+import Control.Monad.Logger (MonadLogger)
 import Data.List (sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import GHC.Int (Int64)
@@ -26,14 +28,14 @@ data DestructiveSectionCheck = DestructiveSectionCheck {
     destSectionEndsTransaction :: Bool
 } deriving stock Show
 
-migrationErrors :: SqlMigration -> MigrationCheck -> [String]
+migrationErrors :: SqlMigration -> MigrationCheck -> [Text]
 migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (DestructiveSectionCheck {..})) = 
     if (nonDestSectionIsDestructive && not (nonDestructiveForce sqlMig)) then [ "Non-destructive section is destructive but not properly annotated. Add the option 'force' if you really want this." ] else []
     ++ if (nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig) then [ "Non-destructive section ends Transactions when run, and that is not allowed." ] else []
     ++ if (destSectionEndsTransaction && destructiveInTxn sqlMig) then [ "Destructive section ends Transactions when run, and that is not allowed." ] else []
 
 -- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
-canRunEverythingInASingleTransaction :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m Bool
+canRunEverythingInASingleTransaction :: (MonadUnliftIO m, MonadIO m, MonadLogger m) => CoddSettings -> SqlMigration -> m Bool
 canRunEverythingInASingleTransaction settings mig = do
     createEmptyDbIfNecessary settings
     pendingMigBlocks <- collectPendingMigrations settings
@@ -44,7 +46,7 @@ canRunEverythingInASingleTransaction settings mig = do
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.
 --   2. non-destructive migration is destructive without 'force' option (not a perfect algorithm, but helpful for most common cases).
 -- This function can only be used for Migrations that haven't been added yet.
-checkMigration :: forall m. (MonadUnliftIO m, MonadIO m) => CoddSettings -> SqlMigration -> m MigrationCheck
+checkMigration :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m) => CoddSettings -> SqlMigration -> m MigrationCheck
 checkMigration dbInfoApp@(CoddSettings { superUserConnString, dbName }) mig = do
     createEmptyDbIfNecessary dbInfoApp
 

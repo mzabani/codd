@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 75ca9fe9877ab96a88cf1f2b1accc5662c9706837de061f975cf691f375817c8
+-- hash: 7af90fc9e406ac8bf5775c09e4eb10986ea2c4efc3f9d68c7777e8b9137f04cd
 
 name:           codd
 version:        0.1.0.0
@@ -59,7 +59,7 @@ library
     , filepath
     , hashable
     , haxl
-    , hspec-core
+    , monad-logger
     , mtl
     , postgresql-simple
     , text
@@ -74,6 +74,7 @@ executable codd
       Commands.AddMigration
       Commands.CheckMigration
       Commands.VerifyDb
+      Types
       Paths_codd
   hs-source-dirs:
       app
@@ -85,7 +86,7 @@ executable codd
     , codd
     , containers
     , filepath
-    , hspec-core
+    , monad-logger
     , mtl
     , optparse-applicative
     , postgresql-simple
@@ -126,6 +127,7 @@ test-suite codd-test
     , hspec
     , hspec-core
     , hspec-expectations
+    , monad-logger
     , mtl
     , postgresql-simple
     , text

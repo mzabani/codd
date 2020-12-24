@@ -8,6 +8,7 @@ import Codd.Internal (withConnection)
 import Codd.Parsing (toMigrationTimestamp)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when, void, foldM)
+import Control.Monad.Logger (runStdoutLoggingT)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..))
@@ -191,7 +192,7 @@ spec = do
                                 dbInfo = emptyDbInfo {
                                     sqlMigrations = Right newMigs
                                 }
-                            applyMigrations dbInfo False
+                            runStdoutLoggingT $ applyMigrations dbInfo False
                             dbHashesAfterMig <- getHashes dbInfo
                             let migText = nonDestructiveSql $ addedSqlMig nextMig
                             case nextMigModifiesSchema of

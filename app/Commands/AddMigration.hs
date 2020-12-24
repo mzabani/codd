@@ -9,23 +9,25 @@ import Codd.Internal (withConnection)
 import Codd.Parsing (parseSqlMigration)
 import Codd.Types (CoddSettings(..), SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
+import Control.Monad.Logger (MonadLoggerIO)
 import qualified Data.Text.IO as Text
 import System.Exit (ExitCode(..), exitWith)
 import System.FilePath (takeFileName)
+import UnliftIO (MonadUnliftIO, liftIO, stderr)
 import UnliftIO.Directory (copyFile, doesFileExist, removeFile)
 import UnliftIO.Exception (bracketOnError)
 
-addMigration :: CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> IO ()
+addMigration :: forall m. (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> m ()
 addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow }) dontApply destFolder sqlFp@(SqlFilePath fp) = do
   finalDir <- case (destFolder, sqlMigrations) of
         (Just f, _) -> pure f
-        (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the SQL_MIGRATION_PATHS environment variable."
+        (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the CODD_MIGRATION_DIRS environment variable."
         (Nothing, Left (f:_)) -> pure f
         (Nothing, Right _) -> error "This is a bug in the add command. Please report it."
-  onDiskHashesDir <- either pure (error "This functionality needs a directory to write hashes to. Report this as a bug.") onDiskHashes
+  onDiskHashesDir <- either pure (error "This functionality needs a directory to write the DB checksum to. Report this as a bug.") onDiskHashes
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
-  sqlMigContents <- Text.readFile fp
+  sqlMigContents <- liftIO $ Text.readFile fp
   let parsedSqlMigE = parseSqlMigration deploymentWorkflow (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
@@ -39,8 +41,8 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deployment
         migCheck <- checkMigration dbInfo sqlMig
         let migErrors = migrationErrors sqlMig migCheck
 
-        when (migErrors /= []) $ do
-          forM_ migErrors putStrLn
+        when (migErrors /= []) $ liftIO $ do
+          forM_ migErrors (Text.hPutStrLn stderr)
           exitWith (ExitFailure 1)
       
       bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir) moveMigrationBack $ \finalMigFile -> do
@@ -48,10 +50,11 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deployment
           Codd.applyMigrations dbInfo False
           hashes <- withConnection (superUserInAppDatabaseConnInfo dbInfo) (readHashesFromDatabaseWithSettings dbInfo)
           persistHashesToDisk hashes onDiskHashesDir
-        putStrLn $ "Migration added to " ++ finalMigFile
+          liftIO $ putStrLn $ "Migration applied and added to " <> finalMigFile
+        when dontApply $ liftIO $ putStrLn $ "Migration was NOT applied, but was added to " <> finalMigFile
 
   where
-    moveMigrationBack :: FilePath -> IO ()
+    moveMigrationBack :: FilePath -> m ()
     moveMigrationBack deleteFrom = do
       copyFile deleteFrom fp
       removeFile deleteFrom

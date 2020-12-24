@@ -3,13 +3,14 @@ module DbUtils where
 import Codd (withDbAndDrop)
 import Codd.Internal (withConnection)
 import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..), DeploymentWorkflow(..), Include(..))
+import Control.Monad.Logger (runStdoutLoggingT)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..), addUTCTime, NominalDiffTime)
 import Database.PostgreSQL.Simple (ConnectInfo(..), defaultConnectInfo)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import Test.Hspec
-import UnliftIO (MonadIO(..), finally)
+import UnliftIO (MonadIO(..), liftIO, finally)
 import UnliftIO.Environment (getEnv)
 
 testConnInfo :: MonadIO m => m ConnectInfo
@@ -63,8 +64,8 @@ aroundFreshDatabase = aroundDatabaseWithMigs []
 aroundDatabaseWithMigs :: [AddedSqlMigration] -> SpecWith CoddSettings -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
     coddSettings <- testCoddSettings startingMigs
-    withDbAndDrop coddSettings $ \_ ->
-        act coddSettings 
+    runStdoutLoggingT $ withDbAndDrop coddSettings $ \_ ->
+        liftIO (act coddSettings)
             `finally`
                 withConnection
                     (superUserConnString coddSettings)
