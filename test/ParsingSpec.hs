@@ -1,6 +1,6 @@
 module ParsingSpec where
 
-import Codd.Internal.MultiQueryStatement (parseMultiStatement)
+import Codd.Internal.MultiQueryStatement (parseMultiStatement, parseMultiStatementDetailed)
 import Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
 import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
@@ -14,19 +14,11 @@ import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 
 newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
+-- | Syntatically valid SQL must contain at least one statement!
 newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
-genSql :: Bool -> Gen Text
-genSql onlySyntaticallyValid =
-    frequency [
-        (if onlySyntaticallyValid then 0 else 1, pure "")
-        , (50, randomSqlGen)
-        ]
-
-    where
-        emptyLineGen = pure "\n"
-        bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
-        cleanerSqlLineGen = elements [
+genSingleSqlStatement :: Gen Text
+genSingleSqlStatement = elements [
             "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
             , "DO"
                                 <> "\n$do$"
@@ -39,14 +31,64 @@ genSql onlySyntaticallyValid =
                                 <> "\nEND"
                                 <> "\n$do$;"
             , "CREATE TABLE \"escaped--table /* nasty */\";"
-            , "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
+            , "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?\n"
+            , "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
+                                        <> "\nBEGIN"
+                                        <> "\n    RETURN subtotal * 0.06;"
+                                        <> "\nEND;"
+                                        <> "\n$$ LANGUAGE plpgsql;"
+            , "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
+                    <> "\nDECLARE"
+                    <> "\n    v_string ALIAS FOR $1;"
+                    <> "\n    index ALIAS FOR $2;"
+                    <> "\nBEGIN"
+
+                    <> "\n    -- some computations using v_string and index here"
+                    <> "\nEND;"
+                    <> "\n$$ LANGUAGE plpgsql;"
+            , "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+            , "SELECT 'some''quoted ''string';"
+            , "SELECT \"some\"\"quoted identifier\";"
+            
+            -- TODO: Nested dollar quoting (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
+            -- , "$function$"
+            --     <> "\nBEGIN"
+            --     <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
+            --     <> "\nEND;"
+            --     <> "\n$function$"
+
+            -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
+            -- , "/* multiline comment"
+            --   <> "\n  * with nesting: /* nested block comment */"
+            --   <> "\n  */ SELECT 1;"
             ]
-        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (3, cleanerSqlLineGen) ]
+
+genSql :: Bool -> Gen Text
+genSql onlySyntaticallyValid =
+    frequency [
+        (if onlySyntaticallyValid then 0 else 1, pure "")
+        , (50, randomSqlGen)
+        ]
+
+    where
+        emptyLineGen = pure "\n"
+        bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
+        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (1, emptyLineGen), (5, genSingleSqlStatement) ]
         -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
         -- is so low that we can just ignore it
-        commentGen = ("-- " <>) <$> lineGen
-        lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen), (1, emptyLineGen) ]
-        randomSqlGen = Text.concat <$> listOf1 lineOrCommentGen
+        dashDashCommentGen = (<> "\n") . ("-- " <>) . (Text.replace "\n" "") <$> bizarreLineGen
+        cStyleCommentGen = ("/*" <>) . (<> "*/") . (Text.replace "*/" "") <$> bizarreLineGen
+        commentGen = frequency [ (5, dashDashCommentGen), (1, cStyleCommentGen) ]
+        lineOrCommentGen = frequency [ (5, lineGen), (1, commentGen) ]
+        randomSqlGen = fmap Text.concat $ do
+            l1 <- listOf lineOrCommentGen
+            l2 <- listOf lineOrCommentGen
+            atLeastOneStmt <- genSingleSqlStatement
+            if onlySyntaticallyValid then
+                pure $ l1 ++ (atLeastOneStmt : l2)
+            else
+                pure $ l1 ++ l2
+
 
 instance Arbitrary RandomSql where
     arbitrary = fmap RandomSql (genSql False)
@@ -64,34 +106,25 @@ spec = do
                         estm2 = parseMultiStatement "CREATE TABLE hello"
                     estm1 `shouldBe` Right [ "CREATE TABLE hello;" ]
                     estm2 `shouldBe` Right [ "CREATE TABLE hello" ]
-            it "Multiple commands with comments and other stuff" $ do
+            it "Statement separation boundaries are good" $
+                forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
                     let
-                        blocks = ["CREATE TABLE hello;"," SELECT 'so\\'m -- not a comment' FROM ahahaha;","YEAH\n\n-- comment\nABC;"
-                                    , "\nDO"
-                                    <> "\n$do$"
-                                    <> "\nBEGIN"
-                                    <> "\n   IF NOT EXISTS ("
-                                    <> "\n      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN"
-                                    <> "\n"
-                                    <> "\n      CREATE USER \"codd-user\";"
-                                    <> "\n   END IF;"
-                                    <> "\nEND"
-                                    <> "\n$do$;"
-                                    , "ALTER TABLE \"some-table\";/* some comment ***** with asterisks */ "
-                                    , "GO" ]
                         estm = parseMultiStatement $ Text.concat blocks
                     estm `shouldBe` Right blocks
             it "Statements concatenation matches original and statements end with semi-colon" $ do
-                    property $ \(unSyntRandomSql -> plainSql) ->
-                        let estms = parseMultiStatement plainSql
-                        in
+                    property $ \(unSyntRandomSql -> plainSql) -> do
+                        let estms = parseMultiStatementDetailed plainSql
+                        -- print plainSql
+                        -- print estms
                         case estms of
-                            Left e -> estms `shouldNotSatisfy` isLeft -- pure () -- Not every generated SQL is valid, and we only care about valid SQL for this parser
+                            Left e -> estms `shouldNotSatisfy` isLeft
                             Right stms -> do
-                                Text.concat stms `shouldBe` plainSql
-                                -- forM_ (init stms) $ \stm -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
-                                -- The condition above does not always hold: fragments can end with comments..
-                                forM_ (init stms) $ \stm -> nothingIfEmptyQuery stm `shouldSatisfy` isJust
+                                Text.concat (map (uncurry (<>)) stms) `shouldBe` plainSql
+                                -- forM_ (init stms) $ \(_, stm) -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
+                                forM_ stms $ \(stm, comm) -> do
+                                    nothingIfEmptyQuery comm `shouldBe` Nothing
+                                    nothingIfEmptyQuery stm `shouldSatisfy` isJust
+                                    
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
                 it "Plain Sql Migration, missing optional options" $ do

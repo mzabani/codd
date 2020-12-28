@@ -87,6 +87,11 @@ instance DbVersionHash Pg10 where
         PgCollation -> error "pg_collation cols missing"
         PgPolicy -> [ "polcmd", "polpermissive", OidArrayColumn PgAuthId "polroles", "pg_get_expr(polqual, polrelid)", "pg_get_expr(polwithcheck, polrelid)" ]
         PgSequence -> [ OidColumn PgType "seqtypid", "seqstart", "seqincrement", "seqmax", "seqmin", "seqcache", "seqcycle" ] ++ hashingColsOf PgClass
+        -- TODO: Owned objects should affect PgClass, not just PgSequence!
+        -- Also, maybe it's best that both related objects are affected instead of just a single one? What if, for example, someone changes ownership of
+        -- a sequence and someone else renames the column? We want a git conflict in that scenario!
+        -- select pg_class.relname, objsubid, refobjid, refobj.relname, refobjsubid, deptype from pg_depend join pg_class on pg_depend.objid=pg_class.oid join pg_class refobj on pg_depend.refobjid=refobj.oid where pg_class.relname='employee_employee_id_seq';
+
         PgRoleSettings -> []
 
     joinsFor = \case
