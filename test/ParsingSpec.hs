@@ -6,7 +6,7 @@ import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
 import qualified Data.Char as Char
 import Data.Either (isLeft)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromMaybe)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Test.Hspec
@@ -18,7 +18,10 @@ newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
 newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
 genSingleSqlStatement :: Gen Text
-genSingleSqlStatement = elements [
+genSingleSqlStatement = elements validSqlStatements
+
+validSqlStatements :: [Text]
+validSqlStatements = [
             "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
             , "DO"
                                 <> "\n$do$"
@@ -50,12 +53,11 @@ genSingleSqlStatement = elements [
             , "SELECT 'some''quoted ''string';"
             , "SELECT \"some\"\"quoted identifier\";"
             
-            -- TODO: Nested dollar quoting (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
-            -- , "$function$"
-            --     <> "\nBEGIN"
-            --     <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
-            --     <> "\nEND;"
-            --     <> "\n$function$"
+            , "$function$"
+                <> "\nBEGIN"
+                <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
+                <> "\nEND;"
+                <> "\n$function$;"
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
@@ -84,11 +86,23 @@ genSql onlySyntaticallyValid =
             l1 <- listOf lineOrCommentGen
             l2 <- listOf lineOrCommentGen
             atLeastOneStmt <- genSingleSqlStatement
-            if onlySyntaticallyValid then
-                pure $ l1 ++ (atLeastOneStmt : l2)
-            else
-                pure $ l1 ++ l2
+            let
+                finalList = 
+                    if onlySyntaticallyValid then
+                        l1 ++ (atLeastOneStmt : l2)
+                    else
+                        l1 ++ l2
 
+                mapLast :: (a -> a) -> [a] -> [a]
+                mapLast _ [] = []
+                mapLast f (x:[]) = [f x]
+                mapLast f (x:xs) = x : mapLast f xs
+            
+            -- Optionally remove semi-colon from the last command if it ends with one
+            removeLastSemiColon <- arbitrary
+            pure $
+                if removeLastSemiColon then mapLast (\t -> fromMaybe t (Text.stripSuffix ";" t)) finalList
+                else finalList
 
 instance Arbitrary RandomSql where
     arbitrary = fmap RandomSql (genSql False)
@@ -102,10 +116,20 @@ spec = do
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon" $ do
                     let
-                        estm1 = parseMultiStatement "CREATE TABLE hello;"
-                        estm2 = parseMultiStatement "CREATE TABLE hello"
-                    estm1 `shouldBe` Right [ "CREATE TABLE hello;" ]
-                    estm2 `shouldBe` Right [ "CREATE TABLE hello" ]
+                        estms :: Either String [[Text]] =
+                            traverse parseMultiStatement [
+                                    "CREATE TABLE hello;"
+                                  , "CREATE TABLE hello"
+                                  , "CREATE TABLE hello; -- Comment"
+                                  , "CREATE TABLE hello -- Comment"
+                                  , "CREATE TABLE hello -- Comment\n;"
+                                ]
+                    estms `shouldBe` Right [ [ "CREATE TABLE hello;" ]
+                                           , [ "CREATE TABLE hello" ]
+                                           , [ "CREATE TABLE hello; -- Comment" ]
+                                           , [ "CREATE TABLE hello -- Comment" ]
+                                           , [ "CREATE TABLE hello -- Comment\n;" ]
+                                    ]
             it "Statement separation boundaries are good" $
                 forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
                     let
@@ -120,9 +144,9 @@ spec = do
                             Left e -> estms `shouldNotSatisfy` isLeft
                             Right stms -> do
                                 Text.concat (map (uncurry (<>)) stms) `shouldBe` plainSql
-                                -- forM_ (init stms) $ \(_, stm) -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
-                                forM_ stms $ \(stm, comm) -> do
-                                    nothingIfEmptyQuery comm `shouldBe` Nothing
+                                forM_ (init stms) $ \(stm, _) -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
+                                forM_ stms $ \(stm, comment) -> do
+                                    nothingIfEmptyQuery comment `shouldBe` Nothing
                                     nothingIfEmptyQuery stm `shouldSatisfy` isJust
                                     
         context "Simple mode" $ do
@@ -327,7 +351,7 @@ spec = do
                         , "      --Some comment    \n-- Some other comment\n\n\n - - This is not a valid comment and should be considered SQL"
                         , "\n\n--Some comment    \n-- Some other comment\n\n\n -- Other comment\n\n\n SQL command"
                         , "SOME SQL COMMAND      --Some comment    \n-- Some other comment\n\n\n - - This is not a valid comment and should be considered SQL"
-                        , "Regular sql COMMANDS -- this is not a comment"
+                        , "Regular sql COMMANDS -- this is a comment"
                         , "Regular sql COMMANDS \n-- this is a comment\n"
                         , "Regular sql /* With comment */ COMMANDS"
                         , "/* With comment */ SQL COMMANDS"
@@ -343,5 +367,5 @@ spec = do
                         ]
                 forM_ emptyQueries $ \q ->
                     (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
-                forM_ nonEmptyQueries $ \q ->
+                forM_ (nonEmptyQueries ++ validSqlStatements) $ \q ->
                     nothingIfEmptyQuery q `shouldBe` Just q

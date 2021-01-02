@@ -22,8 +22,8 @@ import UnliftIO (MonadIO, liftIO)
 -- Because that seems to be at libpq level, we need to parse SQL (ugh..) and detect plPGSQL bodies and standard SQL to
 -- split commands up.. I expect problems from this, really.
 -- Note 1: Maybe alex works to translate psqlscan.l to Haskell? Seems like a rather complicated translation when I look at the source,
--- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find rough-enough boundaries
--- (psql counts parentheses, for instance) to split up commands.
+-- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find statement boundaries
+-- (psql counts parentheses, for instance) to split them up by that.
 -- Note 2: The CLI utility psql does the same and splits up commands before sending them to the server. See https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l
 
 mqStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
@@ -56,7 +56,7 @@ multiStatementParser = do
 multiStatementParserDetailed :: Parser [(Text, Text)]
 multiStatementParserDetailed = many1 singleStatementParser
 
--- | Parses statements into a block (possibly empty text) and the actual command, which should always end with a ';' or eof.
+-- | Parses statements into the actual SQL statement first and comments+whitespace second.
 singleStatementParser :: Parser (Text, Text)
 singleStatementParser = do
     t1 <- takeWhile (\c -> not (isPossibleStartingChar c) && c /= ';')
@@ -73,10 +73,10 @@ singleStatementParser = do
             -- After reading an entire block, we still need to find a semi-colon to get a statement from start to finish!
             -- One exception: eof
             done <- atEnd
-            if done then pure (t1, t2)
+            if done then pure (t1 <> t2, "") -- This could be a single statement without a semi-colon
             else do
-                (more1, more2) <- singleStatementParser
-                pure (t1 <> t2 <> more1, more2)
+                (more1, endingBlock) <- singleStatementParser
+                pure (t1 <> t2 <> more1, endingBlock)
 
 commentParser :: Parser Text
 commentParser = do
@@ -131,11 +131,17 @@ blockParser = do
     bRemaining <- blockInnerContentsParser bt
     pure $ (bt, bBegin <> bRemaining)
 
+-- blockParserOfType :: (BlockType -> Bool) -> Parser Text
+-- blockParserOfType pred = do
+--     (bt, c) <- blockParser
+--     guard $ pred bt
+--     pure c
+
 blockInnerContentsParser :: BlockType -> Parser Text
 blockInnerContentsParser bt = do
     t <- case bt of
-            SingleQuotedString -> parseWithEscapeChar (== '\'') -- TODO: '' escaping!!
-            DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- TODO: "" escaping
+            SingleQuotedString -> parseWithEscapeChar (== '\'') -- '' escaping seems not to be explicitly implemented (this parser understands it as two consecutive strings)?
+            DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- "" escaping seems to be the same as above..
             _ -> takeWhile (not . isPossibleEndingChar bt)
     done <- atEnd
     if done then pure t
