@@ -1,4 +1,4 @@
-module Codd.Internal.MultiQueryStatement (mqStatement_, parseMultiStatement) where
+module Codd.Internal.MultiQueryStatement (mqStatement_, parseMultiStatement, parseMultiStatementDetailed) where
 
 import Prelude hiding (takeWhile)
 
@@ -22,8 +22,8 @@ import UnliftIO (MonadIO, liftIO)
 -- Because that seems to be at libpq level, we need to parse SQL (ugh..) and detect plPGSQL bodies and standard SQL to
 -- split commands up.. I expect problems from this, really.
 -- Note 1: Maybe alex works to translate psqlscan.l to Haskell? Seems like a rather complicated translation when I look at the source,
--- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find rough-enough boundaries
--- (psql counts parentheses, for instance) to split up commands.
+-- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find statement boundaries
+-- (psql counts parentheses, for instance) to split them up by that.
 -- Note 2: The CLI utility psql does the same and splits up commands before sending them to the server. See https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l
 
 mqStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
@@ -32,41 +32,51 @@ mqStatement_ conn q =
     case parseOnly (multiStatementParser <* endOfInput) q of
         Left _ -> singleStatementExec
         Right stms ->
-            if Text.concat stms /= q then do
-                liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
+            if Text.concat stms /= q then
                 singleStatementExec
             else
                 forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
 
     where
-        singleStatementExec = execvoid_ conn $ DB.Query (encodeUtf8 q)
+        singleStatementExec = do
+            liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
+            execvoid_ conn $ DB.Query (encodeUtf8 q)
 
 parseMultiStatement :: Text -> Either String [Text]
-parseMultiStatement = parseOnly (multiStatementParser <* endOfInput)
+parseMultiStatement = parseOnly (multiStatementParser <* endOfInput) 
+
+parseMultiStatementDetailed :: Text -> Either String [(Text, Text)]
+parseMultiStatementDetailed = parseOnly (multiStatementParserDetailed <* endOfInput) 
 
 multiStatementParser :: Parser [Text]
-multiStatementParser = many1 singleStatementParser
+multiStatementParser = do
+    parsedStatements <- multiStatementParserDetailed
+    pure $ map (\(t1, t2) -> t1 <> t2) parsedStatements
 
-singleStatementParser :: Parser Text
+multiStatementParserDetailed :: Parser [(Text, Text)]
+multiStatementParserDetailed = many1 singleStatementParser
+
+-- | Parses statements into the actual SQL statement first and comments+whitespace second.
+singleStatementParser :: Parser (Text, Text)
 singleStatementParser = do
     t1 <- takeWhile (\c -> not (isPossibleStartingChar c) && c /= ';')
     mc <- peekChar
     case mc of
-        Nothing -> if t1 == "" then fail "Empty input" else pure t1 -- This could be a single statement without a semi-colon
+        Nothing -> if t1 == "" then fail "Empty input" else pure (t1, "") -- This could be a single statement without a semi-colon
         Just ';' -> do
             void $ char ';'
-            -- To avoid trailing comments being parsed as a separate command, look for a comment now as well
-            trailingComment <- commentParser <|> pure ""
-            pure $ Text.snoc t1 ';' <> trailingComment
+            -- To avoid trailing comments being parsed as a separate command, look for comments or space now as well
+            trailingCommentOrSpace <- (Text.concat <$> many1 commentParser) <|> takeWhile Char.isSpace <|> pure ""
+            pure (Text.snoc t1 ';', trailingCommentOrSpace)
         Just _ -> do
             (_, t2) <- blockParser
             -- After reading an entire block, we still need to find a semi-colon to get a statement from start to finish!
             -- One exception: eof
             done <- atEnd
-            if done then pure $ t1 <> t2
+            if done then pure (t1 <> t2, "") -- This could be a single statement without a semi-colon
             else do
-                more <- singleStatementParser
-                pure $ t1 <> t2 <> more
+                (more1, endingBlock) <- singleStatementParser
+                pure (t1 <> t2 <> more1, endingBlock)
 
 commentParser :: Parser Text
 commentParser = do
@@ -121,11 +131,17 @@ blockParser = do
     bRemaining <- blockInnerContentsParser bt
     pure $ (bt, bBegin <> bRemaining)
 
+-- blockParserOfType :: (BlockType -> Bool) -> Parser Text
+-- blockParserOfType pred = do
+--     (bt, c) <- blockParser
+--     guard $ pred bt
+--     pure c
+
 blockInnerContentsParser :: BlockType -> Parser Text
 blockInnerContentsParser bt = do
     t <- case bt of
-            SingleQuotedString -> parseWithEscapeChar (== '\'') -- TODO: '' escaping!!
-            DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- TODO: "" escaping
+            SingleQuotedString -> parseWithEscapeChar (== '\'') -- '' escaping seems not to be explicitly implemented (this parser understands it as two consecutive strings)?
+            DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- "" escaping seems to be the same as above..
             _ -> takeWhile (not . isPossibleEndingChar bt)
     done <- atEnd
     if done then pure t
