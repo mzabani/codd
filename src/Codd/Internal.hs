@@ -123,8 +123,8 @@ collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrati
                             filesInDir <- listDirectory dir
                             return $ map (\fn -> (fn, dir </> fn)) $ filter (".sql" `List.isSuffixOf`) filesInDir
                     let pendingSqlMigrationFiles = mapMaybe (\case (n, fp) | n `elem` migsCompleted -> Nothing
-                                                                            | n `elem` migsToRunDestSection -> Just ((n, fp), ApplyDestructiveOnly)
-                                                                            | otherwise -> Just ((n, fp), ApplyNonDestructiveOnly))
+                                                                           | n `elem` migsToRunDestSection -> Just ((n, fp), ApplyDestructiveOnly)
+                                                                           | otherwise -> Just ((n, fp), ApplyNonDestructiveOnly))
                                                                 allSqlMigrationFiles
                     sqlMigrationsContents :: [((FilePath, ByteString), ApplySingleMigration)] <- liftIO $ pendingSqlMigrationFiles `forM` \((fn, fp), ap) -> readFile fp >>= (\contents -> pure ((fn, contents), ap))
                     -- TODO: decodeUtf8Lenient ?
