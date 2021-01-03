@@ -7,7 +7,9 @@ import Codd.Hashing.Database.Model (QueryFrag(..), CatTable(..), CatalogTableCol
 import Codd.Hashing.Database.Pg10 (Pg10(..))
 import Codd.Hashing.Database.Pg11 (Pg11(..))
 import Codd.Hashing.Database.Pg12 (Pg12(..))
+import Codd.Query (unsafeQuery1)
 import Control.Monad (forM_)
+import qualified Data.Attoparsec.Text as Parsec
 import Data.Hashable
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty(..))
@@ -15,6 +17,7 @@ import Data.Maybe (fromMaybe, catMaybes)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Text as Text
+import Data.Text (Text)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.ToField as DB
 import Data.Traversable (for)
@@ -82,8 +85,8 @@ instance DataSource HaxlEnv HashReq where
       -- This is a different batching mechanism, which will `OR` the conditions for queries with the same
       -- HashableObject, because they have the same SELECT, FROM and JOINs. Then, prepend an increasing number to the select exprs
       -- which is 1 if the first "WHERE expression" is True, 2 when the second is True, 3 for the third and so on..
-      -- Then test, because we can't be sure if this will actually be faster than a bunch of UNION ALLed queries. Hopefully it'll all just
-      -- turn into a big sequential scan, so we'll have one sequential scan for tables, one for views, one for triggers and so on..
+      -- Hopefully it'll all just turn into a big sequential scan, so we'll have one sequential scan for tables,
+      -- one for views, one for triggers and so on..
       combineQueriesWithWhere blockedFetches = do
         let
           allHashReqs :: [SameQueryFormatFetch]
@@ -212,49 +215,45 @@ readHashesFromDatabaseWithSettings :: (MonadUnliftIO m, MonadIO m, HasCallStack)
 readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash } conn = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
-  postgresVersion <- liftIO $ DB.query conn "SHOW server_version" ()
-  -- Very poor parsing follows..
-  case postgresVersion of
-    [ DB.Only strVersion ] -> do
-      let majorVersion :: Int = truncate $ read @Float strVersion
-      let rolesToHash = alsoInclude [SqlRole . Text.pack . DB.connectUser $ superUserConnString] extraRolesToHash
+  strVersion :: DB.Only Text <- unsafeQuery1 conn "SHOW server_version_num" ()
+  case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) (DB.fromOnly strVersion) of
+    Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
+    Right (numVersion :: Int) -> do
+      let majorVersion = numVersion `div` 10000
+          rolesToHash = alsoInclude [SqlRole . Text.pack . DB.connectUser $ superUserConnString] extraRolesToHash
       case majorVersion of
         10 -> readHashesFromDatabase (PgVersion Pg10) conn schemasToHash rolesToHash
         11 -> readHashesFromDatabase (PgVersion Pg11) conn schemasToHash rolesToHash
         12 -> readHashesFromDatabase (PgVersion Pg12) conn schemasToHash rolesToHash
-        _ -> error $ "Unsupported PostgreSQL version " ++ strVersion
-    _ -> error "Error querying PostgreSQL version. This is a bug in Codd."
-  
+        _ -> error $ "Unsupported PostgreSQL version " ++ show majorVersion
 
 readHashesFromDatabase :: (MonadUnliftIO m, MonadIO m, HasCallStack) => PgVersion -> DB.Connection -> Include SqlSchema -> Include SqlRole -> m DbHashes
 readHashesFromDatabase pgVer conn allSchemas allRoles = do
     let stateStore = stateSet UserState{} stateEmpty
     env0 <- liftIO $ initEnv stateStore (pgVer, conn)
     liftIO $ runHaxl env0 $ do
-      -- schemas <- queryObjNamesAndHashes conn "schema_name" ["schema_owner", "default_character_set_catalog", "default_character_set_schema", "default_character_set_name" ] "information_schema.schemata" (Just $ QueryFrag "schema_name NOT IN ?" (DB.Only $ DB.In [ "information_schema" :: Text, "pg_catalog", "pg_temp_1", "pg_toast", "pg_toast_temp_1" ]))
       schemas <- dataFetch $ GetHashesReq HSchema [] (filtersForSchemas allSchemas)
       roles <- dataFetch $ GetHashesReq HRole [] (filtersForRoles allRoles)
       DbHashes <$> getSchemaHash schemas <*> pure (listToMap $ map (uncurry RoleHash) roles)
 
 getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)
 getSchemaHash schemas = fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
-    -- tables :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "table_name" ["table_type", "self_referencing_column_name", "reference_generation", "is_insertable_into", "is_typed", "commit_action"] "information_schema.tables" (Just $ QueryFrag "table_schema=?" (DB.Only schemaName))
     tables <- dataFetch $ GetHashesReq HTable [schemaName] (underSchemaFilter HTable schemaName)
     views <- dataFetch $ GetHashesReq HView [schemaName] (underSchemaFilter HView schemaName)
-    -- views :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "table_name" ["view_definition", "check_option", "is_updatable", "is_insertable_into", "is_trigger_updatable", "is_trigger_deletable", "is_trigger_insertable_into"] "information_schema.views" (Just $ QueryFrag "table_schema=?" (DB.Only schemaName))
-    -- routines :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "specific_name" ["routine_name", "routine_type", "data_type", "routine_body", "routine_definition", "external_name", "external_language", "is_deterministic", "is_null_call", "security_type"] "information_schema.routines" (Just $ QueryFrag "specific_schema=?" (DB.Only schemaName))
     routines <- dataFetch $ GetHashesReq HRoutine [schemaName] (underSchemaFilter HRoutine schemaName)
     sequences <- dataFetch $ GetHashesReq HSequence [schemaName] (underSchemaFilter HSequence schemaName)
 
     tableHashes <- getTablesHashes schemaName tables
-    let allObjs = listToMap $ tableHashes ++ map (uncurry ViewHash) views ++ map (uncurry RoutineHash) routines ++ map (uncurry SequenceHash) sequences
+    let allObjs = listToMap $
+                  tableHashes
+                  ++ map (uncurry ViewHash) views
+                  ++ map (uncurry RoutineHash) routines
+                  ++ map (uncurry SequenceHash) sequences
     return (schemaName, SchemaHash schemaName schemaHash allObjs)
 
 getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [SchemaObjectHash]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
-      -- columns :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "column_name" ["column_default", "is_nullable", "data_type", "character_maximum_length", "character_octet_length", "numeric_precision", "numeric_precision_radix", "numeric_scale", "datetime_precision", "interval_type", "interval_precision", "collation_name", "is_identity", "identity_generation", "identity_start", "identity_increment", "identity_maximum", "identity_minimum", "identity_cycle", "is_generated", "generation_expression", "is_updatable"] "information_schema.columns" (Just $ QueryFrag "table_schema=? AND table_name=?" (schemaName, tblName))
       columns <- dataFetch $ GetHashesReq HColumn [schemaName, tblName] (underTableFilter HColumn schemaName tblName)
-      -- constraints :: [(ObjName, ObjHash)] <- queryObjNamesAndHashes conn "constraint_name" ["constraint_type", "is_deferrable", "initially_deferred"] "information_schema.table_constraints" (Just $ QueryFrag "constraint_schema=? AND table_name=?" (schemaName, tableName))
       constraints <- dataFetch $ GetHashesReq HTableConstraint [schemaName, tblName] (underTableFilter HTableConstraint schemaName tblName)
       triggers <- dataFetch $ GetHashesReq HTrigger [schemaName, tblName] (underTableFilter HTrigger schemaName tblName)
       policies <- dataFetch $ GetHashesReq HPolicy [schemaName, tblName] (underTableFilter HPolicy schemaName tblName)
