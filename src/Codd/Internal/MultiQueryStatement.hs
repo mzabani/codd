@@ -1,8 +1,7 @@
-module Codd.Internal.MultiQueryStatement (mqStatement_, parseMultiStatement, parseMultiStatementDetailed) where
+module Codd.Internal.MultiQueryStatement (noTxnStatement_, singleStatement_, parseMultiStatement, parseMultiStatementDetailed) where
 
 import Prelude hiding (takeWhile)
 
-import Codd.Query (execvoid_)
 import Control.Applicative ((<|>))
 import Control.Monad (void, forM_)
 import Data.Attoparsec.Text (Parser, anyChar, atEnd, char, endOfInput, many1, parseOnly, peekChar, string, takeWhile)
@@ -26,21 +25,29 @@ import UnliftIO (MonadIO, liftIO)
 -- (psql counts parentheses, for instance) to split them up by that.
 -- Note 2: The CLI utility psql does the same and splits up commands before sending them to the server. See https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l
 
-mqStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
-mqStatement_ conn q =
+noTxnStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
+noTxnStatement_ conn q =
     -- Fallback into regular command in case of parsing error
     case parseOnly (multiStatementParser <* endOfInput) q of
-        Left _ -> singleStatementExec
+        Left _ -> parseErrorFallbackExec
         Right stms ->
             if Text.concat stms /= q then
-                singleStatementExec
+                parseErrorFallbackExec
             else
-                forM_ stms $ \sql -> execvoid_ conn (DB.Query $ encodeUtf8 sql)
+                forM_ stms $ \sql -> singleStatement_ conn (DB.Query $ encodeUtf8 sql)
 
     where
-        singleStatementExec = do
+        parseErrorFallbackExec = do
             liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. You should receive an error when adding this migration if this would mean an error when running it, so it shouldn't be a problem. Still, please report this as a bug."
-            execvoid_ conn $ DB.Query (encodeUtf8 q)
+            singleStatement_ conn $ DB.Query (encodeUtf8 q)
+
+singleStatement_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
+singleStatement_ conn s =
+    -- This is sad, but when running each command separately, there'll be row-returning statements such as SELECT as well
+    -- as Int64 returning ones such as INSERT, ALTER TABLE etc..
+    -- There's no single function that works in postgresql-query: https://github.com/haskellari/postgresql-simple/issues/30
+    -- So we cheat: append "\n;SELECT 1;" to the query. We could improve our parser to detect SELECTs and handle them differently in the future..
+    liftIO $ void $ DB.query_ @(DB.Only Int) conn $ s <> "\n;SELECT 1;"
 
 parseMultiStatement :: Text -> Either String [Text]
 parseMultiStatement = parseOnly (multiStatementParser <* endOfInput) 
@@ -69,8 +76,8 @@ singleStatementParser = do
             trailingCommentOrSpace <- (Text.concat <$> many1 commentParser) <|> takeWhile Char.isSpace <|> pure ""
             pure (Text.snoc t1 ';', trailingCommentOrSpace)
         Just _ -> do
-            (_, t2) <- blockParser
-            -- After reading an entire block, we still need to find a semi-colon to get a statement from start to finish!
+            t2 <- snd <$> blockParser <|> Parsec.take 1
+            -- After reading an entire block or just the char, we still need to find a semi-colon to get a statement from start to finish!
             -- One exception: eof
             done <- atEnd
             if done then pure (t1 <> t2, "") -- This could be a single statement without a semi-colon

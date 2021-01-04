@@ -52,12 +52,15 @@ validSqlStatements = [
             , "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
             , "SELECT 'some''quoted ''string';"
             , "SELECT \"some\"\"quoted identifier\";"
-            
+            , "SELECT 'double quotes \" inside single quotes \" - 2';"
+            , "SELECT \"single quotes ' inside double quotes ' - 2\";"
             , "$function$"
                 <> "\nBEGIN"
                 <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
                 <> "\nEND;"
                 <> "\n$function$;"
+            , "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
+            , "SELECT (1 - 4) / 5 * 3 / 9.1;"
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"

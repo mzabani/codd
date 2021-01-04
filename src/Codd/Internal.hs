@@ -2,7 +2,7 @@ module Codd.Internal where
 
 import Prelude hiding (readFile)
 
-import Codd.Internal.MultiQueryStatement (mqStatement_)
+import Codd.Internal.MultiQueryStatement (noTxnStatement_, singleStatement_)
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
@@ -198,13 +198,13 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
             case nonDestructiveSql sqlMig of
                 Nothing -> pure ()
                 Just nonDestSql ->
-                    -- This is ugly, but we don't trust "mqStatement_" that much yet, so if we happen
+                    -- This is ugly, but we don't trust "noTxnStatement_" that much yet, so if we happen
                     -- to be in a transaction, we have the luxury of not relying on our Sql Parser..
                     -- At least until it becomes more trustworthy
                     if nonDestructiveInTxn sqlMig then
-                        execvoid_ conn $ DB.Query $ encodeUtf8 nonDestSql
+                        singleStatement_ conn $ DB.Query $ encodeUtf8 nonDestSql
                     else
-                        mqStatement_ conn nonDestSql
+                        noTxnStatement_ conn nonDestSql
             -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
             -- since every migration will have both sections marked as ran sequentially.
             liftIO $ void $ DB.execute conn "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
@@ -214,8 +214,8 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                 Nothing -> pure ()
                 Just destSql ->
                     if destructiveInTxn sqlMig then
-                        execvoid_ conn $ DB.Query $ encodeUtf8 destSql
+                        singleStatement_ conn $ DB.Query $ encodeUtf8 destSql
                     else
-                        mqStatement_ conn destSql
+                        noTxnStatement_ conn destSql
             liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
             -- TODO: Assert 1 row was updated

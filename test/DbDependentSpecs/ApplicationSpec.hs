@@ -18,7 +18,7 @@ import Test.Hspec
 import Test.Hspec.Expectations
 import Test.QuickCheck
 
-placeHoldersMig :: AddedSqlMigration
+placeHoldersMig, selectMig :: AddedSqlMigration
 placeHoldersMig = AddedSqlMigration SqlMigration {
                     migrationName = "0000-placeholders.sql"
                     , nonDestructiveSql = Just "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
@@ -27,6 +27,14 @@ placeHoldersMig = AddedSqlMigration SqlMigration {
                     , destructiveSql = Nothing
                     , destructiveInTxn = True
                 } (getIncreasingTimestamp 0)
+selectMig = AddedSqlMigration SqlMigration {
+                    migrationName = "0001-select-mig.sql"
+                    , nonDestructiveSql = Just "SELECT 1, 3"
+                    , nonDestructiveForce = True
+                    , nonDestructiveInTxn = False
+                    , destructiveSql = Nothing
+                    , destructiveInTxn = True
+                } (getIncreasingTimestamp 1)
 
 spec :: Spec
 spec = do
@@ -36,6 +44,20 @@ spec = do
                 it "SQL containing characters typical to placeholders does not throw" $
                     \emptyTestDbInfo -> do
                         void @IO $ runStdoutLoggingT $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ placeHoldersMig ] }) False
+
+                it "Rows returning function work for no-txn migrations" $
+                    \emptyTestDbInfo -> do
+                        void @IO $ runStdoutLoggingT $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ selectMig ] }) False
+
+                it "Rows returning function work for in-txn migrations" $
+                    \emptyTestDbInfo -> do
+                        let
+                            (AddedSqlMigration mig t) = selectMig
+                            inTxnMig = AddedSqlMigration mig {
+                                nonDestructiveForce = False,
+                                nonDestructiveInTxn = True
+                                } t
+                        void @IO $ runStdoutLoggingT $ applyMigrations (emptyTestDbInfo { sqlMigrations = Right [ inTxnMig ] }) False
 
                 it "Bogus on-disk hashes makes applying migrations fail" $
                     \emptyTestDbInfo -> do
