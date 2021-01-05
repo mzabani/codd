@@ -2,7 +2,7 @@ module Codd.Internal where
 
 import Prelude hiding (readFile)
 
-import Codd.Internal.MultiQueryStatement (noTxnStatement_, singleStatement_)
+import Codd.Internal.MultiQueryStatement (noTxnStatement_, inTxnStatement_)
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
@@ -202,7 +202,7 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                     -- to be in a transaction, we have the luxury of not relying on our Sql Parser..
                     -- At least until it becomes more trustworthy
                     if nonDestructiveInTxn sqlMig then
-                        singleStatement_ conn $ DB.Query $ encodeUtf8 nonDestSql
+                        inTxnStatement_ conn $ DB.Query $ encodeUtf8 nonDestSql
                     else
                         noTxnStatement_ conn nonDestSql
             -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
@@ -214,7 +214,7 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                 Nothing -> pure ()
                 Just destSql ->
                     if destructiveInTxn sqlMig then
-                        singleStatement_ conn $ DB.Query $ encodeUtf8 destSql
+                        inTxnStatement_ conn $ DB.Query $ encodeUtf8 destSql
                     else
                         noTxnStatement_ conn destSql
             liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)

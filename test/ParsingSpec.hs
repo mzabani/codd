@@ -1,6 +1,6 @@
 module ParsingSpec where
 
-import Codd.Internal.MultiQueryStatement (parseMultiStatement, parseMultiStatementDetailed)
+import Codd.Internal.MultiQueryStatement (SqlBlock(..), SqlStatement(..), parseMultiStatement, blockToText, finalCommentsTextOnly, statementTextOnly)
 import Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
 import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
@@ -17,13 +17,19 @@ newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
 -- | Syntatically valid SQL must contain at least one statement!
 newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
-genSingleSqlStatement :: Gen Text
+genSingleSqlStatement :: Gen SqlBlock
 genSingleSqlStatement = elements validSqlStatements
 
-validSqlStatements :: [Text]
+otherStatementNoComments :: Text -> SqlBlock
+otherStatementNoComments t = SqlBlock (OtherStatement t) ""
+
+selectStatementNoComments :: Text -> SqlBlock
+selectStatementNoComments t = SqlBlock (SelectStatement t) ""
+
+validSqlStatements :: [SqlBlock]
 validSqlStatements = [
-            "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
-            , "DO"
+            selectStatementNoComments "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+            , otherStatementNoComments $ "DO"
                                 <> "\n$do$"
                                 <> "\nBEGIN"
                                 <> "\n   IF NOT EXISTS ("
@@ -33,34 +39,33 @@ validSqlStatements = [
                                 <> "\n   END IF;"
                                 <> "\nEND"
                                 <> "\n$do$;"
-            , "CREATE TABLE \"escaped--table /* nasty */\";"
-            , "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?\n"
-            , "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
+            , otherStatementNoComments "CREATE TABLE \"escaped--table /* nasty */\";"
+            , SqlBlock (OtherStatement "CREATE TABLE any_table();") "\n-- ? $1 $2 ? ? ?\n"
+            , otherStatementNoComments $ "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
                                         <> "\nBEGIN"
                                         <> "\n    RETURN subtotal * 0.06;"
                                         <> "\nEND;"
                                         <> "\n$$ LANGUAGE plpgsql;"
-            , "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
+            , otherStatementNoComments $ "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
                     <> "\nDECLARE"
                     <> "\n    v_string ALIAS FOR $1;"
                     <> "\n    index ALIAS FOR $2;"
                     <> "\nBEGIN"
-
                     <> "\n    -- some computations using v_string and index here"
                     <> "\nEND;"
                     <> "\n$$ LANGUAGE plpgsql;"
-            , "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
-            , "SELECT 'some''quoted ''string';"
-            , "SELECT \"some\"\"quoted identifier\";"
-            , "SELECT 'double quotes \" inside single quotes \" - 2';"
-            , "SELECT \"single quotes ' inside double quotes ' - 2\";"
-            , "$function$"
+            , selectStatementNoComments "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+            , selectStatementNoComments "SELECT 'some''quoted ''string';"
+            , selectStatementNoComments "SELECT \"some\"\"quoted identifier\";"
+            , selectStatementNoComments "SELECT 'double quotes \" inside single quotes \" - 2';"
+            , selectStatementNoComments "SELECT \"single quotes ' inside double quotes ' - 2\";"
+            , otherStatementNoComments $ "$function$"
                 <> "\nBEGIN"
                 <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
                 <> "\nEND;"
                 <> "\n$function$;"
-            , "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
-            , "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            , selectStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
+            , selectStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
@@ -78,7 +83,7 @@ genSql onlySyntaticallyValid =
     where
         emptyLineGen = pure "\n"
         bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
-        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (1, emptyLineGen), (5, genSingleSqlStatement) ]
+        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (1, emptyLineGen), (5, blockToText <$> genSingleSqlStatement) ]
         -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
         -- is so low that we can just ignore it
         dashDashCommentGen = (<> "\n") . ("-- " <>) . (Text.replace "\n" "") <$> bizarreLineGen
@@ -88,7 +93,7 @@ genSql onlySyntaticallyValid =
         randomSqlGen = fmap Text.concat $ do
             l1 <- listOf lineOrCommentGen
             l2 <- listOf lineOrCommentGen
-            atLeastOneStmt <- genSingleSqlStatement
+            atLeastOneStmt <- blockToText <$> genSingleSqlStatement
             let
                 finalList = 
                     if onlySyntaticallyValid then
@@ -119,38 +124,39 @@ spec = do
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon" $ do
                     let
-                        estms :: Either String [[Text]] =
-                            traverse parseMultiStatement [
+                        eblks :: Either String [SqlBlock] =
+                            mconcat <$> traverse parseMultiStatement [
                                     "CREATE TABLE hello;"
                                   , "CREATE TABLE hello"
                                   , "CREATE TABLE hello; -- Comment"
                                   , "CREATE TABLE hello -- Comment"
                                   , "CREATE TABLE hello -- Comment\n;"
                                 ]
-                    estms `shouldBe` Right [ [ "CREATE TABLE hello;" ]
-                                           , [ "CREATE TABLE hello" ]
-                                           , [ "CREATE TABLE hello; -- Comment" ]
-                                           , [ "CREATE TABLE hello -- Comment" ]
-                                           , [ "CREATE TABLE hello -- Comment\n;" ]
+                    eblks `shouldBe` Right [ otherStatementNoComments "CREATE TABLE hello;"
+                                           , otherStatementNoComments "CREATE TABLE hello"
+                                           , SqlBlock (OtherStatement "CREATE TABLE hello;") " -- Comment"
+                                           , SqlBlock (OtherStatement "CREATE TABLE hello -- Comment") ""
+                                           , SqlBlock (OtherStatement "CREATE TABLE hello -- Comment\n;") ""
                                     ]
             it "Statement separation boundaries are good" $
                 forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
                     let
-                        estm = parseMultiStatement $ Text.concat blocks
+                        estm = parseMultiStatement $ Text.concat (map blockToText blocks)
                     estm `shouldBe` Right blocks
             it "Statements concatenation matches original and statements end with semi-colon" $ do
                     property $ \(unSyntRandomSql -> plainSql) -> do
-                        let estms = parseMultiStatementDetailed plainSql
+                        let eblks = parseMultiStatement plainSql
+                        -- putStrLn "--------------------------------------------------"
                         -- print plainSql
-                        -- print estms
-                        case estms of
-                            Left e -> estms `shouldNotSatisfy` isLeft
-                            Right stms -> do
-                                Text.concat (map (uncurry (<>)) stms) `shouldBe` plainSql
-                                forM_ (init stms) $ \(stm, _) -> stm `shouldSatisfy` (";" `Text.isSuffixOf`)
-                                forM_ stms $ \(stm, comment) -> do
-                                    nothingIfEmptyQuery comment `shouldBe` Nothing
-                                    nothingIfEmptyQuery stm `shouldSatisfy` isJust
+                        case eblks of
+                            Left e -> eblks `shouldNotSatisfy` isLeft
+                            Right blks -> do
+                                Text.concat (map blockToText blks) `shouldBe` plainSql
+                                forM_ (init blks) $ \block -> statementTextOnly block `shouldSatisfy` (";" `Text.isSuffixOf`)
+                                forM_ blks $ \blk -> do
+                                    nothingIfEmptyQuery (finalCommentsTextOnly blk) `shouldBe` Nothing
+                                    -- print $ statementTextOnly blk
+                                    nothingIfEmptyQuery (statementTextOnly blk) `shouldSatisfy` isJust
                                     
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
@@ -370,5 +376,5 @@ spec = do
                         ]
                 forM_ emptyQueries $ \q ->
                     (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
-                forM_ (nonEmptyQueries ++ validSqlStatements) $ \q ->
+                forM_ (nonEmptyQueries ++ map blockToText validSqlStatements) $ \q ->
                     nothingIfEmptyQuery q `shouldBe` Just q
