@@ -18,18 +18,21 @@ Let's take a look at an example `.env` file for _Codd_. These environment variab
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
-# This connection string must be for an ADMIN user, the database must exist and the user must have access to it
+# This connection string must be for an ADMIN user, the database must exist
+# and the user must have access to it
 CODD_ADMIN_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
 
-# The name of the Database the App uses. It does not need to exist and will be created automatically by _Codd_ if necessary
+# The name of the Database the App uses. It does not need to exist and will be created
+# automatically by Codd if necessary
 CODD_APPDB=codd-experiments
 
-# A list of directories where SQL migration files will be found/added to. Do note that you can have e.g. a testing environment with an extra folder
-# for itself to hold data migrations you don't want on Production.
-# It's recommended to always have your "all migrations" folder first.
+# A list of directories where SQL migration files will be found/added to. Do note that you
+# can have e.g. a testing environment with an extra folder for itself to hold data migrations
+# you don't want on Production. It's recommended to always have your "all migrations" folder first.
 CODD_MIGRATION_DIRS=sql-migrations/all:sql-migrations/dev-only
 
-# Folder where files will be created with checksums of DB objects. This folder will be wiped clean by codd every time it's necessary
+# Folder where files will be created with checksums of DB objects. This folder will be
+# wiped clean by codd every time it's necessary
 CODD_CHECKSUM_DIR=sql-migrations/on-disk-hashes
 
 # Space separated schemas to hash
@@ -75,7 +78,7 @@ CREATE TABLE employee (
 ````
 
 1. Save this file anywhere with a name such as `create-user-and-employee-table.sql`.
-2. In the older where your migration file is, run `docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" -v "$(pwd):/new-migrations" mzabani/codd codd add --apply new-migrations/create-user-and-employee-table.sql`.
+2. In the older where your migration file is, run `docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" -v "$(pwd):/new-migrations" mzabani/codd codd add new-migrations/create-user-and-employee-table.sql`.
 3. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
