@@ -99,8 +99,12 @@ UPDATE employee SET employee_experience='intern';
 
 _Codd_ will parse the comment in the first line and figure that this migration can't run in a Transaction.
 
-**Important note:** By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database state in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
-**Important note 2:** _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly.
+
+## Important notes about SQL migrations
+
+1. By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database state in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
+2. `COPY` is not supported.  
+3. _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly. 
 
 ## Start using Codd in an existing Database
 
