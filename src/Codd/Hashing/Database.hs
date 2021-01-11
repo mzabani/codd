@@ -195,6 +195,7 @@ queryObjNamesAndHashesQuery (PgVersion (_ :: a)) hobj getJoinTables = fullQuery
     joinStatement = \case
       JoinTable col joinTbl -> "\n JOIN " <> tableName joinTbl <> " ON " <> col <<> "=" <>> RegularColumn joinTbl "oid"
       LeftJoinTable col1 joinTbl col2 -> "\n LEFT JOIN " <> tableName joinTbl <> " ON " <> col1 <<> "=" <>> col2
+      JoinTableFull joinTbl cols -> "\n JOIN " <> tableName joinTbl <> " ON " <>> interspBy False " AND " (map (\(col1, col2) -> col1 <<> "=" <>> col2) cols)
     toWhereFrag (ColumnEq col v) = col <<> QueryFrag "=?" (DB.Only v)
     toWhereFrag (ColumnIn col vs) = includeSql vs (col <<> "")
     idWheres =

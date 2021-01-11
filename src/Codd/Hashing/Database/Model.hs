@@ -43,10 +43,11 @@ instance DbVersionHash a => ToQueryFrag (CatalogTableColumn a) where
     PureSqlExpression q -> q
 
 -- | Stores the name of the column with an OID and a table to join to based on equality for that column.
-data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a) | LeftJoinTable (CatalogTableColumn a) (CatTable a) (CatalogTableColumn a)
+data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a) | LeftJoinTable (CatalogTableColumn a) (CatTable a) (CatalogTableColumn a) | JoinTableFull (CatTable a) [(CatalogTableColumn a, CatalogTableColumn a)]
 mapJoinTableTbl :: (CatTable a -> CatTable b) -> JoinTable a -> JoinTable b
 mapJoinTableTbl f (JoinTable col t) = JoinTable (mapCatTableCol f col) (f t)
 mapJoinTableTbl f (LeftJoinTable col1 t col2) = LeftJoinTable (mapCatTableCol f col1) (f t) (mapCatTableCol f col2)
+mapJoinTableTbl f (JoinTableFull t cols) = JoinTableFull (f t) $ map (\(col1, col2) -> (mapCatTableCol f col1, mapCatTableCol f col2)) cols
 
 data ColumnComparison a = forall b. DB.ToField b => ColumnEq (CatalogTableColumn a) b | forall b. DB.ToField b => ColumnIn (CatalogTableColumn a) (Include b)
 mapColumnComparisonTbl :: (CatTable a -> CatTable b) -> ColumnComparison a -> ColumnComparison b

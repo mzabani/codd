@@ -4,19 +4,19 @@ import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), J
 import Codd.Hashing.Types (HashableObject(..))
 
 data Pg10 = Pg10
-data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings deriving stock Show
+data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings | PgViews deriving stock Show
 
 instance DbVersionHash Pg10 where
     type CatTable Pg10 = CatalogTable
     hashableObjCatalogTable = \case
         HSchema -> (PgNamespace, Nothing)
         HTable -> (PgClass, Just "pg_class.relkind IN ('r', 'f', 'p')")
-        HView -> (PgClass, Just "pg_class.relkind IN ('v', 'm')")
+        HView -> (PgViews, Just "pg_class.relkind IN ('v', 'm')")
         HSequence -> (PgSequence, Nothing)
         HRoutine -> (PgProc, Nothing)
         HColumn -> (PgAttribute, Just "NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')")
         HTableConstraint -> (PgConstraint, Nothing)
-        HTrigger -> (PgTrigger, Nothing)
+        HTrigger -> (PgTrigger, Just "NOT pg_trigger.tgisinternal")
         HRole -> (PgAuthId, Nothing)
         HPolicy -> (PgPolicy, Nothing)
 
@@ -36,6 +36,7 @@ instance DbVersionHash Pg10 where
         PgPolicy -> "pg_policy"
         PgSequence -> "pg_sequence"
         PgRoleSettings -> "pg_db_role_setting"
+        PgViews -> "pg_views"
 
     fqObjNameCol = \case
         PgNamespace -> RegularColumn PgNamespace "nspname"
@@ -53,6 +54,7 @@ instance DbVersionHash Pg10 where
         PgPolicy -> RegularColumn PgPolicy "polname"
         PgSequence -> fqObjNameCol PgClass
         PgRoleSettings -> error "We shouldn't be querying PgRoleSettings like this!"
+        PgViews -> RegularColumn PgViews "viewname"
 
     fqTableIdentifyingCols tbl = fqObjNameCol tbl : case tbl of
         PgNamespace -> []
@@ -70,10 +72,11 @@ instance DbVersionHash Pg10 where
         PgPolicy -> []
         PgSequence -> []
         PgRoleSettings -> []
+        PgViews -> []
 
     hashingColsOf = \case
         PgNamespace -> [ OidColumn PgAuthId "nspowner", "nspacl" ]
-        PgClass -> [ OidColumn PgType "reltype", OidColumn PgType "reloftype", OidColumn PgAuthId "relowner", OidColumn PgAccessMethod "relam", "relisshared", "relpersistence", "relkind", "relrowsecurity", "relforcerowsecurity", "relreplident", "relispartition", "relacl", "reloptions", "relpartbound" ]
+        PgClass -> [ OidColumn PgType "reltype", OidColumn PgType "reloftype", OidColumn PgAuthId "relowner", OidColumn PgAccessMethod "relam" ] ++ map (RegularColumn PgClass) [ "relisshared", "relpersistence", "relkind", "relrowsecurity", "relforcerowsecurity", "relreplident", "relispartition", "relacl", "reloptions", "relpartbound" ]
         PgProc -> [ OidColumn PgAuthId "proowner", OidColumn PgLanguage "prolang", OidColumn PgType "provariadic", "prosecdef", "proleakproof", "proisstrict", "proretset", "provolatile", "proparallel", "pronargs", "pronargdefaults", OidColumn PgType "prorettype", OidArrayColumn PgType "proargtypes", OidArrayColumn PgType "proallargtypes", "proargmodes", "proargnames", "proargdefaults", OidArrayColumn PgType "protrftypes", "prosrc", "probin", "proconfig", "proacl" ]
         PgConstraint -> [ "contype", "condeferrable", "condeferred", "convalidated", OidColumn PgClass "conrelid", OidColumn PgType "contypid", OidColumn PgClass "conindid", OidColumn PgClass "confrelid", "confupdtype", "confdeltype", "confmatchtype", "conislocal", "coninhcount", "connoinherit", "conkey", "confkey", OidArrayColumn PgOperator "conpfeqop", OidArrayColumn PgOperator "conppeqop", OidArrayColumn PgOperator "conffeqop", OidArrayColumn PgOperator "conexclop", PureSqlExpression "pg_get_constraintdef(pg_constraint.oid)" ]
         PgAuthId -> [ "rolsuper", "rolinherit", "rolcreaterole", "rolcreatedb", "rolcanlogin", "rolreplication", "rolbypassrls", RegularColumn PgRoleSettings "setconfig" ]
@@ -93,10 +96,11 @@ instance DbVersionHash Pg10 where
         -- select pg_class.relname, objsubid, refobjid, refobj.relname, refobjsubid, deptype from pg_depend join pg_class on pg_depend.objid=pg_class.oid join pg_class refobj on pg_depend.refobjid=refobj.oid where pg_class.relname='employee_employee_id_seq';
 
         PgRoleSettings -> []
+        PgViews -> hashingColsOf PgClass ++ map (RegularColumn PgViews) [ "definition" ]
 
     joinsFor = \case
         HTable -> [ JoinTable "relnamespace" PgNamespace ]
-        HView -> [ JoinTable "relnamespace" PgNamespace ]
+        HView -> [ JoinTableFull PgNamespace [(RegularColumn PgViews "schemaname", RegularColumn PgNamespace "nspname")], JoinTableFull PgClass [(RegularColumn PgViews "viewname", RegularColumn PgClass "relname"), (RegularColumn PgNamespace "oid", RegularColumn PgClass "relnamespace")] ]
         HRoutine -> [ JoinTable "pronamespace" PgNamespace ]
         HSequence -> [ JoinTable "seqrelid" PgClass, JoinTable "relnamespace" PgNamespace ]
         HColumn -> [ JoinTable "attrelid" PgClass, JoinTable (RegularColumn PgClass "relnamespace") PgNamespace ]

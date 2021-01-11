@@ -47,6 +47,9 @@ OidColumn PgAccessMethod "relam",
 "reloptions",  
 "relpartbound"  
 
+For VIEWs only:
+- "pg_views.definition"
+
 ### Ignored columns
 
 -- oid	oid	 	Row identifier  
