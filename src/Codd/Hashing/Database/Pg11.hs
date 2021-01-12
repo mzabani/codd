@@ -1,10 +1,10 @@
 module Codd.Hashing.Database.Pg11 (Pg11(..), CatalogTablePg11(..)) where
 
 import Codd.Hashing.Database.Model (DbVersionHash(..), CatalogTableColumn(..), JoinTable(..), CatTable(..), ColumnComparison, mapCatTableCol, mapJoinTableTbl, mapColumnComparisonTbl)
-import Codd.Hashing.Database.Pg10 (Pg10, CatalogTable(..))
+import Codd.Hashing.Database.Pg10 (Pg10, CatalogTable(..), CatalogTableAliased(..))
 
 data Pg11 = Pg11
-newtype CatalogTablePg11 = CatalogTablePg11 CatalogTable
+newtype CatalogTablePg11 = CatalogTablePg11 CatalogTableAliased
 toPg11Col :: CatalogTableColumn Pg10 -> CatalogTableColumn Pg11
 toPg11Col = mapCatTableCol CatalogTablePg11
 
@@ -24,9 +24,9 @@ instance DbVersionHash Pg11 where
 
     fqTableIdentifyingCols (CatalogTablePg11 tbl) = map toPg11Col $ fqTableIdentifyingCols @Pg10 tbl
 
-    hashingColsOf (CatalogTablePg11 tbl) = map toPg11Col $ hashingColsOf @Pg10 tbl ++
+    hashingColsOf (CatalogTablePg11 atbl@(CatalogTableAliased tbl _)) = map toPg11Col $ hashingColsOf @Pg10 atbl ++
         case tbl of
-            PgConstraint -> [ OidColumn PgConstraint "conparentid" ]
+            PgConstraint -> [ OidColumn atbl "conparentid" ]
             PgProc -> [ "prokind" ]
             PgAttribute -> [ "atthasmissing", "attmissingval" ]
             _ -> []

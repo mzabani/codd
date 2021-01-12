@@ -91,7 +91,7 @@ migrationsAndHashChange =
             -- UNIQUE CONSTRAINTS AND INDICES
             , ("ALTER TABLE employee ADD CONSTRAINT unique_employee UNIQUE(employee_name)", True)
             , ("ALTER TABLE employee RENAME CONSTRAINT unique_employee TO employee_unique_name", True)            
-            -- , ("CREATE UNIQUE INDEX unique_employee_idx ON employee (employee_name)", True)
+            , ("CREATE UNIQUE INDEX unique_employee_idx ON employee (employee_name)", True)
 
             -- EXCLUSION CONSTRAINTS
 
