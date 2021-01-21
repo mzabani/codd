@@ -3,7 +3,7 @@ module Codd.Hashing.Database where
 
 import Codd.Hashing.Types
 import Codd.Types (SqlRole(..), SqlSchema(..), CoddSettings(..), Include(..), alsoInclude)
-import Codd.Hashing.Database.Model (QueryFrag(..), CatTable(..), CatalogTableColumn(..), DbVersionHash, JoinTable(..), WhereFilter(..), ToQueryFrag(..), ColumnComparison(..), withQueryFrag, (<<>), (<>>))
+import Codd.Hashing.Database.Model (QueryFrag(..), CatTableAliased(..), CatalogTableColumn(..), DbVersionHash(..), JoinTable(..), WhereFilter(..), ToQueryFrag(..), ColumnComparison(..), tableAlias, tableNameAndAlias, withQueryFrag, (<<>), (<>>))
 import Codd.Hashing.Database.Pg10 (Pg10(..))
 import Codd.Hashing.Database.Pg11 (Pg11(..))
 import Codd.Hashing.Database.Pg12 (Pg12(..))
@@ -120,42 +120,43 @@ data PgVersion = forall a. DbVersionHash a => PgVersion a
 
 -- | Returns a SQL expression of type TEXT with the concatenation of all the non-OID columns that form the Identity of a row in the catalog table whose OID equals the supplied one.
 -- This function does not consider the queried table's identifier exists in scope. It does subselects instead.
-concatenatedIdentityColsOf :: (HasCallStack, DbVersionHash a) => CatTable a -> QueryFrag -> QueryFrag
-concatenatedIdentityColsOf tbl oid = "(SELECT " <> otherTblIdentifyingCols <> " FROM " <> tableName tbl <> " WHERE " <> oid <> "=" <> RegularColumn tbl "oid" <<> ")"
+concatenatedIdentityColsOf :: (HasCallStack, DbVersionHash a) => CatTableAliased a -> QueryFrag -> QueryFrag
+concatenatedIdentityColsOf tbl oid = finalQuery
   where
+    finalQuery = "(SELECT " <> otherTblIdentifyingCols <> " FROM " <> tableNameAndAlias tbl <> " WHERE " <> oid <> "=" <> RegularColumn tbl "oid" <<> ")"
     otherTblIdentifyingCols = interspBy False " || '_' || " $ map (coal . colOf) $ fqTableIdentifyingCols tbl
     coal q = "COALESCE(" <> parens q <> "::TEXT, '')"
     colOf = \case
       PureSqlExpression c -> c
-      RegularColumn tblName c -> tableName tblName <> "." <> c
-      OidColumn joinTbl thisTblOidCol -> "(SELECT " <> concatenatedIdentityColsOf joinTbl thisTblOidCol <> " FROM " <> tableName joinTbl <> " WHERE " <> RegularColumn joinTbl "oid" <<> "=" <> RegularColumn tbl thisTblOidCol <<> ")"
+      RegularColumn tblName c -> tableAlias tblName <> "." <> c
+      OidColumn joinTbl thisTblOidCol -> "(SELECT " <> concatenatedIdentityColsOf joinTbl (toQueryFrag $ thisTblOidCol) <> " FROM " <> tableNameAndAlias joinTbl <> " WHERE " <> RegularColumn joinTbl "oid" <<> "=" <> thisTblOidCol <<> ")"
       OidArrayColumn joinTbl thisTblOidCol -> 
              "(SELECT ARRAY_TO_STRING(ARRAY_AGG(" <> concatenatedIdentityColsOf joinTbl "s.elem" <> " ORDER BY s.idx), ';') "
-          <> " FROM pg_catalog." <> tableName joinTbl <> " JOIN UNNEST(" <> thisTblOidCol <> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn joinTbl "oid" <<> "=s.elem)"
+          <> " FROM pg_catalog." <> tableNameAndAlias joinTbl <> " JOIN UNNEST(" <> thisTblOidCol <> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn joinTbl "oid" <<> "=s.elem)"
 
 -- | Returns a SQL expression of type TEXT with the concatenation of all the non-OID columns that form the Identity of a row in the catalog table whose OID equals the supplied one.
 -- This function CONSIDERS the queried table's identifier exists in scope. It does subselects for Oid/OidArray columns only.
 -- TODO: this function is nearly a copy of the other one. Can we improve this?
-concatenatedIdentityColsOfInContext :: (HasCallStack, DbVersionHash a) => CatTable a -> QueryFrag
+concatenatedIdentityColsOfInContext :: (HasCallStack, DbVersionHash a) => CatTableAliased a -> QueryFrag
 concatenatedIdentityColsOfInContext tbl = interspBy False " || '_' || " $ map (coal . colOf) $ fqTableIdentifyingCols tbl
   where
     coal q = "COALESCE(" <> parens q <> "::TEXT, '')"
     colOf = \case
       PureSqlExpression c -> c
-      RegularColumn tblName c -> tableName tblName <> "." <> c
-      OidColumn joinTbl thisTblOidCol -> "(SELECT " <> concatenatedIdentityColsOf joinTbl thisTblOidCol <> " FROM " <> tableName joinTbl <> " WHERE " <> RegularColumn joinTbl "oid" <<> "=" <> RegularColumn tbl thisTblOidCol <<> ")"
+      RegularColumn tblName c -> tableAlias tblName <> "." <> c
+      OidColumn joinTbl thisTblOidCol -> "(SELECT " <> concatenatedIdentityColsOf joinTbl (toQueryFrag thisTblOidCol) <> " FROM " <> tableNameAndAlias joinTbl <> " WHERE " <> RegularColumn joinTbl "oid" <<> "=" <> thisTblOidCol <<> ")"
       OidArrayColumn joinTbl thisTblOidCol -> 
              "(SELECT ARRAY_TO_STRING(ARRAY_AGG(" <> concatenatedIdentityColsOf joinTbl "s.elem" <> " ORDER BY s.idx), ';') "
-          <> " FROM pg_catalog." <> tableName joinTbl <> " JOIN UNNEST(" <> thisTblOidCol <> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn joinTbl "oid" <<> "=s.elem)"
+          <> " FROM pg_catalog." <> tableNameAndAlias joinTbl <> " JOIN UNNEST(" <> thisTblOidCol <> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn joinTbl "oid" <<> "=s.elem)"
 
-hashProjection :: (HasCallStack, DbVersionHash a) => CatTable a -> QueryFrag
+hashProjection :: (HasCallStack, DbVersionHash a) => CatTableAliased a -> QueryFrag
 hashProjection objTable = "MD5(" <> interspBy False " || " (map toHash cols) <> ")"
   where
     cols = hashingColsOf objTable
     hashExpr expr = "(CASE WHEN " <> expr <> " IS NULL THEN '' ELSE '_' || (" <> expr <> ") :: TEXT END)"
     toHash (PureSqlExpression col) = hashExpr col
     toHash col@(RegularColumn {}) = hashExpr $ toQueryFrag col
-    toHash (OidColumn otherTbl tblCol) = hashExpr $ concatenatedIdentityColsOf otherTbl tblCol
+    toHash (OidColumn otherTbl tblCol) = hashExpr $ concatenatedIdentityColsOf otherTbl (toQueryFrag $ tblCol)
     toHash (OidArrayColumn otherTbl tblCol) = hashExpr $
       -- This one is trickier: we want to ensure order changes results
       let
@@ -163,7 +164,7 @@ hashProjection objTable = "MD5(" <> interspBy False " || " (map toHash cols) <> 
         objTblOidCol = RegularColumn objTable tblCol
       in
       "(SELECT ARRAY_TO_STRING(ARRAY_AGG(" <> otherTblIdentifyingCols <<> " ORDER BY s.idx), ';') "
-      <> " FROM pg_catalog." <> tableName otherTbl <> " JOIN UNNEST(" <> objTblOidCol <<> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn otherTbl "oid" <<> "=s.elem)"
+      <> " FROM pg_catalog." <> tableNameAndAlias otherTbl <> " JOIN UNNEST(" <> objTblOidCol <<> ") WITH ORDINALITY s(elem, idx) ON " <> RegularColumn otherTbl "oid" <<> "=s.elem)"
 
 interspBy :: Bool -> QueryFrag -> [QueryFrag] -> QueryFrag
 interspBy _ _ [] = ""
@@ -187,15 +188,15 @@ data QueryInPieces = QueryInPieces { selectExprs :: QueryFrag, fromTbl :: QueryF
 queryObjNamesAndHashesQuery :: PgVersion -> HashableObject -> (forall a. DbVersionHash a => ([JoinTable a], [ColumnComparison a])) -> QueryInPieces
 queryObjNamesAndHashesQuery (PgVersion (_ :: a)) hobj getJoinTables = fullQuery
   where
-    fullQuery = QueryInPieces (objNameCol <> " AS obj_name, " <> hashProjection objTbl) (tableName objTbl) joins (unWhereFilter <$> nonIdWhere) idWheres
-    (objTbl :: CatTable a, nonIdWhere) = hashableObjCatalogTable hobj
+    fullQuery = QueryInPieces (objNameCol <> " AS obj_name, " <> hashProjection objTbl) (tableNameAndAlias objTbl) joins (unWhereFilter <$> nonIdWhere) idWheres
+    (objTbl :: CatTableAliased a, nonIdWhere) = hashableObjCatalogTable hobj
     objNameCol = concatenatedIdentityColsOfInContext objTbl
     (joinTbls, whereFilters) = getJoinTables @a
     joins = foldMap joinStatement joinTbls
     joinStatement = \case
-      JoinTable col joinTbl -> "\n JOIN " <> tableName joinTbl <> " ON " <> col <<> "=" <>> RegularColumn joinTbl "oid"
-      LeftJoinTable col1 joinTbl col2 -> "\n LEFT JOIN " <> tableName joinTbl <> " ON " <> col1 <<> "=" <>> col2
-      JoinTableFull joinTbl cols -> "\n JOIN " <> tableName joinTbl <> " ON " <>> interspBy False " AND " (map (\(col1, col2) -> col1 <<> "=" <>> col2) cols)
+      JoinTable col joinTbl -> "\n JOIN " <> tableNameAndAlias joinTbl <> " ON " <> col <<> "=" <>> RegularColumn joinTbl "oid"
+      LeftJoinTable col1 joinTbl col2 -> "\n LEFT JOIN " <> tableNameAndAlias joinTbl <> " ON " <> col1 <<> "=" <>> col2
+      JoinTableFull joinTbl cols -> "\n JOIN " <> tableNameAndAlias joinTbl <> " ON " <>> interspBy False " AND " (map (\(col1, col2) -> col1 <<> "=" <>> col2) cols)
     toWhereFrag (ColumnEq col v) = col <<> QueryFrag "=?" (DB.Only v)
     toWhereFrag (ColumnIn col vs) = includeSql vs (col <<> "")
     idWheres =
