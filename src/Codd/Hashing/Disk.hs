@@ -35,6 +35,7 @@ readTable dir = TableHash (readObjName dir)
                         <*> readMultiple (dir </> "constraints") (simpleObjHashFileRead TableConstraint)
                         <*> readMultiple (dir </> "triggers") (simpleObjHashFileRead TableTrigger)
                         <*> readMultiple (dir </> "policies") (simpleObjHashFileRead TablePolicy)
+                        <*> readMultiple (dir </> "indexes") (simpleObjHashFileRead TableIndex)
 readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash

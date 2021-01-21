@@ -91,7 +91,7 @@ migrationsAndHashChange =
             -- UNIQUE CONSTRAINTS AND INDICES
             , ("ALTER TABLE employee ADD CONSTRAINT unique_employee UNIQUE(employee_name)", True)
             , ("ALTER TABLE employee RENAME CONSTRAINT unique_employee TO employee_unique_name", True)            
-            -- TODO: , ("CREATE UNIQUE INDEX unique_employee_idx ON employee (employee_name)", True)
+            , ("CREATE UNIQUE INDEX unique_employee_idx ON employee (employee_name)", True)
 
             -- EXCLUSION CONSTRAINTS
 
@@ -111,6 +111,11 @@ migrationsAndHashChange =
                 -- ^ Same everything as existing function, just changing return type
 
             -- VIEWS
+            , ("CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)", True)
+            , ("CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)", True)
+            , ("CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)", False)
+            , ("CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT 'Mr. ' || employee_name FROM employee)", True)
+            , ("DROP VIEW all_employee_names", True)
 
 
             -- TRIGGERS

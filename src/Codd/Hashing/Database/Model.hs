@@ -8,6 +8,34 @@ import Database.PostgreSQL.Simple (ToRow, Query)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.ToField as DB
 
+data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgIndex | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings | PgViews deriving stock Show
+pgTableName :: CatalogTable -> QueryFrag
+pgTableName = \case
+    PgNamespace -> "pg_namespace"
+    PgClass -> "pg_class"
+    PgProc -> "pg_proc"
+    PgConstraint -> "pg_constraint"
+    PgAuthId -> "pg_authid"
+    PgIndex -> "pg_index"
+    PgLanguage -> "pg_language"
+    PgType -> "pg_type"
+    PgOperator -> "pg_operator"
+    PgAttribute -> "pg_attribute"
+    PgTrigger -> "pg_trigger"
+    PgAccessMethod -> "pg_am"
+    PgCollation -> "pg_collation"
+    PgPolicy -> "pg_policy"
+    PgSequence -> "pg_sequence"
+    PgRoleSettings -> "pg_db_role_setting"
+    PgViews -> "pg_views"
+
+-- | Returns "table AS alias".
+tableNameAndAlias :: DbVersionHash a => CatTableAliased a -> QueryFrag
+tableNameAndAlias atbl@(CatTableAliased _ alias) = tableName atbl <> " AS " <> alias
+
+tableAlias :: CatTableAliased a -> QueryFrag
+tableAlias (CatTableAliased _ alias) = alias
+
 data QueryFrag = forall a. ToRow a => QueryFrag Query a
 instance IsString QueryFrag where
     fromString s = QueryFrag (fromString s) ()
@@ -37,19 +65,20 @@ instance ToQueryFrag QueryFrag where
 
 instance DbVersionHash a => ToQueryFrag (CatalogTableColumn a) where
   toQueryFrag = \case
-    RegularColumn tbl col -> tableName tbl <> "." <> col
-    OidColumn tbl col -> tableName tbl <> "." <> col
-    OidArrayColumn tbl col -> tableName tbl <> "." <> col
+    RegularColumn tbl col -> tableAlias tbl <> "." <> col
+    OidColumn _ col -> toQueryFrag col
+    OidArrayColumn tbl col -> tableAlias tbl <> "." <> col
     PureSqlExpression q -> q
 
 -- | Stores the name of the column with an OID and a table to join to based on equality for that column.
-data JoinTable a = JoinTable (CatalogTableColumn a) (CatTable a) | LeftJoinTable (CatalogTableColumn a) (CatTable a) (CatalogTableColumn a)
-mapJoinTableTbl :: (CatTable a -> CatTable b) -> JoinTable a -> JoinTable b
+data JoinTable a = JoinTable (CatalogTableColumn a) (CatTableAliased a) | LeftJoinTable (CatalogTableColumn a) (CatTableAliased a) (CatalogTableColumn a) | JoinTableFull (CatTableAliased a) [(CatalogTableColumn a, CatalogTableColumn a)]
+mapJoinTableTbl :: (CatTableAliased a -> CatTableAliased b) -> JoinTable a -> JoinTable b
 mapJoinTableTbl f (JoinTable col t) = JoinTable (mapCatTableCol f col) (f t)
 mapJoinTableTbl f (LeftJoinTable col1 t col2) = LeftJoinTable (mapCatTableCol f col1) (f t) (mapCatTableCol f col2)
+mapJoinTableTbl f (JoinTableFull t cols) = JoinTableFull (f t) $ map (\(col1, col2) -> (mapCatTableCol f col1, mapCatTableCol f col2)) cols
 
 data ColumnComparison a = forall b. DB.ToField b => ColumnEq (CatalogTableColumn a) b | forall b. DB.ToField b => ColumnIn (CatalogTableColumn a) (Include b)
-mapColumnComparisonTbl :: (CatTable a -> CatTable b) -> ColumnComparison a -> ColumnComparison b
+mapColumnComparisonTbl :: (CatTableAliased a -> CatTableAliased b) -> ColumnComparison a -> ColumnComparison b
 mapColumnComparisonTbl f = \case
   ColumnEq col v -> ColumnEq (mapCatTableCol f col) v
   ColumnIn col ivs -> ColumnIn (mapCatTableCol f col) ivs
@@ -61,17 +90,17 @@ instance IsString WhereFilter where
 class DbVersionHash a where
   -- | We force injectivity of the associated type to make our lives easier. This does mean we need a separate type for each version of the same DB, sadly.
   type CatTable a = b | b -> a
-  tableName :: CatTable a -> QueryFrag
+  tableName :: CatTableAliased a -> QueryFrag
   -- | Given an object we take hashes of, returns the catalog table and an appropriate `WHERE` filter to apply on it, if any.
-  hashableObjCatalogTable :: HashableObject -> (CatTable a, Maybe WhereFilter)
-  fqObjNameCol :: CatTable a -> CatalogTableColumn a
+  hashableObjCatalogTable :: HashableObject -> (CatTableAliased a, Maybe WhereFilter)
+  fqObjNameCol :: CatTableAliased a -> CatalogTableColumn a
   -- | Returns a list with all columns that uniquely Identify an Object in a catalog table. Usually this is just the object's name, but in some cases
   --   can be more than one column.
   -- Important note: we don't include columns here that are reflected in a hierarchical on-disk ancestor. One example is for "pg_class", which is uniquely
   -- identified by "relname, relnamespace": we only include "relname", because in our context we'll only be searching in "pg_class" filtering by a specific
   -- namespace already.
-  fqTableIdentifyingCols :: CatTable a -> [CatalogTableColumn a]
-  hashingColsOf :: CatTable a -> [CatalogTableColumn a]
+  fqTableIdentifyingCols :: CatTableAliased a -> [CatalogTableColumn a]
+  hashingColsOf :: CatTableAliased a -> [CatalogTableColumn a]
   joinsFor :: HashableObject -> [JoinTable a]
   filtersForSchemas :: Include SqlSchema -> [ColumnComparison a]
   filtersForRoles :: Include SqlRole -> [ColumnComparison a]
@@ -79,13 +108,17 @@ class DbVersionHash a where
   -- | Receives schema and table name in this order.
   underTableFilter :: HashableObject -> ObjName -> ObjName -> [ColumnComparison a]
 
+data CatTableAliased a = CatTableAliased (CatTable a) QueryFrag
+
+mapCatTableAliased :: (CatTable a -> CatTable b) -> CatTableAliased a -> CatTableAliased b
+mapCatTableAliased f (CatTableAliased t qf) = CatTableAliased (f t) qf
 
 -- | Just a helper that stores a straight column name or a col name which is an OID or an OID[], and another pg_catalog table to join on to use that object's name in the hashing instead.
-data CatalogTableColumn a = RegularColumn (CatTable a) QueryFrag | OidColumn (CatTable a) QueryFrag | OidArrayColumn (CatTable a) QueryFrag | PureSqlExpression QueryFrag
-mapCatTableCol :: (CatTable a -> CatTable b) -> CatalogTableColumn a -> CatalogTableColumn b
+data CatalogTableColumn a = RegularColumn (CatTableAliased a) QueryFrag | OidColumn (CatTableAliased a) (CatalogTableColumn a) | OidArrayColumn (CatTableAliased a) QueryFrag | PureSqlExpression QueryFrag
+mapCatTableCol :: (CatTableAliased a -> CatTableAliased b) -> CatalogTableColumn a -> CatalogTableColumn b
 mapCatTableCol f = \case
   RegularColumn t c -> RegularColumn (f t) c
-  OidColumn t q -> OidColumn (f t) q
+  OidColumn t col -> OidColumn (f t) (mapCatTableCol f col)
   OidArrayColumn t q -> OidArrayColumn (f t) q
   PureSqlExpression q -> PureSqlExpression q
 -- deriving instance Show a => Show (CatalogTableColumn a)
