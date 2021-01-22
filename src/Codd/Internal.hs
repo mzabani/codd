@@ -11,9 +11,10 @@ import Control.Monad (void, when, forM, forM_)
 import Control.Monad.Logger (MonadLogger, NoLoggingT, logDebugN, runNoLoggingT)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
+import Data.Either (isLeft)
 import Data.Maybe (isNothing, mapMaybe)
 import qualified Data.List as List
-import Data.List (sortOn)
+import Data.List (find, sortOn)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
@@ -128,7 +129,12 @@ collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrati
                                                                 allSqlMigrationFiles
                     sqlMigrationsContents :: [((FilePath, ByteString), ApplySingleMigration)] <- liftIO $ pendingSqlMigrationFiles `forM` \((fn, fp), ap) -> readFile fp >>= (\contents -> pure ((fn, contents), ap))
                     -- TODO: decodeUtf8Lenient ?
-                    return $ either (error "Failed to parse-check pending Migrations") id $ traverse (\((fn, decodeUtf8 -> sql), ap) -> (flip MigrationToRun ap) <$> parseAddedSqlMigration deploymentWorkflow fn sql) sqlMigrationsContents
+                    let parsedMigs = map (\((fn, decodeUtf8 -> sql), ap) -> (fn, flip MigrationToRun ap <$> parseAddedSqlMigration deploymentWorkflow fn sql)) sqlMigrationsContents
+                    case find (\(_, m) -> isLeft m) parsedMigs of
+                        Just (fn, Left e) -> error $ "Error parsing migration " ++ fn ++ ": " ++ show e
+                        _ -> pure ()
+                    
+                    return $ either (error "Failed to parse-check pending Migrations") id $ traverse snd parsedMigs
                 )
                 (\(ams :: [AddedSqlMigration]) ->
                     return 
