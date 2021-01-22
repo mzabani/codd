@@ -15,7 +15,7 @@ import qualified Data.List as List
 import Options.Applicative
 import Types (Verbosity(..), runVerbosityLogger)
 
-data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add Bool (Maybe FilePath) Verbosity SqlFilePath | DbChecksum FilePath | VerifyDb Verbosity
+data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add Bool (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum (Maybe FilePath) | VerifyDb Verbosity
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser (
@@ -23,7 +23,7 @@ cmdParser = hsubparser (
      <> command "up-deploy" (info (pure UpDeploy) (progDesc "Applies all pending migrations but does NOT update on-disk checksum. Instead, compares on-disk checksum to DB checksum after applying migrations (and before commiting all changes when possible)."))
      <> command "check" (info analyzeParser (progDesc "Checks that a SQL migration doesn't fail and checks some of its attributes such as destructiveness, amongst others."))
      <> command "add" (info addParser (progDesc "Adds and applies a SQL migration (and all pending migrations as well), then updates on-disk checksum."))
-     <> command "dbchecksum" (info dbHashesParser (progDesc "Cleans up a directory and writes a file and folder structure to it that represents the DB's current schema"))
+     <> command "write-checksum" (info dbHashesParser (progDesc "Writes files and folders to the checksum's folder that represent the DB's current schema"))
      <> command "verifydb" (info verifyDbParser (progDesc "Verifies that the Database's current schema matches the current DB Hashes on Disk."))
     )
 
@@ -38,7 +38,7 @@ addParser = Add <$> switch (long "dont-apply" <> help "Do not apply any pending 
                 <*> argument sqlFilePathReader (metavar "SQL-MIGRATION-PATH" <> help "The complete path of the .sql file to be added")
 
 dbHashesParser :: Parser Cmd
-dbHashesParser = DbChecksum <$> strArgument (metavar "FOLDER-PATH" <> help "The path to a folder where all the files an directories representing the DB's schema will be persisted to")
+dbHashesParser = WriteChecksum <$> optionalStrOption (long "dest-folder" <> help "The path to a folder where all the files an directories representing the DB's schema will be persisted to")
 
 verifyDbParser :: Parser Cmd
 verifyDbParser = VerifyDb <$> verbositySwitch
@@ -78,6 +78,14 @@ doWork dbInfo UpDeploy = runStdoutLoggingT $ Codd.applyMigrations dbInfo True
 doWork dbInfo (Analyze verbosity fp) = runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) = runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = runVerbosityLogger verbose $ verifyDb dbInfo
-doWork dbInfo (DbChecksum dirToSave) = do
+doWork dbInfo (WriteChecksum mdest) = do
   checksum <- Codd.withConnection (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
+  let dirToSave =
+        case mdest of
+          Just d -> d
+          Nothing ->
+            case Codd.onDiskHashes dbInfo of
+              Right _ -> error "This functionality needs a directory to write checksum to. Report this as a bug."
+              Left d -> d
+
   Codd.persistHashesToDisk checksum dirToSave
