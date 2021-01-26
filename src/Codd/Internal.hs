@@ -208,7 +208,7 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                     -- to be in a transaction, we have the luxury of not relying on our Sql Parser..
                     -- At least until it becomes more trustworthy
                     if nonDestructiveInTxn sqlMig then
-                        inTxnStatement_ conn $ DB.Query $ encodeUtf8 nonDestSql
+                        inTxnStatement_ conn nonDestSql
                     else
                         noTxnStatement_ conn nonDestSql
             -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
@@ -220,7 +220,7 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                 Nothing -> pure ()
                 Just destSql ->
                     if destructiveInTxn sqlMig then
-                        inTxnStatement_ conn $ DB.Query $ encodeUtf8 destSql
+                        inTxnStatement_ conn destSql
                     else
                         noTxnStatement_ conn destSql
             liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)

@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7af90fc9e406ac8bf5775c09e4eb10986ea2c4efc3f9d68c7777e8b9137f04cd
+-- hash: a8384da543149d72ece889daa6719fb254dad0e1a7173ced6862388af2a94bde
 
 name:           codd
 version:        0.1.0.0
@@ -61,6 +61,7 @@ library
     , haxl
     , monad-logger
     , mtl
+    , postgresql-libpq
     , postgresql-simple
     , text
     , time
@@ -89,6 +90,7 @@ executable codd
     , monad-logger
     , mtl
     , optparse-applicative
+    , postgresql-libpq
     , postgresql-simple
     , text
     , unliftio
@@ -129,6 +131,7 @@ test-suite codd-test
     , hspec-expectations
     , monad-logger
     , mtl
+    , postgresql-libpq
     , postgresql-simple
     , text
     , time

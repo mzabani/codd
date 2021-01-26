@@ -12,6 +12,8 @@ import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
+import qualified Database.PostgreSQL.Simple.Internal as PGInternal
+import qualified Database.PostgreSQL.LibPQ as PQ
 import UnliftIO (MonadIO, liftIO)
 
 -- Multi-query statements are automatically enveloped in a single transaction by the server. This happens because according to
@@ -24,6 +26,16 @@ import UnliftIO (MonadIO, liftIO)
 -- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find statement boundaries
 -- (psql counts parentheses, for instance) to split them up by that.
 -- Note 2: The CLI utility psql does the same and splits up commands before sending them to the server. See https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l
+
+singleStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
+singleStatement_ conn sql = do
+    liftIO $ putStrLn "A"
+    liftIO $ print sql
+    res <- liftIO $ PGInternal.exec conn $ encodeUtf8 sql
+    status <- liftIO $ PQ.resultStatus res
+    liftIO $ putStrLn "B"
+    liftIO $ print res
+    liftIO $ print status
 
 noTxnStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
 noTxnStatement_ conn q =
@@ -39,18 +51,18 @@ noTxnStatement_ conn q =
     where
         parseErrorFallbackExec = do
             liftIO $ putStrLn $ "NOTE: An internal inconsistency was detected in the multi statement parser. We now have to run this migration inside a transaction, so it may fail. Please report this as a bug."
-            inTxnStatement_ conn $ DB.Query (encodeUtf8 q)
+            inTxnStatement_ conn q
 
 -- | This is sad, but when running each command separately, there'll be row-returning statements such as SELECT as well
 -- as Int64 returning ones such as INSERT, ALTER TABLE etc..
 noTxnSingleStatement_ :: MonadIO m => DB.Connection -> SqlBlock -> m ()
-noTxnSingleStatement_ conn (SqlBlock (SelectStatement s) comm) = liftIO $ void $ DB.query_ @(DB.Only Int) conn $ DB.Query $ encodeUtf8 $ s <> comm <> "\n;SELECT 1;"
-noTxnSingleStatement_ conn (SqlBlock (OtherStatement s) comm) = liftIO $ void $ DB.execute_ conn $ DB.Query $ encodeUtf8 $ s <> comm
+noTxnSingleStatement_ conn (SqlBlock (SelectStatement s) comm) = singleStatement_ conn $ s <> comm
+noTxnSingleStatement_ conn (SqlBlock (OtherStatement s) comm) = singleStatement_ conn $ s <> comm
 
-inTxnStatement_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
-inTxnStatement_ conn s =
+inTxnStatement_ :: MonadIO m => DB.Connection -> Text -> m ()
+inTxnStatement_ conn s = singleStatement_ conn s
     -- Same problem as noTxnSingleStatement_, but if we're in a in-txn migration, we can append a "SELECT 1" and we're good. No need to parse things.
-    liftIO $ void $ DB.query_ @(DB.Only Int) conn $ s <> "\n;SELECT 1;"
+    -- liftIO $ void $ DB.query_ @(DB.Only Int) conn $ s <> "\n;SELECT 1;"
 
 parseMultiStatement :: Text -> Either String [SqlBlock]
 parseMultiStatement = parseOnly (multiStatementParserDetailed <* endOfInput) 

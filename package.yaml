@@ -26,6 +26,7 @@ dependencies:
 - filepath
 - monad-logger
 - mtl
+- postgresql-libpq
 - postgresql-simple
 - text
 - unliftio
