@@ -103,7 +103,7 @@ _Codd_ will parse the comment in the first line and figure that this migration c
 ## Important notes about SQL migrations
 
 1. By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database state in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
-2. `COPY` is not supported.  
+2. `COPY FROM STDIN` is supported but other forms of `COPY` _are not_. 
 3. _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly. 
 
 ## Start using Codd in an existing Database
@@ -112,7 +112,7 @@ If you already have a Database and would like to start using _Codd_, here's a su
 
 1. Configure your `.env` file as explained in this guide.
 2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
-3. Run `pg_dump --column-inserts -N codd_schema your_database > bootstrap-migration.sql`
+3. Run `pg_dump -N codd_schema your_database > bootstrap-migration.sql`
 4. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
 5. Run `dropdb your_database; codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
 6. You should now have your Database back and managed through _Codd_.
