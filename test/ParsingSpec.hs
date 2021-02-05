@@ -23,12 +23,10 @@ genSingleSqlStatement = elements validSqlStatements
 otherStatementNoComments :: Text -> SqlBlock
 otherStatementNoComments t = SqlBlock (OtherStatement t) ""
 
-selectStatementNoComments :: Text -> SqlBlock
-selectStatementNoComments t = SqlBlock (SelectStatement t) ""
 
 validSqlStatements :: [SqlBlock]
 validSqlStatements = [
-            selectStatementNoComments "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+            otherStatementNoComments "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
             , otherStatementNoComments $ "DO"
                                 <> "\n$do$"
                                 <> "\nBEGIN"
@@ -54,18 +52,18 @@ validSqlStatements = [
                     <> "\n    -- some computations using v_string and index here"
                     <> "\nEND;"
                     <> "\n$$ LANGUAGE plpgsql;"
-            , selectStatementNoComments "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
-            , selectStatementNoComments "SELECT 'some''quoted ''string';"
-            , selectStatementNoComments "SELECT \"some\"\"quoted identifier\";"
-            , selectStatementNoComments "SELECT 'double quotes \" inside single quotes \" - 2';"
-            , selectStatementNoComments "SELECT \"single quotes ' inside double quotes ' - 2\";"
+            , otherStatementNoComments "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+            , otherStatementNoComments "SELECT 'some''quoted ''string';"
+            , otherStatementNoComments "SELECT \"some\"\"quoted identifier\";"
+            , otherStatementNoComments "SELECT 'double quotes \" inside single quotes \" - 2';"
+            , otherStatementNoComments "SELECT \"single quotes ' inside double quotes ' - 2\";"
             , otherStatementNoComments $ "$function$"
                 <> "\nBEGIN"
                 <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
                 <> "\nEND;"
                 <> "\n$function$;"
-            , selectStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
-            , selectStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            , otherStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
+            , otherStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
