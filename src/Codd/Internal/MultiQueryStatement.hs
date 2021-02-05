@@ -72,7 +72,6 @@ multiQueryStatement_ inTxn conn q =
 -- | This is sad, but when running each command separately, there'll be row-returning statements such as SELECT as well
 -- as Int64 returning ones such as INSERT, ALTER TABLE etc..
 runSingleStatementInternal_ :: MonadIO m => DB.Connection -> SqlBlock -> m ()
-runSingleStatementInternal_ conn (SqlBlock (SelectStatement s) comm) = singleStatement_ conn $ s <> comm
 runSingleStatementInternal_ conn (SqlBlock (OtherStatement s) comm) = singleStatement_ conn $ s <> comm
 runSingleStatementInternal_ conn (SqlBlock (CopyFromStdinStatement copyStm copyData) _) = liftIO $ do
     -- Notable exception here: the comments following COPY statements are not sent to the server
@@ -91,13 +90,12 @@ parseMultiStatement = parseOnly (multiStatementParserDetailed <* endOfInput)
 multiStatementParserDetailed :: Parser [SqlBlock]
 multiStatementParserDetailed = many1 singleStatementParser
 
-data SqlStatement = SelectStatement Text | CopyFromStdinStatement Text Text | OtherStatement Text
+data SqlStatement = CopyFromStdinStatement Text Text | OtherStatement Text
     deriving stock (Show, Eq)
 
 mapStatement :: (Text -> Text) -> SqlStatement -> SqlStatement
 mapStatement f =
     \case
-        SelectStatement s -> SelectStatement (f s)
         CopyFromStdinStatement s b -> CopyFromStdinStatement (f s) b
         OtherStatement s -> OtherStatement (f s)
 
@@ -106,12 +104,10 @@ data SqlBlock = SqlBlock SqlStatement Text
     deriving stock (Show, Eq)
 
 blockToText :: SqlBlock -> Text
-blockToText (SqlBlock (SelectStatement s) comm) = s <> comm
 blockToText (SqlBlock (OtherStatement s) comm) = s <> comm
 blockToText (SqlBlock (CopyFromStdinStatement s1 s2) comm) = s1 <> s2 <> comm
 
 statementTextOnly :: SqlBlock -> Text
-statementTextOnly (SqlBlock (SelectStatement s) _) = s
 statementTextOnly (SqlBlock (OtherStatement s) _) = s
 statementTextOnly (SqlBlock (CopyFromStdinStatement s1 s2) _) = s1 <> s2
 
@@ -156,17 +152,11 @@ singleStatementParser = do
                         Left _ -> fail "Internal problem with mqs parser"
                         Right t3 -> pure $ Right $ t1 <> t2 <> t3
                     
-        lowerCaseFirstWord :: Text -> Text
-        lowerCaseFirstWord stm = Text.toCaseFold (Text.takeWhile (not . Char.isSpace) stm)
-
         sectionsToBlock :: Text -> Either SqlStatement Text -> Text -> SqlBlock
         sectionsToBlock befStm estm aftStm =
             case estm of
                 Left stm -> SqlBlock (mapStatement (befStm <>) stm) aftStm
-                Right stm ->
-                    case lowerCaseFirstWord stm of
-                        "select" -> SqlBlock (SelectStatement (befStm <> stm)) aftStm
-                        _ -> SqlBlock (OtherStatement (befStm <> stm)) aftStm
+                Right stm -> SqlBlock (OtherStatement (befStm <> stm)) aftStm -- Never a COPY FROM STDIN in this case
 
 -- Urgh.. parsing statements precisely would benefit a lot from importing the lex parser
 isCopyFromStdin :: Parser ()
