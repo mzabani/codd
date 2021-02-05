@@ -2,7 +2,7 @@ module Codd.Internal where
 
 import Prelude hiding (readFile)
 
-import Codd.Internal.MultiQueryStatement (noTxnStatement_, inTxnStatement_)
+import Codd.Internal.MultiQueryStatement (InTransaction(..), multiQueryStatement_)
 import Codd.Parsing (parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
@@ -20,9 +20,8 @@ import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.Text.Encoding (decodeUtf8)
 import qualified Database.PostgreSQL.Simple as DB
-import qualified Database.PostgreSQL.Simple.Types as DB
 import System.FilePath ((</>))
 import UnliftIO (MonadUnliftIO, toIO)
 import UnliftIO.Concurrent (threadDelay)
@@ -204,13 +203,11 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
             case nonDestructiveSql sqlMig of
                 Nothing -> pure ()
                 Just nonDestSql ->
-                    -- This is ugly, but we don't trust "noTxnStatement_" that much yet, so if we happen
-                    -- to be in a transaction, we have the luxury of not relying on our Sql Parser..
-                    -- At least until it becomes more trustworthy
-                    if nonDestructiveInTxn sqlMig then
-                        inTxnStatement_ conn nonDestSql
-                    else
-                        noTxnStatement_ conn nonDestSql
+                    let
+                        inTxn = if nonDestructiveInTxn sqlMig then InTransaction else NotInTransaction
+                    in
+                    multiQueryStatement_ inTxn conn nonDestSql
+                
             -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
             -- since every migration will have both sections marked as ran sequentially.
             liftIO $ void $ DB.execute conn "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)" (migTimestamp, fn, isNothing (destructiveSql sqlMig))
@@ -219,9 +216,9 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
             case destructiveSql sqlMig of
                 Nothing -> pure ()
                 Just destSql ->
-                    if destructiveInTxn sqlMig then
-                        inTxnStatement_ conn destSql
-                    else
-                        noTxnStatement_ conn destSql
+                    let
+                        inTxn = if destructiveInTxn sqlMig then InTransaction else NotInTransaction
+                    in
+                    multiQueryStatement_ inTxn conn destSql
             liftIO $ void $ DB.execute conn "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?" (DB.Only fn)
             -- TODO: Assert 1 row was updated
