@@ -1,6 +1,6 @@
 module ParsingSpec where
 
-import Codd.Internal.MultiQueryStatement (SqlBlock(..), SqlStatement(..), parseMultiStatement, blockToText, finalCommentsTextOnly, statementTextOnly)
+import Codd.Internal.MultiQueryStatement (SqlPiece(..), parseMultiStatement, blockToText)
 import Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
 import Codd.Types (SqlMigration(..))
 import Control.Monad (when, forM_)
@@ -17,14 +17,14 @@ newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
 -- | Syntatically valid SQL must contain at least one statement!
 newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
-genSingleSqlStatement :: Gen SqlBlock
+genSingleSqlStatement :: Gen SqlPiece
 genSingleSqlStatement = elements validSqlStatements
 
-otherStatementNoComments :: Text -> SqlBlock
-otherStatementNoComments t = SqlBlock (OtherStatement t) ""
+otherStatementNoComments :: Text -> SqlPiece
+otherStatementNoComments t = OtherSqlPiece t
 
 
-validSqlStatements :: [SqlBlock]
+validSqlStatements :: [SqlPiece]
 validSqlStatements = [
             otherStatementNoComments "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
             , otherStatementNoComments $ "DO"
@@ -38,7 +38,7 @@ validSqlStatements = [
                                 <> "\nEND"
                                 <> "\n$do$;"
             , otherStatementNoComments "CREATE TABLE \"escaped--table /* nasty */\";"
-            , SqlBlock (OtherStatement "CREATE TABLE any_table();") "\n-- ? $1 $2 ? ? ?\n"
+            , otherStatementNoComments "CREATE TABLE any_table();"
             , otherStatementNoComments $ "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
                                         <> "\nBEGIN"
                                         <> "\n    RETURN subtotal * 0.06;"
@@ -64,6 +64,7 @@ validSqlStatements = [
                 <> "\n$function$;"
             , otherStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
             , otherStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n" "5,Dracula,master\n6,The Grinch,master" "\n\\.\n"
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
@@ -122,19 +123,19 @@ spec = do
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon" $ do
                     let
-                        eblks :: Either String [SqlBlock] =
-                            mconcat <$> traverse parseMultiStatement [
+                        eblks :: Either String [[SqlPiece]] =
+                            traverse parseMultiStatement [
                                     "CREATE TABLE hello;"
                                   , "CREATE TABLE hello"
                                   , "CREATE TABLE hello; -- Comment"
                                   , "CREATE TABLE hello -- Comment"
                                   , "CREATE TABLE hello -- Comment\n;"
                                 ]
-                    eblks `shouldBe` Right [ otherStatementNoComments "CREATE TABLE hello;"
-                                           , otherStatementNoComments "CREATE TABLE hello"
-                                           , SqlBlock (OtherStatement "CREATE TABLE hello;") " -- Comment"
-                                           , SqlBlock (OtherStatement "CREATE TABLE hello -- Comment") ""
-                                           , SqlBlock (OtherStatement "CREATE TABLE hello -- Comment\n;") ""
+                    eblks `shouldBe` Right [ [ otherStatementNoComments "CREATE TABLE hello;" ]
+                                           , [ otherStatementNoComments "CREATE TABLE hello" ]
+                                           , [ otherStatementNoComments "CREATE TABLE hello;", WhiteSpacePiece " ", CommentPiece "-- Comment" ]
+                                           , [ otherStatementNoComments "CREATE TABLE hello -- Comment" ]
+                                           , [ otherStatementNoComments "CREATE TABLE hello -- Comment\n;" ]
                                     ]
             it "Statement separation boundaries are good" $
                 forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
@@ -149,12 +150,14 @@ spec = do
                         case eblks of
                             Left e -> eblks `shouldNotSatisfy` isLeft
                             Right blks -> do
+                                let
+                                    comments = [ t | CommentPiece t <- blks ]
+                                    whtspc = [ t | WhiteSpacePiece t <- blks ]
                                 Text.concat (map blockToText blks) `shouldBe` plainSql
-                                forM_ (init blks) $ \block -> statementTextOnly block `shouldSatisfy` (";" `Text.isSuffixOf`)
-                                forM_ blks $ \blk -> do
-                                    nothingIfEmptyQuery (finalCommentsTextOnly blk) `shouldBe` Nothing
-                                    -- print $ statementTextOnly blk
-                                    nothingIfEmptyQuery (statementTextOnly blk) `shouldSatisfy` isJust
+                                forM_ blks $ \case
+                                    CommentPiece t -> t `shouldSatisfy` (\c -> "--" `Text.isPrefixOf` c || "/*" `Text.isPrefixOf` c)
+                                    WhiteSpacePiece t -> t `shouldSatisfy` (\c -> Text.strip c == "")
+                                    CopyFromStdinPiece c d ll -> ll `shouldSatisfy` (\l -> l == "\n\\.\n" || l == "\r\n\\.\r\n")
                                     
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
