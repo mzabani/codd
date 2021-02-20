@@ -291,7 +291,7 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 migrationParserSimpleWorkflow :: Parser ([SectionOption], ParsedSql)
 migrationParserSimpleWorkflow = do
     (text, sqlPieces) <- match sqlPiecesParser
-    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
+    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
     let sections = splitCoddOpts sqlPieces
     
     -- At most one "-- codd: opts" can exist, but we are currently accepting multiple ones..
@@ -305,7 +305,7 @@ migrationParserSimpleWorkflow = do
 migrationParserBGS :: Parser ([SectionOption], ParsedSql, Maybe ([SectionOption], ParsedSql))
 migrationParserBGS = do
     (text, sqlPieces) <- match sqlPiecesParser
-    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use '--no-parse' when adding to treat it as a purely non-destructive, in-txn migration without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
+    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing. Use '--no-parse' when adding to treat it as a purely non-destructive, in-txn migration without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
     let sections = splitCoddOpts sqlPieces
     
     -- At most _two_ "-- codd: opts" can exist
