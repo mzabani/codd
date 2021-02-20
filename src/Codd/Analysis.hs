@@ -2,10 +2,12 @@ module Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), Destru
 
 -- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
+import Codd.Environment (CoddSettings(..))
 import Codd.Hashing (DbHashes(..), IsDbObject(..), DbObject(..), readHashesFromDatabaseWithSettings, childrenObjs)
 import Codd.Internal
 import Codd.Query (unsafeQuery1, query)
-import Codd.Types (SqlMigration(..), AddedSqlMigration(..), DeploymentWorkflow(..), CoddSettings(..))
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..))
+import Codd.Types (DeploymentWorkflow(..))
 import Control.Monad (void, when)
 import Control.Monad.Logger (MonadLogger)
 import Data.List (sortOn)

@@ -1,10 +1,11 @@
 module Main where
 
 import qualified Codd as Codd
+import Codd.Environment (CoddSettings(..))
 import qualified Codd.Environment as Codd
 import qualified Codd.Hashing as Codd
 import qualified Codd.Internal as Codd
-import Codd.Types (CoddSettings(..), SqlFilePath(..))
+import Codd.Types (SqlFilePath(..))
 import Commands.AddMigration (addMigration)
 import Commands.CheckMigration (checkMigrationFile)
 import Commands.VerifyDb (verifyDb)

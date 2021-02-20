@@ -1,8 +1,9 @@
 module Commands.CheckMigration (checkMigrationFile) where
 
 import Codd.Analysis (checkMigration, migrationErrors)
+import Codd.Environment (CoddSettings(..))
 import Codd.Parsing (parseSqlMigration)
-import Codd.Types (CoddSettings(..), SqlFilePath(..))
+import Codd.Types (SqlFilePath(..))
 import Control.Monad (unless, forM_)
 import Control.Monad.Logger (MonadLoggerIO)
 import qualified Data.Text as Text

@@ -2,10 +2,10 @@ module Codd.Internal where
 
 import Prelude hiding (readFile)
 
+import Codd.Environment (CoddSettings(..))
 import Codd.Internal.MultiQueryStatement (InTransaction(..), multiQueryStatement_)
-import Codd.Parsing (parseAddedSqlMigration)
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
-import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
 import Codd.Hashing (DbHashes, readHashesFromDatabaseWithSettings)
 import Control.Monad (void, when, forM, forM_)
 import Control.Monad.Logger (MonadLogger, NoLoggingT, logDebugN, runNoLoggingT)

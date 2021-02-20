@@ -1,21 +1,22 @@
 module ParsingSpec where
 
-import Codd.Internal.MultiQueryStatement (SqlPiece(..), parseMultiStatement, blockToText)
-import Codd.Parsing (parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
-import Codd.Types (SqlMigration(..))
+import Codd.Parsing (SqlMigration(..), SqlPiece(..), ParsedSql(..), parseSqlPieces, piecesToText, sqlPieceText, parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
 import Control.Monad (when, forM_)
 import qualified Data.Char as Char
 import Data.Either (isLeft)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust, fromMaybe)
 import qualified Data.Text as Text
 import Data.Text (Text)
+import DbUtils (mkValidSql)
 import Test.Hspec
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 
 newtype RandomSql = RandomSql { unRandomSql :: Text } deriving newtype Show
--- | Syntatically valid SQL must contain at least one statement!
-newtype SyntaticallyValidRandomSql = SyntaticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
+-- | Syntactically valid SQL must contain at least one statement!
+newtype SyntacticallyValidRandomSql = SyntacticallyValidRandomSql { unSyntRandomSql :: Text } deriving newtype Show
 
 genSingleSqlStatement :: Gen SqlPiece
 genSingleSqlStatement = elements validSqlStatements
@@ -23,6 +24,37 @@ genSingleSqlStatement = elements validSqlStatements
 otherStatementNoComments :: Text -> SqlPiece
 otherStatementNoComments t = OtherSqlPiece t
 
+piecesToParsedSql :: NonEmpty SqlPiece -> ParsedSql
+piecesToParsedSql pcs = WellParsedSql (piecesToText pcs) pcs
+
+data LooseSqlMigration = LooseSqlMigration {
+    lmigrationName :: FilePath
+    , lnonDestructiveSql :: Maybe Text
+    , lnonDestructiveForce :: Bool
+    , lnonDestructiveInTxn :: Bool
+    , ldestructiveSql :: Maybe Text
+    , ldestructiveInTxn :: Bool
+}
+    deriving stock (Eq, Show)
+
+shouldBeMigLoosely :: Either a SqlMigration -> LooseSqlMigration -> IO ()
+res `shouldBeMigLoosely` lmig =
+    case res of
+        Left _ -> expectationFailure "Migration not available in Either"
+        Right m -> do
+            migrationName m `shouldBe` lmigrationName lmig
+            nonDestructiveSql m `shouldSatisfy` \mm -> migMatch mm (lnonDestructiveSql lmig)
+            nonDestructiveForce m `shouldBe` lnonDestructiveForce lmig
+            nonDestructiveInTxn m `shouldBe` lnonDestructiveInTxn lmig
+            destructiveSql m `shouldSatisfy` \mm -> migMatch mm (ldestructiveSql lmig)
+            destructiveInTxn m `shouldBe` ldestructiveInTxn lmig
+    where
+        migMatch :: Maybe ParsedSql -> Maybe Text -> Bool
+        migMatch Nothing Nothing = True
+        migMatch (Just (ParseFailSqlText _)) _ = False
+        migMatch (Just (WellParsedSql t1 pcs)) (Just t2) = 
+            piecesToText pcs == t1 && t1 == t2
+        migMatch _ _ = False
 
 validSqlStatements :: [SqlPiece]
 validSqlStatements = [
@@ -65,6 +97,7 @@ validSqlStatements = [
             , otherStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
             , otherStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
             , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n" "5,Dracula,master\n6,The Grinch,master" "\n\\.\n"
+            , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n" "" "\n\\.\n" -- Empty COPY is possible
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
@@ -73,16 +106,16 @@ validSqlStatements = [
             ]
 
 genSql :: Bool -> Gen Text
-genSql onlySyntaticallyValid =
+genSql onlySyntacticallyValid =
     frequency [
-        (if onlySyntaticallyValid then 0 else 1, pure "")
+        (if onlySyntacticallyValid then 0 else 1, pure "")
         , (50, randomSqlGen)
         ]
 
     where
         emptyLineGen = pure "\n"
         bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
-        lineGen = frequency [ (if onlySyntaticallyValid then 0 else 1, bizarreLineGen), (1, emptyLineGen), (5, blockToText <$> genSingleSqlStatement) ]
+        lineGen = frequency [ (if onlySyntacticallyValid then 0 else 1, bizarreLineGen), (1, emptyLineGen), (5, sqlPieceText <$> genSingleSqlStatement) ]
         -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
         -- is so low that we can just ignore it
         dashDashCommentGen = (<> "\n") . ("-- " <>) . (Text.replace "\n" "") <$> bizarreLineGen
@@ -92,10 +125,10 @@ genSql onlySyntaticallyValid =
         randomSqlGen = fmap Text.concat $ do
             l1 <- listOf lineOrCommentGen
             l2 <- listOf lineOrCommentGen
-            atLeastOneStmt <- blockToText <$> genSingleSqlStatement
+            atLeastOneStmt <- sqlPieceText <$> genSingleSqlStatement
             let
                 finalList = 
-                    if onlySyntaticallyValid then
+                    if onlySyntacticallyValid then
                         l1 ++ (atLeastOneStmt : l2)
                     else
                         l1 ++ l2
@@ -114,8 +147,8 @@ genSql onlySyntaticallyValid =
 instance Arbitrary RandomSql where
     arbitrary = fmap RandomSql (genSql False)
 
-instance Arbitrary SyntaticallyValidRandomSql where
-    arbitrary = fmap SyntaticallyValidRandomSql (genSql True)
+instance Arbitrary SyntacticallyValidRandomSql where
+    arbitrary = fmap SyntacticallyValidRandomSql (genSql True)
 
 spec :: Spec
 spec = do
@@ -123,68 +156,64 @@ spec = do
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon" $ do
                     let
-                        eblks :: Either String [[SqlPiece]] =
-                            traverse parseMultiStatement [
+                        eblks :: Either String [NonEmpty SqlPiece] =
+                            traverse parseSqlPieces [
                                     "CREATE TABLE hello;"
                                   , "CREATE TABLE hello"
                                   , "CREATE TABLE hello; -- Comment"
                                   , "CREATE TABLE hello -- Comment"
                                   , "CREATE TABLE hello -- Comment\n;"
                                 ]
-                    eblks `shouldBe` Right [ [ otherStatementNoComments "CREATE TABLE hello;" ]
-                                           , [ otherStatementNoComments "CREATE TABLE hello" ]
-                                           , [ otherStatementNoComments "CREATE TABLE hello;", WhiteSpacePiece " ", CommentPiece "-- Comment" ]
-                                           , [ otherStatementNoComments "CREATE TABLE hello -- Comment" ]
-                                           , [ otherStatementNoComments "CREATE TABLE hello -- Comment\n;" ]
+                    eblks `shouldBe` Right [ (otherStatementNoComments "CREATE TABLE hello;" :| [])
+                                           , (otherStatementNoComments "CREATE TABLE hello" :| [])
+                                           , (otherStatementNoComments "CREATE TABLE hello;" :| [ WhiteSpacePiece " ", CommentPiece "-- Comment" ])
+                                           , (otherStatementNoComments "CREATE TABLE hello -- Comment" :| [])
+                                           , (otherStatementNoComments "CREATE TABLE hello -- Comment\n;" :| [])
                                     ]
             it "Statement separation boundaries are good" $
                 forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
                     let
-                        estm = parseMultiStatement $ Text.concat (map blockToText blocks)
-                    estm `shouldBe` Right blocks
+                        estm = parseSqlPieces $ Text.concat (map sqlPieceText blocks)
+                    NE.toList <$> estm `shouldBe` Right blocks
             it "Statements concatenation matches original and statements end with semi-colon" $ do
                     property $ \(unSyntRandomSql -> plainSql) -> do
-                        let eblks = parseMultiStatement plainSql
+                        let eblks = parseSqlPieces plainSql
                         -- putStrLn "--------------------------------------------------"
                         -- print plainSql
                         case eblks of
                             Left e -> eblks `shouldNotSatisfy` isLeft
                             Right blks -> do
                                 let
-                                    comments = [ t | CommentPiece t <- blks ]
-                                    whtspc = [ t | WhiteSpacePiece t <- blks ]
-                                Text.concat (map blockToText blks) `shouldBe` plainSql
+                                    comments = [ t | CommentPiece t <- NE.toList blks ]
+                                    whtspc = [ t | WhiteSpacePiece t <- NE.toList blks ]
+                                piecesToText blks `shouldBe` plainSql
                                 forM_ blks $ \case
                                     CommentPiece t -> t `shouldSatisfy` (\c -> "--" `Text.isPrefixOf` c || "/*" `Text.isPrefixOf` c)
                                     WhiteSpacePiece t -> t `shouldSatisfy` (\c -> Text.strip c == "")
                                     CopyFromStdinPiece c d ll -> ll `shouldSatisfy` (\l -> l == "\n\\.\n" || l == "\r\n\\.\r\n")
+                                    _ -> pure ()
                                     
         context "Simple mode" $ do
             context "Valid SQL Migrations" $ do
                 it "Plain Sql Migration, missing optional options" $ do
-                    property $ \(unRandomSql -> plainSql) ->
+                    property $ \(unSyntRandomSql -> plainSql) -> do
                         let parsedMig = parseSqlMigrationSimpleWorkflow "any-name.sql" plainSql
-                        in
-                        case nothingIfEmptyQuery plainSql of
-                            Nothing -> parsedMig `shouldSatisfy` isLeft
-                            _ -> parsedMig `shouldBe`
-                                        Right SqlMigration {
-                                            migrationName = "any-name.sql"
-                                            , nonDestructiveSql = Just plainSql -- That's right. Simple mode is just Blue-Green-Safe with force-non-destructive enabled
-                                            , nonDestructiveForce = True
-                                            , nonDestructiveInTxn = True
-                                            , destructiveSql = Nothing
-                                            , destructiveInTxn = True
-                                        }
+                        parsedMig `shouldBe`
+                                    Right SqlMigration {
+                                        migrationName = "any-name.sql"
+                                        , nonDestructiveSql = Just $ mkValidSql plainSql -- That's right. Simple mode is just Blue-Green-Safe with force-non-destructive enabled
+                                        , nonDestructiveForce = True
+                                        , nonDestructiveInTxn = True
+                                        , destructiveSql = Nothing
+                                        , destructiveInTxn = True
+                                    }
                 it "Sql Migration options parsed correctly" $
                     let
-                        plainSql = "SOME SQL"
-                        sql = "-- codd: no-txn\n"
-                            <> plainSql
+                        sql = "-- codd: no-txn\nSOME SQL"
                     in
                         parseSqlMigrationSimpleWorkflow "any-name.sql" sql `shouldBe` Right SqlMigration {
                                 migrationName = "any-name.sql"
-                                , nonDestructiveSql = Just plainSql
+                                , nonDestructiveSql = Just $ mkValidSql sql
                                 , nonDestructiveForce = True
                                 , nonDestructiveInTxn = False
                                 , destructiveSql = Nothing
@@ -202,27 +231,27 @@ spec = do
         context "Blue-Green-Safe mode" $ do
             context "Valid SQL Migrations" $ do
                 it "Sql Migration with two sections, missing optional options" $ do
-                    property $ \(unRandomSql -> nonDestSql, unRandomSql -> destSql) ->
+                    property $ \(unSyntRandomSql -> nonDestSql, unSyntRandomSql -> destSql) ->
                         let
-                            sql = "-- codd: non-destructive\n"
-                                <> nonDestSql
-                                <> "\n-- codd: destructive\n"
-                                <> destSql
+                            nd = "-- codd: non-destructive\n"
+                                    <> nonDestSql <> ";\n"
+                            d = "-- codd: destructive\n"
+                                    <> destSql
+                            sql = nd <> d
                         in
                             parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right SqlMigration {
                                 migrationName = "any-name.sql"
-                                , nonDestructiveSql = nothingIfEmptyQuery nonDestSql
+                                , nonDestructiveSql = nothingIfEmptyQuery nd
                                 , nonDestructiveForce = False
                                 , nonDestructiveInTxn = True
-                                , destructiveSql = nothingIfEmptyQuery destSql
+                                , destructiveSql = nothingIfEmptyQuery d
                                 , destructiveInTxn = True
                             }
                 it "Sql Migration with one section, missing optional options" $ do
-                    property $ \(unRandomSql -> sectionSql, nonDest :: Bool) ->
+                    property $ \(unSyntRandomSql -> sectionSql, nonDest :: Bool) ->
                         let
-                            sql = (if nonDest then "-- codd: non-destructive\n" else "\n-- codd: destructive\n")
-                                    <> sectionSql
-                            (nonDestSql, destSql) = if nonDest then (sectionSql, "") else ("", sectionSql)
+                            (nonDestSql, destSql) = if nonDest then ("-- codd: non-destructive\n" <> sectionSql, "") else ("", "-- codd: destructive\n" <> sectionSql)
+                            sql = nonDestSql <> destSql
                         in
                             parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right SqlMigration {
                                 migrationName = "any-name.sql"
@@ -234,26 +263,25 @@ spec = do
                             }
                 it "Sql Migration options parsed correctly" $
                     let
-                        nonDestSql = "SOME SQL"
-                        destSql = "MORE SQL"
-                        sql = "-- codd: force, non-destructive, in-txn\n"
-                            <> nonDestSql
-                            <> "\n-- codd: no-txn, destructive\n"
-                            <> destSql
+                        nonDestSql = "-- codd: force, non-destructive, in-txn\nSOME SQL;\n"
+                        destSql = "-- codd: no-txn, destructive\nMORE SQL"
+                        sql = nonDestSql
+                           <> destSql
                     in
                         parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right SqlMigration {
                                 migrationName = "any-name.sql"
-                                , nonDestructiveSql = Just nonDestSql
+                                , nonDestructiveSql = Just $ mkValidSql nonDestSql
                                 , nonDestructiveForce = True
                                 , nonDestructiveInTxn = True
-                                , destructiveSql = Just destSql
+                                , destructiveSql = Just $ mkValidSql destSql
                                 , destructiveInTxn = False
                             }
 
                 it "A real-life SqlMigration parsed correctly" $
                     let
-                        nonDestSql = 
-                            "\n\n"
+                        nonDestSql =
+                            "-- codd: non-destructive\n"
+                            <> "\n\n"
                             <> "-- README:\n"
                             -- <> "-- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps\n"
                             -- <> "-- need not be concerned of the new/old column names here. We recommend caution and testing when using this.\n\n"
@@ -262,27 +290,25 @@ spec = do
                             <> "ALTER TABLE employee ADD COLUMN employee_name TEXT; -- TODO: Remember to set a good DEFAULT if you need one.\n"
                             <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
 
-                        destSql = "DROP TRIGGER employee_old_app_update_column_name ON employee;\nDROP TRIGGER employee_old_app_insert_column_name ON employee;\n"
+                        destSql = "-- codd: destructive\nDROP TRIGGER employee_old_app_update_column_name ON employee;\nDROP TRIGGER employee_old_app_insert_column_name ON employee;\n"
 
-                        sql = "-- codd: non-destructive\n"
-                            <> nonDestSql
-                            <> "\n-- codd: destructive\n"
+                        sql = nonDestSql
                             <> destSql
                     in
                         parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right SqlMigration {
                                 migrationName = "any-name.sql"
-                                , nonDestructiveSql = Just nonDestSql
+                                , nonDestructiveSql = Just $ mkValidSql nonDestSql
                                 , nonDestructiveForce = False
                                 , nonDestructiveInTxn = True
-                                , destructiveSql = Just destSql
+                                , destructiveSql = Just $ mkValidSql destSql
                                 , destructiveInTxn = True
                             }
             
             context "Invalid SQL Migrations" $ do
                 it "Sql Migration Parser never blocks for random text" $ do
                     property $ \(unRandomSql -> anyText) -> do
-                        parseSqlMigrationBGS "any-name.sql" anyText `shouldSatisfy` const True
-                        parseSqlMigrationSimpleWorkflow "any-name.sql" anyText `shouldSatisfy` const True
+                        parseSqlMigrationBGS "any-name.sql" anyText `shouldSatisfy` \p -> seq p True
+                        parseSqlMigrationSimpleWorkflow "any-name.sql" anyText `shouldSatisfy` \p -> seq p True
 
                 it "Gibberish after -- codd:" $
                     let
@@ -316,7 +342,7 @@ spec = do
                 it "Two non-destructive sections" $
                     let
                         sql = "-- codd: non-destructive\n"
-                            <> "ANY SQL HERE"
+                            <> "ANY SQL HERE;"
                             <> "\n--codd: non-destructive\n"
                             <> "MORE SQL HERE"
                     in
@@ -325,7 +351,7 @@ spec = do
                 it "Two destructive sections" $
                     let
                         sql = "-- codd: destructive\n"
-                            <> "ANY SQL HERE"
+                            <> "ANY SQL HERE;"
                             <> "\n--codd: destructive\n"
                             <> "MORE SQL HERE"
                     in
@@ -377,5 +403,6 @@ spec = do
                         ]
                 forM_ emptyQueries $ \q ->
                     (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
-                forM_ (nonEmptyQueries ++ map blockToText validSqlStatements) $ \q ->
-                    nothingIfEmptyQuery q `shouldBe` Just q
+                forM_ (nonEmptyQueries ++ map sqlPieceText validSqlStatements) $ \q ->
+                    nothingIfEmptyQuery q `shouldSatisfy` \case Just (WellParsedSql _ _) -> True
+                                                                _ -> False

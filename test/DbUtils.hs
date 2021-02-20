@@ -2,8 +2,11 @@ module DbUtils where
 
 import Codd (withDbAndDrop)
 import Codd.Internal (withConnection)
-import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..), DeploymentWorkflow(..), Include(..))
+import Codd.Environment (CoddSettings(..))
+import Codd.Parsing (AddedSqlMigration(..), SqlMigration(..), ParsedSql(..), parseSqlPieces)
+import Codd.Types (DeploymentWorkflow(..), Include(..))
 import Control.Monad.Logger (runStdoutLoggingT)
+import Data.Text (Text)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..), addUTCTime, NominalDiffTime)
 import Database.PostgreSQL.Simple (ConnectInfo(..), defaultConnectInfo)
@@ -21,6 +24,12 @@ aroundConnInfo = around $ \act -> do
     cinfo <- testConnInfo
     act cinfo
 
+mkValidSql :: Text -> ParsedSql
+mkValidSql t =
+    case parseSqlPieces t of
+        Left e -> error e -- Probably best to fail early if sql is invalid inside test code
+        Right pcs -> WellParsedSql t pcs
+
 testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
 testCoddSettings migs = do
     connInfo <- testConnInfo
@@ -29,7 +38,7 @@ testCoddSettings migs = do
         migTimestamp = getIncreasingTimestamp (-1000)
         createTestUserMig = AddedSqlMigration SqlMigration {
             migrationName = show migTimestamp <> "-create-test-user.sql"
-            , nonDestructiveSql = Just $ "DO\n"
+            , nonDestructiveSql = Just $ mkValidSql $ "DO\n"
 <> "$do$\n"
 <> "BEGIN\n"
 <> "   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-test-user') THEN\n"

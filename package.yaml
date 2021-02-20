@@ -91,13 +91,16 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    system-build-tools:
-    - hspec-discover
+    # Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
+    # do not include hspec-discover in build-tools, only in dependencies
+    # system-build-tools:
+    # - hspec-discover
     dependencies:
     - attoparsec
     - codd
     - hspec
     - hspec-core
     - hspec-expectations
+    - hspec-discover
     - QuickCheck
     - time

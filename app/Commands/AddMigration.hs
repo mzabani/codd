@@ -3,11 +3,11 @@ module Commands.AddMigration (addMigration) where
 import qualified Codd as Codd
 import Codd.AppCommands (timestampAndMoveMigrationFile)
 import Codd.Analysis (checkMigration, migrationErrors, canRunEverythingInASingleTransaction)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
 import Codd.Internal (withConnection)
 import Codd.Parsing (parseSqlMigration)
-import Codd.Types (CoddSettings(..), SqlFilePath(..))
+import Codd.Types (SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import Control.Monad.Logger (MonadLoggerIO)
 import qualified Data.Text.IO as Text
