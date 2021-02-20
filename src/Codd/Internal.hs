@@ -4,11 +4,11 @@ import Prelude hiding (readFile)
 
 import Codd.Environment (CoddSettings(..))
 import Codd.Internal.MultiQueryStatement (InTransaction(..), multiQueryStatement_)
-import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), parseAddedSqlMigration)
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), ParsingOptions(..), parseAddedSqlMigration)
 import Codd.Query (execvoid_, query)
 import Codd.Hashing (DbHashes, readHashesFromDatabaseWithSettings)
 import Control.Monad (void, when, forM, forM_)
-import Control.Monad.Logger (MonadLogger, NoLoggingT, logDebugN, runNoLoggingT)
+import Control.Monad.Logger (MonadLogger, NoLoggingT, logDebugN, logWarnN, runNoLoggingT)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString, readFile)
 import Data.Either (isLeft)
@@ -128,7 +128,15 @@ collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrati
                                                                 allSqlMigrationFiles
                     sqlMigrationsContents :: [((FilePath, ByteString), ApplySingleMigration)] <- liftIO $ pendingSqlMigrationFiles `forM` \((fn, fp), ap) -> readFile fp >>= (\contents -> pure ((fn, contents), ap))
                     -- TODO: decodeUtf8Lenient ?
-                    let parsedMigs = map (\((fn, decodeUtf8 -> sql), ap) -> (fn, flip MigrationToRun ap <$> parseAddedSqlMigration deploymentWorkflow fn sql)) sqlMigrationsContents
+                    parsedMigs <- forM sqlMigrationsContents $ \((fn, decodeUtf8 -> sql), ap) -> do
+                        let parsedMigGood = parseAddedSqlMigration deploymentWorkflow DoParse fn sql
+                        parsedMigFinal <- do
+                            case parsedMigGood of
+                                Right _ -> pure parsedMigGood
+                                Left _ -> do
+                                    logWarnN $ Text.pack fn <> " could not be parsed and thus will be considered in is entirety as in-txn"
+                                    pure $ parseAddedSqlMigration deploymentWorkflow NoParse fn sql
+                        pure (fn, flip MigrationToRun ap <$> parsedMigFinal)
                     case find (\(_, m) -> isLeft m) parsedMigs of
                         Just (fn, Left e) -> error $ "Error parsing migration " ++ fn ++ ": " ++ show e
                         _ -> pure ()

@@ -1,4 +1,4 @@
-module Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), SqlPiece(..), ParsedSql(..), nothingIfEmptyQuery, piecesToText, sqlPieceText, parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, parseSqlPieces, toMigrationTimestamp) where
+module Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), SqlPiece(..), ParsedSql(..), ParsingOptions(..), nothingIfEmptyQuery, piecesToText, sqlPieceText, parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, parseSqlMigration, parseAddedSqlMigration, parseMigrationTimestamp, parseSqlPieces, toMigrationTimestamp) where
 
 import Prelude hiding (takeWhile)
 import qualified Prelude
@@ -291,7 +291,7 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 migrationParserSimpleWorkflow :: Parser ([SectionOption], ParsedSql)
 migrationParserSimpleWorkflow = do
     (text, sqlPieces) <- match sqlPiecesParser
-    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use --no-parse to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
+    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
     let sections = splitCoddOpts sqlPieces
     
     -- At most one "-- codd: opts" can exist, but we are currently accepting multiple ones..
@@ -305,7 +305,7 @@ migrationParserSimpleWorkflow = do
 migrationParserBGS :: Parser ([SectionOption], ParsedSql, Maybe ([SectionOption], ParsedSql))
 migrationParserBGS = do
     (text, sqlPieces) <- match sqlPiecesParser
-    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use --no-parse to treat it as a SIMPLE (not Blue-Green-Safe) in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
+    when (text /= piecesToText sqlPieces) $ fail "An internal error happened when parsing a migration. Use '--no-parse' when adding to treat it as a purely non-destructive, in-txn migration without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
     let sections = splitCoddOpts sqlPieces
     
     -- At most _two_ "-- codd: opts" can exist
@@ -393,12 +393,18 @@ parseSqlMigrationBGS name t = bimap Text.pack id migE >>= toMig
                         (_, _, True, True)  -> Left "There can't be two destructive sections"
                         (_, _, False, False)  -> Left "There can't be two non-destructive sections"
 
-parseSqlMigration :: DeploymentWorkflow -> String -> Text -> Either Text SqlMigration
-parseSqlMigration SimpleDeployment name sql = parseSqlMigrationSimpleWorkflow name sql
-parseSqlMigration (BlueGreenSafeDeploymentUpToAndIncluding _) name sql = parseSqlMigrationBGS name sql
+data ParsingOptions = NoParse | DoParse
+    deriving stock (Eq)
 
-parseAddedSqlMigration :: DeploymentWorkflow -> String -> Text -> Either Text AddedSqlMigration
-parseAddedSqlMigration depFlow name t = AddedSqlMigration <$> parseSqlMigration depFlow name t <*> parseMigrationTimestamp name
+parseSqlMigration :: DeploymentWorkflow -> ParsingOptions -> String -> Text -> Either Text SqlMigration
+parseSqlMigration dw popts name sql =
+    case (dw, popts) of
+        (_, NoParse) -> Right $ SqlMigration name (Just $ ParseFailSqlText sql) True True Nothing True
+        (SimpleDeployment, _) -> parseSqlMigrationSimpleWorkflow name sql
+        (BlueGreenSafeDeploymentUpToAndIncluding _, _) -> parseSqlMigrationBGS name sql
+
+parseAddedSqlMigration :: DeploymentWorkflow -> ParsingOptions -> String -> Text -> Either Text AddedSqlMigration
+parseAddedSqlMigration depFlow popts name t = AddedSqlMigration <$> parseSqlMigration depFlow popts name t <*> parseMigrationTimestamp name
 
 -- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
 -- we find a way to remove it.

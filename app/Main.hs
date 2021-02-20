@@ -6,7 +6,7 @@ import qualified Codd.Environment as Codd
 import qualified Codd.Hashing as Codd
 import qualified Codd.Internal as Codd
 import Codd.Types (SqlFilePath(..))
-import Commands.AddMigration (addMigration)
+import Commands.AddMigration (AddMigrationOptions(..), addMigration)
 import Commands.CheckMigration (checkMigrationFile)
 import Commands.VerifyDb (verifyDb)
 import Control.Monad.Logger (runStdoutLoggingT)
@@ -16,7 +16,7 @@ import qualified Data.List as List
 import Options.Applicative
 import Types (Verbosity(..), runVerbosityLogger)
 
-data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add Bool (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum (Maybe FilePath) | VerifyDb Verbosity
+data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum (Maybe FilePath) | VerifyDb Verbosity
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser (
@@ -33,7 +33,10 @@ analyzeParser = Analyze <$> verbositySwitch
                         <*> argument sqlFilePathReader (metavar "SQL-MIGRATION-PATH" <> help "The complete path of the .sql file to be analyzed")
 
 addParser :: Parser Cmd
-addParser = Add <$> switch (long "dont-apply" <> help "Do not apply any pending migrations, including the one being added.")
+addParser = Add <$>
+                  (AddMigrationOptions <$> switch (long "dont-apply" <> help "Do not apply any pending migrations, including the one being added.")
+                                       <*> switch (long "no-parse" <> help "Use only in case Codd's parsing fails for some reason but you're certain the SQL is valid. Disabling parsing means the migration will be treated as in-txn and COPY FROM STDIN will not be supported.")
+                  )
                 <*> optionalStrOption (long "dest-folder" <> help "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'CODD_MIGRATION_DIRS' environment variable will be used" <> metavar "DESTFOLDER")
                 <*> verbositySwitch
                 <*> argument sqlFilePathReader (metavar "SQL-MIGRATION-PATH" <> help "The complete path of the .sql file to be added")

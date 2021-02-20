@@ -1,6 +1,7 @@
 module ParsingSpec where
 
-import Codd.Parsing (SqlMigration(..), SqlPiece(..), ParsedSql(..), parseSqlPieces, piecesToText, sqlPieceText, parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
+import Codd.Parsing (SqlMigration(..), SqlPiece(..), ParsedSql(..), ParsingOptions(..), parseSqlMigration, parseSqlPieces, piecesToText, sqlPieceText, parseSqlMigrationBGS, parseSqlMigrationSimpleWorkflow, nothingIfEmptyQuery)
+import Codd.Types (DeploymentWorkflow(..))
 import Control.Monad (when, forM_)
 import qualified Data.Char as Char
 import Data.Either (isLeft)
@@ -356,6 +357,16 @@ spec = do
                             <> "MORE SQL HERE"
                     in
                         parseSqlMigrationBGS "any-name.sql" sql `shouldSatisfy` isLeft
+
+                it "--no-parse forcefully returns a SqlMigration" $
+                    parseSqlMigration SimpleDeployment NoParse "failed-parsing-migration.sql" "-- SQL with comments only!" `shouldBe` Right SqlMigration {
+                        migrationName = "failed-parsing-migration.sql"
+                        , nonDestructiveSql = Just $ ParseFailSqlText "-- SQL with comments only!"
+                        , nonDestructiveForce = True
+                        , nonDestructiveInTxn = True
+                        , destructiveSql = Nothing
+                        , destructiveInTxn = True
+                    }
 
                 it "Can't BEGIN, COMMIT or ROLLBACK Transactions inside SQL migrations" $ pendingWith "Testing this by selecting txid_current() might be more effective"
 
