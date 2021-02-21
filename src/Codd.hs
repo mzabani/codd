@@ -1,10 +1,9 @@
 module Codd (CoddSettings(..), applyMigrations, withDbAndDrop) where
 
 import Prelude hiding (readFile)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDisk)
 import Codd.Internal (withConnection, applyMigrationsInternal, dbIdentifier, beginCommitTxnBracket, mainAppApplyMigsBlock)
-import Codd.Types (CoddSettings(..))
 import Control.Monad (void)
 import Control.Monad.Logger (MonadLogger)
 import Control.Monad.IO.Class (MonadIO(..))

@@ -2,10 +2,11 @@ module DbDependentSpecs.AnalysisSpec where
 
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Environment (CoddSettings(..))
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..))
 import Control.Monad (when)
 import Control.Monad.Logger (runStdoutLoggingT)
-import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp)
+import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp, mkValidSql)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
@@ -14,7 +15,7 @@ import Test.Hspec
 createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
 createTableMig = AddedSqlMigration SqlMigration {
                     migrationName = "0001-create-table.sql"
-                    , nonDestructiveSql = Just "CREATE TABLE anytable ();"
+                    , nonDestructiveSql = Just $ mkValidSql "CREATE TABLE anytable ();"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -22,7 +23,7 @@ createTableMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 1)
 addColumnMig = AddedSqlMigration SqlMigration {
                     migrationName = "0002-add-column.sql"
-                    , nonDestructiveSql = Just "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
+                    , nonDestructiveSql = Just $ mkValidSql "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -30,7 +31,7 @@ addColumnMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 2)
 dropColumnMig = AddedSqlMigration SqlMigration {
                     migrationName = "0003-drop-column.sql"
-                    , nonDestructiveSql = Just "ALTER TABLE anytable DROP COLUMN anycolumn;"
+                    , nonDestructiveSql = Just $ mkValidSql "ALTER TABLE anytable DROP COLUMN anycolumn;"
                     , nonDestructiveForce = True
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -38,7 +39,7 @@ dropColumnMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration SqlMigration {
                     migrationName = "0004-drop-table.sql"
-                    , nonDestructiveSql = Just "DROP TABLE anytable;"
+                    , nonDestructiveSql = Just $ mkValidSql "DROP TABLE anytable;"
                     , nonDestructiveForce = True
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -92,7 +93,7 @@ spec = do
                             let
                                 commitTxnMig = SqlMigration {
                                     migrationName = "0000-commit.sql"
-                                    , nonDestructiveSql = Just "COMMIT;"
+                                    , nonDestructiveSql = Just $ mkValidSql "COMMIT;"
                                     , nonDestructiveForce = False
                                     , nonDestructiveInTxn = True
                                     , destructiveSql = Nothing
@@ -106,7 +107,7 @@ spec = do
                             let
                                 rollbackTxnMig = SqlMigration {
                                     migrationName = "0000-rollback.sql"
-                                    , nonDestructiveSql = Just "ROLLBACK;"
+                                    , nonDestructiveSql = Just $ mkValidSql "ROLLBACK;"
                                     , nonDestructiveForce = False
                                     , nonDestructiveInTxn = True
                                     , destructiveSql = Nothing
@@ -120,10 +121,10 @@ spec = do
                             let
                                 rollbackTxnMig = SqlMigration {
                                     migrationName = "0000-rollback.sql"
-                                    , nonDestructiveSql = Just "ROLLBACK;"
+                                    , nonDestructiveSql = Just $ mkValidSql "ROLLBACK;"
                                     , nonDestructiveForce = False
                                     , nonDestructiveInTxn = True
-                                    , destructiveSql = Just "ROLLBACK;"
+                                    , destructiveSql = Just $ mkValidSql "ROLLBACK;"
                                     , destructiveInTxn = True
                                 }
                             in
@@ -134,7 +135,7 @@ spec = do
                             let
                                 rollbackTxnMig = SqlMigration {
                                     migrationName = "0000-rollback.sql"
-                                    , nonDestructiveSql = Just "ROLLBACK;"
+                                    , nonDestructiveSql = Just $ mkValidSql "ROLLBACK;"
                                     , nonDestructiveForce = False
                                     , nonDestructiveInTxn = True
                                     , destructiveSql = Nothing

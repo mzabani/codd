@@ -26,8 +26,7 @@ in
 
         # Prevents cabal from choosing alternate plans, so that
         # *all* dependencies are provided by Nix.
-        # Set to false until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved
-        exactDeps = false;
+        exactDeps = true;
 
         shellHook = ''
             source scripts/source-env.sh .env

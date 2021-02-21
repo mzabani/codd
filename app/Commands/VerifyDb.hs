@@ -1,7 +1,6 @@
 module Commands.VerifyDb (verifyDb) where
 
-import Codd.Environment (superUserInAppDatabaseConnInfo)
-import Codd.Types (CoddSettings(..))
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, readHashesFromDisk)
 import Codd.Internal (withConnection)
 import Control.Monad (when)

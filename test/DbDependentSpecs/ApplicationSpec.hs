@@ -2,15 +2,15 @@ module DbDependentSpecs.ApplicationSpec where
 
 import Codd (withDbAndDrop, applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Internal (withConnection)
+import Codd.Parsing (AddedSqlMigration(..), SqlMigration(..))
 import Codd.Query (unsafeQuery1)
-import Codd.Types (CoddSettings(..), AddedSqlMigration(..), SqlMigration(..))
 import Codd.Hashing.Types (DbHashes(..))
 import Control.Monad (when, void)
 import Control.Monad.Logger (runStdoutLoggingT)
 import qualified Data.Map.Strict as Map
-import DbUtils (aroundFreshDatabase, getIncreasingTimestamp)
+import DbUtils (aroundFreshDatabase, getIncreasingTimestamp, mkValidSql)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import Data.Text (unpack)
@@ -21,7 +21,7 @@ import Test.QuickCheck
 placeHoldersMig, selectMig :: AddedSqlMigration
 placeHoldersMig = AddedSqlMigration SqlMigration {
                     migrationName = "0000-placeholders.sql"
-                    , nonDestructiveSql = Just "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
+                    , nonDestructiveSql = Just $ mkValidSql "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -29,7 +29,7 @@ placeHoldersMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration SqlMigration {
                     migrationName = "0001-select-mig.sql"
-                    , nonDestructiveSql = Just "SELECT 1, 3"
+                    , nonDestructiveSql = Just $ mkValidSql "SELECT 1, 3"
                     , nonDestructiveForce = True
                     , nonDestructiveInTxn = False
                     , destructiveSql = Nothing
@@ -74,7 +74,7 @@ spec = do
                             migs = [
                                 AddedSqlMigration SqlMigration {
                                     migrationName = "0000-first-in-txn-mig.sql"
-                                    , nonDestructiveSql = Just $
+                                    , nonDestructiveSql = Just $ mkValidSql $
                                         "CREATE TABLE any_table (txid bigint not null);"
                                         <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                         <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
@@ -86,7 +86,7 @@ spec = do
                                 } (getIncreasingTimestamp 0)
                                 , AddedSqlMigration SqlMigration {
                                     migrationName = "0001-second-in-txn-mig.sql"
-                                    , nonDestructiveSql = Just $
+                                    , nonDestructiveSql = Just $ mkValidSql $
                                         "INSERT INTO any_table (txid) VALUES (txid_current());"
                                         <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                         -- ^ No txids from this migration because it runs in the same transaction as the last one, two more rows
@@ -97,7 +97,7 @@ spec = do
                                 } (getIncreasingTimestamp 1)
                                 , AddedSqlMigration SqlMigration {
                                     migrationName = "0002-no-txn-mig.sql"
-                                    , nonDestructiveSql = Just $
+                                    , nonDestructiveSql = Just $ mkValidSql $
                                         "CREATE TYPE experience AS ENUM ('junior', 'senior');"
                                         <> "\nALTER TABLE any_table ADD COLUMN experience experience;"
                                         <> "\nALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
@@ -112,7 +112,7 @@ spec = do
                                 } (getIncreasingTimestamp 2)
                                 , AddedSqlMigration SqlMigration {
                                     migrationName = "0003-second-in-txn-mig.sql"
-                                    , nonDestructiveSql = Just $
+                                    , nonDestructiveSql = Just $ mkValidSql $
                                         "INSERT INTO any_table (txid) VALUES (txid_current());"
                                         <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                         -- ^ One unique txid from this migration because it runs in a new transaction, two more rows
@@ -123,7 +123,7 @@ spec = do
                                 } (getIncreasingTimestamp 3)
                                 , AddedSqlMigration SqlMigration {
                                     migrationName = "0004-second-in-txn-mig.sql"
-                                    , nonDestructiveSql = Just $
+                                    , nonDestructiveSql = Just $ mkValidSql $
                                         "INSERT INTO any_table (txid) VALUES (txid_current());"
                                         <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                         -- ^ No txids from this migration because it runs in the same transaction as the last one, two more rows

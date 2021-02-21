@@ -1,13 +1,13 @@
-module Commands.AddMigration (addMigration) where
+module Commands.AddMigration (AddMigrationOptions(..), addMigration) where
 
 import qualified Codd as Codd
 import Codd.AppCommands (timestampAndMoveMigrationFile)
 import Codd.Analysis (checkMigration, migrationErrors, canRunEverythingInASingleTransaction)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings, persistHashesToDisk)
 import Codd.Internal (withConnection)
-import Codd.Parsing (parseSqlMigration)
-import Codd.Types (CoddSettings(..), SqlFilePath(..))
+import Codd.Parsing (ParsingOptions(..), parseSqlMigration)
+import Codd.Types (SqlFilePath(..))
 import Control.Monad (when, unless, forM_)
 import Control.Monad.Logger (MonadLoggerIO)
 import qualified Data.Text.IO as Text
@@ -17,8 +17,13 @@ import UnliftIO (MonadUnliftIO, liftIO, stderr)
 import UnliftIO.Directory (copyFile, doesFileExist, removeFile)
 import UnliftIO.Exception (bracketOnError)
 
-addMigration :: forall m. (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> Maybe FilePath -> SqlFilePath -> m ()
-addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow }) dontApply destFolder sqlFp@(SqlFilePath fp) = do
+data AddMigrationOptions = AddMigrationOptions {
+  dontApply :: Bool
+  , noParse :: Bool
+}
+
+addMigration :: forall m. (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> AddMigrationOptions -> Maybe FilePath -> SqlFilePath -> m ()
+addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow }) (AddMigrationOptions { dontApply, noParse }) destFolder sqlFp@(SqlFilePath fp) = do
   finalDir <- case (destFolder, sqlMigrations) of
         (Just f, _) -> pure f
         (Nothing, Left []) -> error "Please specify '--dest-folder' or add at least one path to the CODD_MIGRATION_DIRS environment variable."
@@ -28,7 +33,7 @@ addMigration dbInfo@(Codd.CoddSettings { sqlMigrations, onDiskHashes, deployment
   exists <- doesFileExist fp
   unless exists $ error $ "Could not find file " ++ fp
   sqlMigContents <- liftIO $ Text.readFile fp
-  let parsedSqlMigE = parseSqlMigration deploymentWorkflow (takeFileName fp) sqlMigContents
+  let parsedSqlMigE = parseSqlMigration deploymentWorkflow (if noParse then NoParse else DoParse) (takeFileName fp) sqlMigContents
   case parsedSqlMigE of
     Left err -> error $ "There was an error parsing this SQL Migration: " ++ show err
     Right sqlMig -> do

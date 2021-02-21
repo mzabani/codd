@@ -2,17 +2,16 @@ module DbDependentSpecs.HashingSpec where
 
 import Codd (applyMigrations)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..), superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings)
 import Codd.Internal (withConnection)
-import Codd.Parsing (toMigrationTimestamp)
-import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), toMigrationTimestamp)
 import Control.Monad (when, void, foldM)
 import Control.Monad.Logger (runStdoutLoggingT)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..))
-import DbUtils (aroundFreshDatabase, getIncreasingTimestamp)
+import DbUtils (aroundFreshDatabase, getIncreasingTimestamp, mkValidSql)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import qualified Database.PostgreSQL.Simple.Time as DB
@@ -25,7 +24,7 @@ migrationsAndHashChange =
     zipWith (\(t, c) i -> 
         (AddedSqlMigration SqlMigration {
             migrationName = show i <> "-migration.sql"
-            , nonDestructiveSql = Just t
+            , nonDestructiveSql = Just $ mkValidSql t
             , nonDestructiveForce = True
             , nonDestructiveInTxn = True
             , destructiveSql = Nothing

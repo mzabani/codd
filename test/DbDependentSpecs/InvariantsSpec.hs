@@ -2,17 +2,16 @@ module DbDependentSpecs.InvariantsSpec where
 
 import Codd (withDbAndDrop)
 import Codd.Analysis (MigrationCheck(..), NonDestructiveSectionCheck(..), DestructiveSectionCheck(..), checkMigration)
-import Codd.Environment (superUserInAppDatabaseConnInfo)
+import Codd.Environment (CoddSettings(..),  superUserInAppDatabaseConnInfo)
 import Codd.Hashing (readHashesFromDatabaseWithSettings)
 import Codd.Internal (withConnection)
-import Codd.Parsing (toMigrationTimestamp)
-import Codd.Types (CoddSettings(..), SqlMigration(..), AddedSqlMigration(..))
+import Codd.Parsing (SqlMigration(..), AddedSqlMigration(..), toMigrationTimestamp)
 import Control.Monad (when, void)
 import Control.Monad.Logger (runStdoutLoggingT)
 import Data.List (nubBy)
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock (UTCTime(..))
-import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp, aroundTestDbInfo)
+import DbUtils (aroundFreshDatabase, aroundDatabaseWithMigs, getIncreasingTimestamp, aroundTestDbInfo, mkValidSql)
 import qualified Database.PostgreSQL.Simple as DB
 import Database.PostgreSQL.Simple (ConnectInfo(..))
 import qualified Database.PostgreSQL.Simple.Time as DB
@@ -23,7 +22,7 @@ import UnliftIO.Concurrent (threadDelay)
 timestampsMig, lotsOfObjectsMigration :: AddedSqlMigration
 timestampsMig = AddedSqlMigration SqlMigration {
                     migrationName = "0000-create-timestamps-table.sql"
-                    , nonDestructiveSql = Just "CREATE TABLE timestamps (seq_number int not null, tm1 timestamptz not null, tm2 timestamptz not null, UNIQUE (seq_number), UNIQUE(tm1), UNIQUE(tm2));"
+                    , nonDestructiveSql = Just $ mkValidSql "CREATE TABLE timestamps (seq_number int not null, tm1 timestamptz not null, tm2 timestamptz not null, UNIQUE (seq_number), UNIQUE(tm1), UNIQUE(tm2));"
                     , nonDestructiveForce = False
                     , nonDestructiveInTxn = True
                     , destructiveSql = Nothing
@@ -31,7 +30,7 @@ timestampsMig = AddedSqlMigration SqlMigration {
                 } (getIncreasingTimestamp 0)
 lotsOfObjectsMigration = AddedSqlMigration SqlMigration {
                     migrationName = "0000-create-lots-of-objects.sql"
-                    , nonDestructiveSql = Just $
+                    , nonDestructiveSql = Just $ mkValidSql $
     "CREATE TABLE anytable (id serial primary key, col1 timestamptz not null, col2 text CHECK (col2 <> ''), UNIQUE (col1), UNIQUE(col1, col2));"
  <> "CREATE EXTENSION intarray; CREATE EXTENSION btree_gist;"
  -- <> "CREATE TABLE other_table (a1 int references timestamps(seq_number), a2 circle, unique(a1, a2), exclude using gist (a1 with =, (a2) with &&));"

@@ -3,6 +3,8 @@ set -e
 
 if [[ "$1" = "--with-nix" ]]; then
     ./local/codd-tests/bin/codd-test "${@:2}"
+elif [[ "$1" = "" ]]; then
+    cabal run -O0 codd-test
 else
-    cabal run -O0 codd-test -- $@
+    cabal run -O0 codd-test -- "$@"
 fi

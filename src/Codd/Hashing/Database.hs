@@ -2,7 +2,8 @@
 module Codd.Hashing.Database where
 
 import Codd.Hashing.Types
-import Codd.Types (SqlRole(..), SqlSchema(..), CoddSettings(..), Include(..), alsoInclude)
+import Codd.Environment (CoddSettings(..))
+import Codd.Types (SqlRole(..), SqlSchema(..), Include(..), alsoInclude)
 import Codd.Hashing.Database.Model (QueryFrag(..), CatTableAliased(..), CatalogTableColumn(..), DbVersionHash(..), JoinTable(..), WhereFilter(..), ToQueryFrag(..), ColumnComparison(..), tableAlias, tableNameAndAlias, withQueryFrag, (<<>), (<>>))
 import Codd.Hashing.Database.Pg10 (Pg10(..))
 import Codd.Hashing.Database.Pg11 (Pg11(..))

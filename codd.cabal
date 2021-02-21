@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a8384da543149d72ece889daa6719fb254dad0e1a7173ced6862388af2a94bde
+-- hash: e90136caf39f5755836327e2c497db63affda09e2733d49a64312430dbb8dd09
 
 name:           codd
 version:        0.1.0.0
@@ -128,6 +128,7 @@ test-suite codd-test
     , filepath
     , hspec
     , hspec-core
+    , hspec-discover
     , hspec-expectations
     , monad-logger
     , mtl
