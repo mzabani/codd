@@ -3,6 +3,12 @@ let
     hsPkgs = import ./default.nix { inherit pkgs; };
 
     postgres-init = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_12; inherit pkgs; };
+
+    # Brittany 13 fails to build for some reason..
+    # brittany13 = import (builtins.fetchTarball {
+    #             url = "https://github.com/lspitzner/brittany/archive/0.13.1.0.tar.gz";
+    #             sha256 = "1vwnljxs6rpy9yzji098wx834hddfcmz5pll1n8ix8x7xgxqf7vv";
+    #         }) { inherit pkgs; forShell = true; };
 in
     hsPkgs.shellFor {
         # Include only the *local* packages of your project.
@@ -22,7 +28,7 @@ in
 
         # Some you may need to get some other way.
         buildInputs = with pkgs.haskellPackages;
-            [ ghcid hpack hspec-discover ];
+            [ ghcid hpack brittany ];
 
         # Prevents cabal from choosing alternate plans, so that
         # *all* dependencies are provided by Nix.
@@ -32,7 +38,7 @@ in
             source scripts/source-env.sh .env
             ${postgres-init}/bin/init-postgres
             echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
-            echo You just might have to run 'cabal run codd-exe -- up' first to create the $PGDATABASE database.
+            echo You just might have to run 'cabal run -O0 codd-exe -- up-dev' first to create database '$PGDATABASE'.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
         '';
     }
