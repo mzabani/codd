@@ -5,6 +5,8 @@ let
   gmp6 = pkgs.gmp6;
   projectPkgs = import ../default.nix { inherit pkgs; };
 in
+  # The static build thing, which can be read about at https://input-output-hk.github.io/haskell.nix/tutorials/cross-compilation/#static-executables-with-musl-libc
+  # is not working
   projectPkgs.codd.components.exes.codd.overrideAttrs (oldAttrs: {
     configureFlags = [
         "--disable-executable-dynamic"

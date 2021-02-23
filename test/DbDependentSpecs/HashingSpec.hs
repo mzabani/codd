@@ -187,7 +187,7 @@ spec = do
                 it "Because our DB hashing is so complex, let's make sure operations we know should change schema compatibility do" $ \emptyDbInfo -> do
                     let
                         connInfo = superUserInAppDatabaseConnInfo emptyDbInfo
-                        getHashes sett = withConnection connInfo (readHashesFromDatabaseWithSettings sett)
+                        getHashes sett = runStdoutLoggingT $ withConnection connInfo (readHashesFromDatabaseWithSettings sett)
                     hashBeforeEverything <- getHashes emptyDbInfo
                     void $
                         foldM (\(hashSoFar, appliedMigs :: [AddedSqlMigration]) (nextMig, nextMigModifiesSchema) -> do

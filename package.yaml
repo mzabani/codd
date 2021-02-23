@@ -102,6 +102,5 @@ tests:
     - hspec
     - hspec-core
     - hspec-expectations
-    - hspec-discover
     - QuickCheck
     - time
