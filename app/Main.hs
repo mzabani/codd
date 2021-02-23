@@ -82,7 +82,7 @@ doWork dbInfo UpDeploy = runStdoutLoggingT $ Codd.applyMigrations dbInfo True
 doWork dbInfo (Analyze verbosity fp) = runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) = runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
 doWork dbInfo (VerifyDb verbose) = runVerbosityLogger verbose $ verifyDb dbInfo
-doWork dbInfo (WriteChecksum mdest) = do
+doWork dbInfo (WriteChecksum mdest) = runStdoutLoggingT $ do
   checksum <- Codd.withConnection (Codd.superUserInAppDatabaseConnInfo dbInfo) (Codd.readHashesFromDatabaseWithSettings dbInfo)
   let dirToSave =
         case mdest of

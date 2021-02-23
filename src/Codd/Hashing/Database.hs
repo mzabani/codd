@@ -10,6 +10,7 @@ import Codd.Hashing.Database.Pg11 (Pg11(..))
 import Codd.Hashing.Database.Pg12 (Pg12(..))
 import Codd.Query (unsafeQuery1)
 import Control.Monad (forM_)
+import Control.Monad.Logger (MonadLogger, logWarnN)
 import qualified Data.Attoparsec.Text as Parsec
 import Data.Hashable
 import qualified Data.List.NonEmpty as NE
@@ -214,12 +215,12 @@ queryInPiecesToQueryFrag QueryInPieces{..} = "SELECT " <> selectExprs <> " FROM 
       (Nothing, Just w2) -> Just w2
       (Just w1, Just w2) -> Just $ parens w1 <> " AND " <> parens w2
 
-readHashesFromDatabaseWithSettings :: (MonadUnliftIO m, MonadIO m, HasCallStack) => CoddSettings -> DB.Connection -> m DbHashes
+readHashesFromDatabaseWithSettings :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack) => CoddSettings -> DB.Connection -> m DbHashes
 readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash } conn = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
-  strVersion :: DB.Only Text <- unsafeQuery1 conn "SHOW server_version_num" ()
-  case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) (DB.fromOnly strVersion) of
+  strVersion :: Text <- DB.fromOnly <$> unsafeQuery1 conn "SHOW server_version_num" ()
+  case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) strVersion of
     Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
     Right (numVersion :: Int) -> do
       let majorVersion = numVersion `div` 10000
@@ -228,7 +229,11 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
         10 -> readHashesFromDatabase (PgVersion Pg10) conn schemasToHash rolesToHash
         11 -> readHashesFromDatabase (PgVersion Pg11) conn schemasToHash rolesToHash
         12 -> readHashesFromDatabase (PgVersion Pg12) conn schemasToHash rolesToHash
-        _ -> error $ "Unsupported PostgreSQL version " ++ show majorVersion
+        v
+          | v < 13 -> error $ "Unsupported PostgreSQL version " ++ show majorVersion
+          | otherwise -> do
+              logWarnN $ "Not all features of PostgreSQL version " <> Text.pack (show majorVersion) <> " may be supported by codd. Please file an issue for us to support this newer version properly."
+              readHashesFromDatabase (PgVersion Pg12) conn schemasToHash rolesToHash
 
 readHashesFromDatabase :: (MonadUnliftIO m, MonadIO m, HasCallStack) => PgVersion -> DB.Connection -> Include SqlSchema -> Include SqlRole -> m DbHashes
 readHashesFromDatabase pgVer conn allSchemas allRoles = do

@@ -51,7 +51,7 @@ beginRollbackTxnBracket conn f = (execvoid_ conn "BEGIN" >> f) `finally` execvoi
 
 type TxnBracket m = forall a. DB.Connection -> m a -> m a
 
-checkExpectedHashesAfterAction :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> Maybe DbHashes -> DB.Connection -> m ()
+checkExpectedHashesAfterAction :: (MonadLogger m, MonadUnliftIO m, MonadIO m) => CoddSettings -> Maybe DbHashes -> DB.Connection -> m ()
 checkExpectedHashesAfterAction coddSettings mExpectedHashes conn = do
     case mExpectedHashes of
         Nothing -> pure ()
