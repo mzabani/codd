@@ -58,7 +58,7 @@ sqlPiecesParser = do
         sqlPieceParser = CommentPiece <$> commentParser <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace) <|> copyFromStdinParser <|> (OtherSqlPiece <$> anySqlPieceParser)
         anySqlPieceParser = spaceSeparatedTokensToParser [AllUntilEndOfStatement]
 
-data SqlToken = CITextToken Text | SqlIdentifier | CommaSeparatedIdentifiers | Optional [SqlToken] | AllUntilEndOfStatement
+data SqlToken = CITextToken Text | SqlIdentifier | CommaSeparatedIdentifiers | Optional [SqlToken] | CustomParserToken (Parser Text) | AllUntilEndOfStatement
 spaceSeparatedTokensToParser :: [SqlToken] -> Parser Text
 spaceSeparatedTokensToParser allTokens =
     case allTokens of
@@ -78,12 +78,15 @@ spaceSeparatedTokensToParser allTokens =
             \case
                 Optional t -> spaceSeparatedTokensToParser t <|> pure ""
                 CITextToken t -> asciiCI t
-                SqlIdentifier -> blockParserOfType (==DoubleQuotedIdentifier) <|> takeWhile1 (\c -> not (Char.isSpace c) && c /= ',' && c /= ')') -- TODO: What are the valid chars for identifiers?? Figure it out!!
-                CommaSeparatedIdentifiers -> do
-                    firstIdent <- spaceSeparatedTokensToParser [SqlIdentifier]
-                    anySpace <- commentOrSpaceParser False
-                    otherIdents <- fmap Text.concat $ many' (spaceSeparatedTokensToParser [CITextToken ",", SqlIdentifier])
-                    pure $ firstIdent <> anySpace <> otherIdents
+                CustomParserToken p -> p
+                SqlIdentifier ->
+                    let
+                        -- Identifiers can be in fully qualified form "database"."schema"."objectname",
+                        -- with and without double quoting, e.g.: "schema".tablename
+                        singleIdentifier = blockParserOfType (==DoubleQuotedIdentifier) <|> takeWhile1 (\c -> not (Char.isSpace c) && c /= ',' && c /= '.' && c /= ')') -- TODO: What are the valid chars for identifiers?? Figure it out!!
+                    in
+                        listOfAtLeast1 [CustomParserToken singleIdentifier] "."
+                CommaSeparatedIdentifiers -> listOfAtLeast1 [SqlIdentifier] ","
                 AllUntilEndOfStatement -> do
                     t1 <- takeWhile (\c -> not (isPossibleStartingChar c) && c /= ';')
                     mc <- peekChar
@@ -97,6 +100,15 @@ spaceSeparatedTokensToParser allTokens =
                             -- After reading blocks or just a char, we still need to find a semi-colon to get a statement from start to finish!
                             t3 <- parseToken AllUntilEndOfStatement
                             pure $ t1 <> t2 <> t3
+
+        -- | Parses a list of "separator"-separated elements defined by the tokens in elementTokens.
+        --   Any amount of spaces can sit between each element and the separator. What can't happen
+        --   is to have a starting or ending separator (they sit strictly between elements).
+        listOfAtLeast1 elementTokens separator = do
+            firstEl <- spaceSeparatedTokensToParser elementTokens
+            -- We use pure "" only to allow for a space before the first separator..
+            otherEls <- fmap Text.concat $ many' (spaceSeparatedTokensToParser $ CustomParserToken (pure "") : CITextToken separator : elementTokens)
+            pure $ firstEl <> otherEls
 
 -- Urgh.. parsing statements precisely would benefit a lot from importing the lex parser
 copyFromStdinParser :: Parser SqlPiece
