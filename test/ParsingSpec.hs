@@ -22,9 +22,6 @@ newtype SyntacticallyValidRandomSql = SyntacticallyValidRandomSql { unSyntRandom
 genSingleSqlStatement :: Gen SqlPiece
 genSingleSqlStatement = elements validSqlStatements
 
-otherStatementNoComments :: Text -> SqlPiece
-otherStatementNoComments t = OtherSqlPiece t
-
 piecesToParsedSql :: NonEmpty SqlPiece -> ParsedSql
 piecesToParsedSql pcs = WellParsedSql (piecesToText pcs) pcs
 
@@ -59,8 +56,8 @@ res `shouldBeMigLoosely` lmig =
 
 validSqlStatements :: [SqlPiece]
 validSqlStatements = [
-            otherStatementNoComments "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
-            , otherStatementNoComments $ "DO"
+            OtherSqlPiece "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+            , OtherSqlPiece $ "DO"
                                 <> "\n$do$"
                                 <> "\nBEGIN"
                                 <> "\n   IF NOT EXISTS ("
@@ -70,14 +67,14 @@ validSqlStatements = [
                                 <> "\n   END IF;"
                                 <> "\nEND"
                                 <> "\n$do$;"
-            , otherStatementNoComments "CREATE TABLE \"escaped--table /* nasty */\";"
-            , otherStatementNoComments "CREATE TABLE any_table();"
-            , otherStatementNoComments $ "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
+            , OtherSqlPiece "CREATE TABLE \"escaped--table /* nasty */\";"
+            , OtherSqlPiece "CREATE TABLE any_table();"
+            , OtherSqlPiece $ "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
                                         <> "\nBEGIN"
                                         <> "\n    RETURN subtotal * 0.06;"
                                         <> "\nEND;"
                                         <> "\n$$ LANGUAGE plpgsql;"
-            , otherStatementNoComments $ "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
+            , OtherSqlPiece $ "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
                     <> "\nDECLARE"
                     <> "\n    v_string ALIAS FOR $1;"
                     <> "\n    index ALIAS FOR $2;"
@@ -85,20 +82,23 @@ validSqlStatements = [
                     <> "\n    -- some computations using v_string and index here"
                     <> "\nEND;"
                     <> "\n$$ LANGUAGE plpgsql;"
-            , otherStatementNoComments "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
-            , otherStatementNoComments "SELECT 'some''quoted ''string';"
-            , otherStatementNoComments "SELECT \"some\"\"quoted identifier\";"
-            , otherStatementNoComments "SELECT 'double quotes \" inside single quotes \" - 2';"
-            , otherStatementNoComments "SELECT \"single quotes ' inside double quotes ' - 2\";"
-            , otherStatementNoComments $ "$function$"
+            , OtherSqlPiece "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+            , OtherSqlPiece "SELECT 'some''quoted ''string';"
+            , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
+            , OtherSqlPiece "SELECT 'double quotes \" inside single quotes \" - 2';"
+            , OtherSqlPiece "SELECT \"single quotes ' inside double quotes ' - 2\";"
+            , OtherSqlPiece $ "$function$"
                 <> "\nBEGIN"
                 <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
                 <> "\nEND;"
                 <> "\n$function$;"
-            , otherStatementNoComments "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
-            , otherStatementNoComments "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            , OtherSqlPiece "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
+            , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
             , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n" "5,Dracula,master\n6,The Grinch,master" "\n\\.\n"
             , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n" "" "\n\\.\n" -- Empty COPY is possible
+            , CopyFromStdinPiece "copy \"schema\".employee FROM stdin WITH (FORMAT CSV);\n" "" "\n\\.\n" -- Fully qualified identifiers part 1
+            , CopyFromStdinPiece "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with (FORMAT CSV);\n" "" "\n\\.\n" -- Fully qualified identifiers part 2
+            , CopyFromStdinPiece "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n" "" "\n\\.\n" -- Specifying columns
 
             -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
             -- , "/* multiline comment"
@@ -165,11 +165,11 @@ spec = do
                                   , "CREATE TABLE hello -- Comment"
                                   , "CREATE TABLE hello -- Comment\n;"
                                 ]
-                    eblks `shouldBe` Right [ (otherStatementNoComments "CREATE TABLE hello;" :| [])
-                                           , (otherStatementNoComments "CREATE TABLE hello" :| [])
-                                           , (otherStatementNoComments "CREATE TABLE hello;" :| [ WhiteSpacePiece " ", CommentPiece "-- Comment" ])
-                                           , (otherStatementNoComments "CREATE TABLE hello -- Comment" :| [])
-                                           , (otherStatementNoComments "CREATE TABLE hello -- Comment\n;" :| [])
+                    eblks `shouldBe` Right [ (OtherSqlPiece "CREATE TABLE hello;" :| [])
+                                           , (OtherSqlPiece "CREATE TABLE hello" :| [])
+                                           , (OtherSqlPiece "CREATE TABLE hello;" :| [ WhiteSpacePiece " ", CommentPiece "-- Comment" ])
+                                           , (OtherSqlPiece "CREATE TABLE hello -- Comment" :| [])
+                                           , (OtherSqlPiece "CREATE TABLE hello -- Comment\n;" :| [])
                                     ]
             it "Statement separation boundaries are good" $
                 forAll (listOf1 genSingleSqlStatement) $ \blocks -> do
@@ -189,7 +189,7 @@ spec = do
                                     whtspc = [ t | WhiteSpacePiece t <- NE.toList blks ]
                                 piecesToText blks `shouldBe` plainSql
                                 forM_ blks $ \case
-                                    CommentPiece t -> t `shouldSatisfy` (\c -> "--" `Text.isPrefixOf` c || "/*" `Text.isPrefixOf` c)
+                                    CommentPiece t -> t `shouldSatisfy` (\c -> "--" `Text.isPrefixOf` c || "/*" `Text.isPrefixOf` c && "*/" `Text.isSuffixOf` c)
                                     WhiteSpacePiece t -> t `shouldSatisfy` (\c -> Text.strip c == "")
                                     CopyFromStdinPiece c d ll -> ll `shouldSatisfy` (\l -> l == "\n\\.\n" || l == "\r\n\\.\r\n")
                                     _ -> pure ()
