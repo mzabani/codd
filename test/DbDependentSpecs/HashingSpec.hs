@@ -138,6 +138,8 @@ migrationsAndHashChange =
 
             -- ROW LEVEL SECURITY
             , ("ALTER TABLE employee ENABLE ROW LEVEL SECURITY", True)
+            , ("ALTER TABLE employee FORCE ROW LEVEL SECURITY", True)
+            , ("ALTER TABLE employee NO FORCE ROW LEVEL SECURITY", True)
             , ("CREATE POLICY some_policy ON employee USING (employee_name <> 'Some Name');", True)
             , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee USING (employee_name <> 'Some Other Name');", True)
             , ("DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee FOR UPDATE USING (employee_name <> 'Some Other Name');", True)
