@@ -9,7 +9,7 @@ _Codd_ is a tool to help teams of Developers version-control their Databases loc
 
 ## Installing Codd
 
-Currently we provide _Codd_ through Docker. Run codd for the first time with `docker run --rm mzabani/codd codd --help`.
+Currently we provide _Codd_ through Docker. Run codd for the first time with `docker run --rm mzabani/codd --help`.
 
 ## Configuring Codd
 
@@ -48,7 +48,7 @@ CODD_EXTRA_ROLES=codd-user
 After having configured your .env file and making sure Postgres is reachable run:
 
 ````bash
-docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" mzabani/codd codd up-dev
+docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" mzabani/codd up-dev
 ````
 
 *Note: If you have a `codd` executable available, there's no need for this long Docker command line; just make sure your variables in `.env` are exported and run `codd up-dev`.*
@@ -79,7 +79,7 @@ CREATE TABLE employee (
 ````
 
 1. Save this file anywhere with a name such as `create-user-and-employee-table.sql`.
-2. In the older where your migration file is, run `docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" -v "$(pwd):/new-migrations" mzabani/codd codd add new-migrations/create-user-and-employee-table.sql`.
+2. In the older where your migration file is, run `docker run --rm -it --env-file .env --network=host -v "$(pwd)/sql-migrations:/sql-migrations" -v "$(pwd):/new-migrations" mzabani/codd add new-migrations/create-user-and-employee-table.sql`.
 3. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).

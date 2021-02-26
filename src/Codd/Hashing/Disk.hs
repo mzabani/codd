@@ -13,7 +13,7 @@ import Data.Text.IO (writeFile, readFile)
 import GHC.Stack (HasCallStack)
 import System.FilePath ((</>), takeFileName, takeDirectory)
 import UnliftIO (MonadIO(..), throwIO)
-import UnliftIO.Directory (getTemporaryDirectory, createDirectory, removeDirectoryRecursive, doesDirectoryExist, listDirectory, doesFileExist, copyFile, createDirectoryIfMissing)
+import UnliftIO.Directory (getTemporaryDirectory, removePathForcibly, doesDirectoryExist, listDirectory, doesFileExist, copyFile, createDirectoryIfMissing)
 
 -- TODO: A single tree-like structure that can be used both to read from disk and write to disk
 readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
@@ -75,7 +75,7 @@ toFiles (DbHashes (Map.elems -> schemas) (Map.elems -> roles)) = concatMap objTo
 persistHashesToDisk :: (HasCallStack, MonadIO m) => DbHashes -> FilePath -> m ()
 persistHashesToDisk dbHashes dir = do
     tempDir <- (</> "temp-db-dir") <$> getTemporaryDirectory
-    whenM (doesDirectoryExist tempDir) $ removeDirectoryRecursive tempDir
+    whenM (doesDirectoryExist tempDir) $ wipeDir tempDir
     createDirectoryIfMissing False tempDir
     forM_ (nubOrd $ map fst $ toFiles dbHashes) $ \filepath ->
         createDirectoryIfMissing True (tempDir </> takeDirectory filepath)
@@ -83,9 +83,14 @@ persistHashesToDisk dbHashes dir = do
         liftIO $ writeFile (tempDir </> filepath) filecontents
 
     -- If the directory doesn't exist, we should simply ignore it
-    whenM (doesDirectoryExist dir) $ removeDirectoryRecursive dir
+    -- Note: the folder parent to "dir" might not have permissions for us to delete things inside it,
+    -- so we modify only strictly inside "dir"
+    whenM (doesDirectoryExist dir) $ wipeDir dir
     -- Important: renameDirectory will fail when the destination is a different partition. So we make a Copy instead.
     copyDir tempDir dir
+
+    where
+        wipeDir d = listDirectory d >>= mapM_ removePathForcibly
 
 readHashesFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbHashes
 readHashesFromDisk dir = do
@@ -97,7 +102,7 @@ readHashesFromDisk dir = do
 -- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
 copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()
 copyDir src dst = do
-  createDirectory dst
+  createDirectoryIfMissing True dst
   xs <- listDirectory src
   forM_ xs $ \name -> do
     let srcPath = src </> name
