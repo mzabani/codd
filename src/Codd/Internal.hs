@@ -62,7 +62,7 @@ checkExpectedHashesAfterAction coddSettings mExpectedHashes conn = do
 -- | Creates the App's Database and Codd's schema if it does not yet exist.
 createEmptyDbIfNecessary :: forall m n. (MonadUnliftIO m, MonadIO m, n ~ NoLoggingT m) => CoddSettings -> m ()
 createEmptyDbIfNecessary settings = runNoLoggingT $ applyMigrationsInternal beginCommitTxnBracket applyZeroMigs settings
-    -- ^ Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
+    -- Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
     -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
     where
         applyZeroMigs :: DB.Connection -> TxnBracket n -> [NonEmpty MigrationToRun] -> n ()

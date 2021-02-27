@@ -287,7 +287,7 @@ instance DbVersionHash Pg10 where
             let pgClassAliased = CatTableAliased PgClass "pg_class_idx_table"
             in  [ JoinTable "indexrelid" (tableNoAlias PgClass)
                 , JoinTable "indrelid"   pgClassAliased
-                    -- ^ A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
+                    -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
                 , JoinTableFull
                     (tableNoAlias PgNamespace)
                     [ ( RegularColumn pgClassAliased             "relnamespace"

@@ -144,7 +144,7 @@ spec = do
                                               $ "CREATE TABLE any_table (txid bigint not null);"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
-                                          -- ^ One unique txid from this migration, two rows
+                                          -- One unique txid from this migration, two rows
                                           , nonDestructiveForce = False
                                           , nonDestructiveInTxn = True
                                           , destructiveSql      = Nothing
@@ -160,7 +160,7 @@ spec = do
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
-                                          -- ^ No txids from this migration because it runs in the same transaction as the last one, two more rows
+                                          -- No txids from this migration because it runs in the same transaction as the last one, two more rows
                                           , nonDestructiveForce = False
                                           , nonDestructiveInTxn = True
                                           , destructiveSql      = Nothing
@@ -180,7 +180,7 @@ spec = do
                                               <> "\nUPDATE any_table SET experience='intern';"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
-                                          -- ^ Two distinct txids because this one doesn't run in a migration and two more rows
+                                          -- Two distinct txids because this one doesn't run in a migration and two more rows
                                           , nonDestructiveForce = True
                                           , nonDestructiveInTxn = False
                                           , destructiveSql      = Nothing
@@ -196,7 +196,7 @@ spec = do
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
-                                          -- ^ One unique txid from this migration because it runs in a new transaction, two more rows
+                                          -- One unique txid from this migration because it runs in a new transaction, two more rows
                                           , nonDestructiveForce = False
                                           , nonDestructiveInTxn = True
                                           , destructiveSql      = Nothing
@@ -212,7 +212,7 @@ spec = do
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
-                                          -- ^ No txids from this migration because it runs in the same transaction as the last one, two more rows
+                                          -- No txids from this migration because it runs in the same transaction as the last one, two more rows
                                           , nonDestructiveForce = False
                                           , nonDestructiveInTxn = True
                                           , destructiveSql      = Nothing
