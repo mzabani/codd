@@ -2,10 +2,10 @@
 
 _Codd_ is a tool to help teams of Developers version-control their Databases locally and for Deployment. It provides a few main features:
 
-- A checksum of your entire Database to help minimize chances that your Production Database differs from your Development Database. This checksum is done in a way such that different developers writing SQL migrations that affect the same Database objects become merge conflicts, but touching distinct DB objects does not lead to conflicts.  
+- Checksums of your Database to help minimize chances that your Production Database differs from your Development Database. This checksum is done in a way such that different developers writing SQL migrations that affect the same Database objects become merge conflicts, but touching distinct DB objects does not lead to conflicts. Currently, codd **can't guarantee complete schema equality**, so beware of that.  
 - A way to apply pending SQL migrations in a single DB Transaction when possible, rolling back in case checksums mismatch before committing.  
 
-**It is only compatible with PostgreSQL version 10, 11 and 12 (probably with 13 as well but hasn't been tested yet). No other databases are currently supported.**
+**It is only compatible with PostgreSQL version 10, 11 and 12 (should also work with 13 but only supporting v12's features). No other databases are currently supported.**
 
 ## Installing Codd
 
@@ -106,6 +106,26 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 1. By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
 2. _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly.  
 3. `COPY FROM STDIN` is supported but other forms of `COPY` or psql's meta command `\COPY` _are not_.  
+
+## Schema equality checks
+
+*Codd*'s Database checksum process does not yet checksum every DB object or every DB object's attributes. For a more thorough (but a bit drafty) description of what is checksummed, see [SCHEMA-MAPPINGS.md](docs/SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed:
+
+- Tables, columns, CHECK constraints, FKs, indexes and other constraints
+- Sequences (although attributes such as the sequence's owner-column and its RESTART value are not included)
+- Functions, operators and VIEWs
+- Triggers
+- Row Level Security
+- Roles, including their attributes such as `search_path`
+
+In contrast, an **incomplete** list of things that are **not currently checksummed:**
+
+- Partitioning
+- Collations
+- Extensions
+- Others
+
+Checksumming every possible object is a top priority of *codd*, so if something's missing or not behaving as intended, please file a bug report.
 
 ## Start using Codd in an existing Database
 

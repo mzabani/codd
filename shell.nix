@@ -4,11 +4,6 @@ let
 
     postgres-init = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_12; inherit pkgs; };
 
-    # Brittany 13 fails to build for some reason..
-    # brittany13 = import (builtins.fetchTarball {
-    #             url = "https://github.com/lspitzner/brittany/archive/0.13.1.0.tar.gz";
-    #             sha256 = "1vwnljxs6rpy9yzji098wx834hddfcmz5pll1n8ix8x7xgxqf7vv";
-    #         }) { inherit pkgs; forShell = true; };
 in
     hsPkgs.shellFor {
         # Include only the *local* packages of your project.
