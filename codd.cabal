@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a8384da543149d72ece889daa6719fb254dad0e1a7173ced6862388af2a94bde
+-- hash: 8b60cdebff91512b23caadc55f6da5a2597de5a4a5e43bce4f8dd8a788237e0c
 
 name:           codd
 version:        0.1.0.0
@@ -13,7 +13,7 @@ homepage:       https://github.com/mzabani/codd#readme
 bug-reports:    https://github.com/mzabani/codd/issues
 author:         Marcelo Zabani
 maintainer:     mzabani@gmail.com
-copyright:      2020 Marcelo Zabani
+copyright:      2021 Marcelo Zabani
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -52,7 +52,8 @@ library
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
   ghc-options: -Wall -Wincomplete-uni-patterns -Wpartial-fields
   build-depends:
-      attoparsec
+      aeson
+    , attoparsec
     , base >=4.7 && <5
     , bytestring
     , containers
@@ -74,7 +75,7 @@ executable codd
   other-modules:
       Commands.AddMigration
       Commands.CheckMigration
-      Commands.VerifyDb
+      Commands.VerifyChecksum
       Types
       Paths_codd
   hs-source-dirs:
@@ -82,7 +83,8 @@ executable codd
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
   ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , base >=4.7 && <5
     , bytestring
     , codd
     , containers
@@ -120,6 +122,7 @@ test-suite codd-test
       hspec-discover
   build-depends:
       QuickCheck
+    , aeson
     , attoparsec
     , base >=4.7 && <5
     , bytestring

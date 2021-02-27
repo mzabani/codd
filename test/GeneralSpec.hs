@@ -5,6 +5,7 @@ import           Codd.Hashing                   ( hashDifferences
                                                 , readHashesFromDisk
                                                 )
 import           Control.Monad                  ( when )
+import qualified Data.Map                      as Map
 import           Data.Text                      ( unpack )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
@@ -20,7 +21,7 @@ spec = do
                 readDbHashes <- readHashesFromDisk
                     "/dev/shm/inverse-test-sql-folder"
                 let diffs = hashDifferences dbHashes readDbHashes
-                diffs `shouldBe` []
+                diffs `shouldBe` Map.empty
                 readDbHashes `shouldBe` dbHashes
         modifyMaxSuccess (const 1)
             $ it

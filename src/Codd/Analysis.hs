@@ -1,3 +1,7 @@
+{-|
+This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
+-}
+
 module Codd.Analysis
     ( MigrationCheck(..)
     , NonDestructiveSectionCheck(..)
@@ -7,8 +11,6 @@ module Codd.Analysis
     , someDestructiveChangeHasBeenApplied
     , migrationErrors
     ) where
-
--- | This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..)

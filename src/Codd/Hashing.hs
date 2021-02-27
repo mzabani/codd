@@ -11,22 +11,24 @@ import           Codd.Hashing.Disk
 import           Codd.Hashing.Types
 
 import           Data.List                      ( sortOn )
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
 
-hashDifferences :: DbHashes -> DbHashes -> [HashDiff]
+hashDifferences :: DbHashes -> DbHashes -> Map FilePath DiffType
 hashDifferences l r =
     let matches = matchOrd fst (toFiles l) (toFiles r)
-    in  mapMaybe
+    in
+        Map.fromList $ mapMaybe
             (\case
-                (Nothing, Nothing) -> Nothing
-                (Just (name, _), Nothing) -> Just $ HashDiff name OnlyLeft
-                (Nothing, Just (name, _)) -> Just $ HashDiff name OnlyRight
+                (Nothing       , Nothing       ) -> Nothing
+                (Just (name, _), Nothing       ) -> Just (name, OnlyLeft)
+                (Nothing       , Just (name, _)) -> Just (name, OnlyRight)
                 (Just (name, h1), Just (_, h2))
                     | h1 == h2  -> Nothing
-                    | otherwise -> Just $ HashDiff name BothButDifferent
+                    | otherwise -> Just (name, BothButDifferent)
             )
             matches
-
 
 
 matchOrd :: Ord b => (a -> b) -> [a] -> [a] -> [(Maybe a, Maybe a)]
