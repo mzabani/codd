@@ -45,5 +45,7 @@ verifyChecksum dbInfoWithAllMigs@CoddSettings { onDiskHashes } = do
                                                                  diskHashes
     logErrorN
       "DB and on-disk checksums do not match. Differences right above this message. Left is Database, Right is on-disk."
+    logErrorN
+      "Some names will not be strictly the names of Database objects, because codd may add extra characters and strings due to DB name overloading."
     liftIO $ exitWith (ExitFailure 1)
   logInfoN "DB and on-disk checksums match."

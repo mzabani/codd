@@ -7,6 +7,7 @@ module Codd.Parsing
   , nothingIfEmptyQuery
   , piecesToText
   , sqlPieceText
+  , parsedSqlText
   , parseSqlMigrationBGS
   , parseSqlMigrationSimpleWorkflow
   , parseSqlMigration
@@ -85,6 +86,10 @@ data SqlPiece = CommentPiece Text | WhiteSpacePiece Text | CopyFromStdinPiece Te
 
 parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
 parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
+
+parsedSqlText :: ParsedSql -> Text
+parsedSqlText (ParseFailSqlText t) = t
+parsedSqlText (WellParsedSql t _ ) = t
 
 sqlPieceText :: SqlPiece -> Text
 sqlPieceText (CommentPiece    s          ) = s
