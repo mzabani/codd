@@ -9,12 +9,12 @@ packages:
     version: 2.3.0.0
     git: https://github.com/facebook/Haxl
     pantry-tree:
-      size: 4155
-      sha256: 755e08d8ad244d5fd4f6f969e13b55fafc23c8261ef1dbf9abd44f578d094036
-    commit: 2d3731ec7a9959c19f74baa5613ed1a3363ab798
+      size: 4308
+      sha256: 798875270f7ae8edd80c304ae543b5c463dae4a59b317c02ff703d8ec0753323
+    commit: f3736effe1de37e0f82e7a12022992ee54f8ff20
   original:
     git: https://github.com/facebook/Haxl
-    commit: 2d3731ec7a9959c19f74baa5613ed1a3363ab798
+    commit: f3736effe1de37e0f82e7a12022992ee54f8ff20
 snapshots:
 - completed:
     size: 563103
