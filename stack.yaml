@@ -40,8 +40,9 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 extra-deps:
+# Sadly, haxl is not on Stackage
 - git: https://github.com/facebook/Haxl
-  commit: 2d3731ec7a9959c19f74baa5613ed1a3363ab798 # Use this until a fixed release. See https://github.com/facebook/Haxl/issues/124
+  commit: f3736effe1de37e0f82e7a12022992ee54f8ff20
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
