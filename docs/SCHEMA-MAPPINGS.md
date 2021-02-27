@@ -116,7 +116,8 @@ OidColumn PgCollation "attcollation",
 "attacl",  
 "attoptions",  
 "attfdwoptions",  
-"attmissingval"  
+"attmissingval",
+"attnum"
 
 ### Ignored columns
 
@@ -124,7 +125,6 @@ OidColumn PgCollation "attcollation",
 -- attname	name	 	The column name  
 -- attstattarget	int4	 	attstattarget controls the level of detail of statistics accumulated for this column by ANALYZE. A zero value indicates that no   statistics should be collected. A negative value says to use the system default statistics target. The exact meaning of positive values is data type-dependent.   For scalar data types, attstattarget is both the target number of “most common values” to collect, and the target number of histogram bins to create.  
 -- attlen	int2	 	A copy of pg_type.typlen of this column's type  
--- attnum	int2	 	The number of the column. Ordinary columns are numbered from 1 up. System columns, such as ctid, have (arbitrary) negative numbers.  
 -- attndims	int4	 	Number of dimensions, if the column is an array type; otherwise 0. (Presently, the number of dimensions of an array is not enforced, so   any nonzero value effectively means “it's an array”.)  
 -- attcacheoff	int4	 	Always -1 in storage, but when loaded into a row descriptor in memory this might be updated to cache the offset of the attribute   within the row  
 -- atttypmod	int4	 	atttypmod records type-specific data supplied at table creation time (for example, the maximum length of a varchar column). It is   passed to type-specific input functions and length coercion functions. The value will generally be -1 for types that do not need atttypmod.  
