@@ -10,7 +10,10 @@ import           Commands.AddMigration          ( AddMigrationOptions(..)
                                                 , addMigration
                                                 )
 import           Commands.CheckMigration        ( checkMigrationFile )
-import           Commands.VerifyChecksum        ( verifyChecksum )
+import           Commands.VerifyChecksums       ( verifyChecksums )
+import           Commands.WriteChecksums        ( WriteChecksumsOpts(..)
+                                                , writeChecksums
+                                                )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
@@ -20,7 +23,7 @@ import           Types                          ( Verbosity(..)
                                                 , runVerbosityLogger
                                                 )
 
-data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum (Maybe FilePath) | VerifyChecksum Verbosity
+data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -59,7 +62,7 @@ cmdParser = hsubparser
   <> command
        "write-checksums"
        (info
-         dbHashesParser
+         writeChecksumsParser
          (progDesc
            "Writes files and folders to the checksums's folder that represent the DB's current schema"
          )
@@ -109,15 +112,28 @@ addParser =
           <> help "The complete path of the .sql file to be added"
           )
 
-dbHashesParser :: Parser Cmd
-dbHashesParser = WriteChecksum <$> optionalStrOption
-  (  long "dest-folder"
-  <> help
-       "The path to a folder where all the files an directories representing the DB's schema will be persisted to"
-  )
+writeChecksumsParser :: Parser Cmd
+writeChecksumsParser =
+  fmap WriteChecksum
+    $   flag'
+          WriteToStdout
+          (  long "to-stdout"
+          <> help
+               "Writes a JSON representation of the DB schema to stdout. If this option is supplied, 'dest-folder' is ignored"
+          )
+    <|> (WriteToDisk <$> optionalStrOption
+          (  long "dest-folder"
+          <> help
+               "The path to a folder where all the files an directories representing the DB's schema will be persisted to"
+          )
+        )
 
 verifyChecksumParser :: Parser Cmd
-verifyChecksumParser = VerifyChecksum <$> verbositySwitch
+verifyChecksumParser = VerifyChecksum <$> verbositySwitch <*> switch
+  (  long "from-stdin"
+  <> help
+       "Reads a JSON representation of the expected checksums from stdin (also see 'codd write-checkums'), instead of using on-disk checksums."
+  )
 
 sqlFilePathReader :: ReadM SqlFilePath
 sqlFilePathReader = fmap SqlFilePath $ eitherReader $ \s ->
@@ -168,19 +184,6 @@ doWork dbInfo (Analyze verbosity fp) =
   runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) =
   runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
-doWork dbInfo (VerifyChecksum verbose) =
-  runVerbosityLogger verbose $ verifyChecksum dbInfo
-doWork dbInfo (WriteChecksum mdest) = runStdoutLoggingT $ do
-  checksum <- Codd.withConnection
-    (Codd.superUserInAppDatabaseConnInfo dbInfo)
-    (Codd.readHashesFromDatabaseWithSettings dbInfo)
-  let
-    dirToSave = case mdest of
-      Just d  -> d
-      Nothing -> case Codd.onDiskHashes dbInfo of
-        Right _ ->
-          error
-            "This functionality needs a directory to write checksum to. Report this as a bug."
-        Left d -> d
-
-  Codd.persistHashesToDisk checksum dirToSave
+doWork dbInfo (VerifyChecksum verbosity fromStdin) =
+  runVerbosityLogger verbosity $ verifyChecksums dbInfo fromStdin
+doWork dbInfo (WriteChecksum opts) = writeChecksums dbInfo opts

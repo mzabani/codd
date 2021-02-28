@@ -53,6 +53,7 @@ jobs:
     - name: Build codd's executable
       env:
         CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      # Note: this still seems not to work.. it doesn't push anything to cachix :(
       run: nix-build --no-out-link -A codd.components.exes.codd | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
 
     - name: Build codd's tests

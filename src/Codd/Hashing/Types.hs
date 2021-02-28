@@ -1,6 +1,8 @@
 module Codd.Hashing.Types where
 
-import           Data.Aeson                     ( ToJSON(..)
+import           Data.Aeson                     ( FromJSON
+                                                , FromJSONKey
+                                                , ToJSON(..)
                                                 , ToJSONKey
                                                 , Value(String)
                                                 )
@@ -22,32 +24,32 @@ data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HIndex | H
 
 data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash)
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash)
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 -- TODO: schema search path, collations, Full Text dictionaries, operators, permissions per table, per column... What else?
 data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) (Map ObjName TablePolicy) (Map ObjName TableIndex) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data TableColumn = TableColumn ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data TableConstraint = TableConstraint ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data TableTrigger = TableTrigger ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data TablePolicy = TablePolicy ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data TableIndex = TableIndex ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 data RoleHash = RoleHash ObjName ObjHash
     deriving stock (Show, Eq, Generic)
-    deriving anyclass ToJSON
+    deriving anyclass (FromJSON, ToJSON)
 
 class IsDbObject a where
     objName :: a -> ObjName
@@ -142,9 +144,9 @@ fromPathFrag :: FilePath -> ObjName
 fromPathFrag fp = ObjName $ Text.pack fp
 
 newtype ObjHash = ObjHash { unObjHash :: Text }
-    deriving newtype (FromField, Eq, Ord, Show, Hashable, ToJSON)
+    deriving newtype (FromField, Eq, Ord, Show, Hashable, FromJSON, ToJSON)
 newtype ObjName = ObjName { unObjName :: Text }
-    deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable, ToJSON, ToJSONKey)
+    deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable, FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 
 listToMap :: IsDbObject o => [o] -> Map ObjName o
 listToMap = Map.fromList . map (\obj -> (objName obj, obj))
