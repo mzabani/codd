@@ -23,8 +23,8 @@ in pkgs.dockerTools.buildImage {
     #!${pkgs.runtimeShell}
     export PATH="/bin/"
     ${pkgs.dockerTools.shadowSetup}
-    mkdir /tmp
-    chmod a+rwx /tmp
+    mkdir /tmp /working-dir
+    chmod a+rwx /tmp /working-dir
 
     # This prints a lot of "Creating mailbox file: No such file or directory"..
     # but it works
@@ -36,5 +36,6 @@ in pkgs.dockerTools.buildImage {
 
   config = {
     Entrypoint = "/bin/codd";
+    WorkingDir = "/working-dir";
   };
 }
