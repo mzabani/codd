@@ -51,7 +51,7 @@ jobs:
       run: nix-build --no-out-link -A codd.components.library
 
     - name: Build codd's executable
-      run: nix-build --no-out-link -A codd.components.exes.codd | ([[ ! "${{ secrets.CACHIX_AUTH_TOKEN }}" = "" ]] && cachix push mzabani || cat -)
+      run: nix-build --no-out-link -A codd.components.exes.codd | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
 
     - name: Build codd's tests
       run: nix-build --no-out-link -A codd.components.tests.codd-test
