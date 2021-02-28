@@ -63,6 +63,20 @@ migrationsAndHashChange = zipWith
  where
   migs =
     [
+      -- MISSING:
+      -- COLUMNS WITH GENERATED AS
+      -- EXCLUSION CONSTRAINTS
+      -- COLLATIONS
+      -- EXTENSIONS
+      -- PARTITIONING
+      -- TYPES
+      -- LANGUAGES
+      -- FOREIGN SERVERS
+      -- DOMAINS
+      -- TABLESPACES
+
+
+
       -- TABLES AND COLUMNS
       ( "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT)"
       , ChangeEq
@@ -161,8 +175,6 @@ migrationsAndHashChange = zipWith
       )
       -- , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", SomeChange)
       -- TODO: Couldn't find owner table in the pg_catalog..
-
-      -- TODO: Column Collations
 
       -- CHECK CONSTRAINTS
     , ( "ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
@@ -278,8 +290,6 @@ migrationsAndHashChange = zipWith
         ]
       )
 
-      -- EXCLUSION CONSTRAINTS
-
       -- FUNCTIONS
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
@@ -289,22 +299,22 @@ migrationsAndHashChange = zipWith
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq [("schemas/public/routines/increment_int4", BothButDifferent)]
       )
+      -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq [("schemas/public/routines/increment_int4;text", OnlyRight)]
       )
-          -- Same body as existing function, just a new parameter
+        -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq [("schemas/public/routines/increment_text;int4", OnlyRight)]
       )
-          -- Same body as existing function, just changing input argument order
+        -- Same everything as existing function, just changing return type
     , ( "DROP FUNCTION increment(text, integer); CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS bigint AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq
         [("schemas/public/routines/increment_text;int4", BothButDifferent)]
       )
-          -- Same everything as existing function, just changing return type
 
       -- VIEWS
     , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)"
@@ -317,6 +327,9 @@ migrationsAndHashChange = zipWith
       , ChangeEq []
       )
     , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT 'Mr. ' || employee_name FROM employee)"
+      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+      )
+    , ( "ALTER VIEW all_employee_names OWNER TO \"codd-test-user\""
       , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
       )
     , ( "DROP VIEW all_employee_names"
@@ -407,9 +420,7 @@ migrationsAndHashChange = zipWith
         [("schemas/public/tables/employee/policies/some_policy", OnlyLeft)]
       )
 
-
       -- ROLES
-
       -- Unmapped Role does not affect hashing
     , ("CREATE ROLE any_new_role", ChangeEq [])
     , ("DROP ROLE any_new_role", ChangeEq [])
@@ -422,6 +433,11 @@ migrationsAndHashChange = zipWith
     , ( "ALTER ROLE \"codd-test-user\" SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
+
+    -- TODO: GRANT permission should affect role checksum!
+    -- , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+    --   , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    --   )
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/postgres", BothButDifferent)]
       )
@@ -434,13 +450,35 @@ migrationsAndHashChange = zipWith
     , ("ALTER ROLE postgres SET search_path TO DEFAULT", ChangeEq [])
 
       -- PERMISSIONS
+      -- For tables
+    , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "GRANT INSERT ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "GRANT DELETE ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
 
-
-      -- EXTENSIONS
-
-
-      -- PARTITIONING
-
+      -- For sequences
+    , ( "REVOKE ALL ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\""
+      , ChangeEq
+        [ ( "schemas/public/sequences/employee_employee_id_seq"
+          , BothButDifferent
+          )
+        ]
+      )
+    , ( "GRANT SELECT ON SEQUENCE employee_employee_id_seq TO \"codd-test-user\""
+      , ChangeEq
+        [ ( "schemas/public/sequences/employee_employee_id_seq"
+          , BothButDifferent
+          )
+        ]
+      )
 
       -- CREATING UNMAPPED AND MAPPED SCHEMAS
     , ("CREATE SCHEMA unmappedschema", ChangeEq [])
