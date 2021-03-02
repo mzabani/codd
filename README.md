@@ -21,8 +21,7 @@ Invoking _Codd_ this way will require mounting volumes and is certainly more bur
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would.
 
 1. Install Nix if you don't have it yet by using your package manager or running `sh <(curl -L https://nixos.org/nix/install) --daemon` and following its instructions.
-2. (Optional step, but makes installation _a lot faster_ by avoiding having to compile several packages) Install Cachix by running `nix-env -iA cachix -f https://cachix.org/api/v1/install` and add our cache by running `cachix use mzabani`
-3. Run `nix-env -f 'https://github.com/mzabani/codd/archive/master.tar.gz' -iA codd.components.exes.codd` to install _Codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
+2. Run `sh <(curl -L https://github.com/mzabani/codd/blob/master/nix/install-codd.sh)` to install _Codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
 
 ## Configuring Codd
 
