@@ -4,7 +4,7 @@ let
 
   useradd = "${pkgs.shadow}/bin/useradd";
   groupadd = "${pkgs.shadow}/bin/groupadd";
-  # mkdir = "${pkgs.coreutils}/bin/mkdir";
+  mkdir = "${pkgs.coreutils}/bin/mkdir";
 
 # Currently, there seems to be no way to map the host's UID and GID to bind-mounts,
 # so there's no way to modify files and folders while giving them the host's user and group
@@ -23,14 +23,13 @@ in pkgs.dockerTools.buildImage {
     #!${pkgs.runtimeShell}
     export PATH="/bin/"
     ${pkgs.dockerTools.shadowSetup}
-    mkdir /tmp /working-dir
+    ${mkdir} /tmp /working-dir
     chmod a+rwx /tmp /working-dir
 
-    # This prints a lot of "Creating mailbox file: No such file or directory"..
-    # but it works
     for i in {1..2001}
     do
-        ${useradd} --uid "$i" -M "u$i"
+        ${groupadd} -f --gid "$i" "g$i"
+        ${useradd} --uid "$i" --gid "$i" -M "u$i"
     done
   '';
 
