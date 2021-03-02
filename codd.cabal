@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0ce412ecbe292bd776a9d596227804ace4bee8534dfd0fb7c59414eb330204ef
+-- hash: 7b401b4623848cb147adae5c0db4c2c4794b2d473fd0b381f187434ce62b7d7b
 
 name:           codd
 version:        0.1.0.0
@@ -30,6 +30,10 @@ library
       Codd
       Codd.Analysis
       Codd.AppCommands
+      Codd.AppCommands.AddMigration
+      Codd.AppCommands.CheckMigration
+      Codd.AppCommands.VerifyChecksums
+      Codd.AppCommands.WriteChecksums
       Codd.Environment
       Codd.Hashing
       Codd.Hashing.Database
@@ -41,6 +45,7 @@ library
       Codd.Hashing.Types
       Codd.Internal
       Codd.Internal.MultiQueryStatement
+      Codd.Logging
       Codd.Parsing
       Codd.Prelude
       Codd.Query
@@ -73,11 +78,6 @@ library
 executable codd
   main-is: Main.hs
   other-modules:
-      Commands.AddMigration
-      Commands.CheckMigration
-      Commands.VerifyChecksums
-      Commands.WriteChecksums
-      Types
       Paths_codd
   hs-source-dirs:
       app
@@ -106,12 +106,14 @@ test-suite codd-test
   other-modules:
       AllSpecs
       DbDependentSpecs.AnalysisSpec
+      DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
       DbDependentSpecs.HashingSpec
       DbDependentSpecs.InvariantsSpec
       DbUtils
       EnvironmentSpec
       GeneralSpec
+      LiftedExpectations
       ParsingSpec
       TypesGen
       Paths_codd

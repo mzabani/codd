@@ -1,4 +1,4 @@
-module Commands.CheckMigration (checkMigrationFile) where
+module Codd.AppCommands.CheckMigration (checkMigrationFile) where
 
 import Codd.Analysis (checkMigration, migrationErrors)
 import Codd.Environment (CoddSettings(..))

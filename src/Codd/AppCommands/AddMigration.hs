@@ -1,4 +1,4 @@
-module Commands.AddMigration (AddMigrationOptions(..), addMigration) where
+module Codd.AppCommands.AddMigration (AddMigrationOptions(..), addMigration) where
 
 import qualified Codd as Codd
 import Codd.AppCommands (timestampAndMoveMigrationFile)

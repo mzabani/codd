@@ -1,4 +1,4 @@
-module Types
+module Codd.Logging
     ( Verbosity(..)
     , runVerbosityLogger
     , runErrorsOnlyLogger

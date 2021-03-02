@@ -6,12 +6,12 @@ import qualified Codd.Environment              as Codd
 import qualified Codd.Hashing                  as Codd
 import qualified Codd.Internal                 as Codd
 import           Codd.Types                     ( SqlFilePath(..) )
-import           Commands.AddMigration          ( AddMigrationOptions(..)
+import           Codd.AppCommands.AddMigration          ( AddMigrationOptions(..)
                                                 , addMigration
                                                 )
-import           Commands.CheckMigration        ( checkMigrationFile )
-import           Commands.VerifyChecksums       ( verifyChecksums )
-import           Commands.WriteChecksums        ( WriteChecksumsOpts(..)
+import           Codd.AppCommands.CheckMigration        ( checkMigrationFile )
+import           Codd.AppCommands.VerifyChecksums       ( verifyChecksums )
+import           Codd.AppCommands.WriteChecksums        ( WriteChecksumsOpts(..)
                                                 , writeChecksums
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
@@ -19,7 +19,7 @@ import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Options.Applicative
-import           Types                          ( Verbosity(..)
+import           Codd.Logging                          ( Verbosity(..)
                                                 , runVerbosityLogger
                                                 )
 

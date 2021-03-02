@@ -1,4 +1,4 @@
-module Commands.WriteChecksums
+module Codd.AppCommands.WriteChecksums
   ( WriteChecksumsOpts(..)
   , writeChecksums
   ) where
@@ -7,6 +7,7 @@ import           Codd.Environment               ( CoddSettings )
 import qualified Codd.Environment              as Codd
 import qualified Codd.Hashing                  as Codd
 import qualified Codd.Internal                 as Codd
+import           Codd.Logging                   ( runErrorsOnlyLogger )
 import           Control.Monad.IO.Unlift        ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
@@ -15,7 +16,7 @@ import           Data.Aeson                     ( encode )
 import           Data.ByteString.Lazy           ( toStrict )
 import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
-import           Types                          ( runErrorsOnlyLogger )
+
 data WriteChecksumsOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 
 writeChecksums
