@@ -1,4 +1,4 @@
-module Commands.VerifyChecksums
+module Codd.AppCommands.VerifyChecksums
   ( verifyChecksums
   ) where
 
@@ -48,12 +48,7 @@ verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes } fromStdin = do
               "Could not decode the JSON input as a DB-checksum representation. Make sure it is the output of 'codd write-checksums --to-stdout' and that the versions of codd are exactly the same."
             )
         $ decode inputs
-    else either
-      readHashesFromDisk
-      (error
-        "This functionality needs a directory to read checksums from. Report this as a bug."
-      )
-      onDiskHashes
+    else either readHashesFromDisk pure onDiskHashes
   dbHashes <- withConnection
     adminConnInfo
     (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
