@@ -474,10 +474,17 @@ readHashesFromDatabase pgVer conn allSchemas allRoles = do
   let stateStore = stateSet UserState{} stateEmpty
   env0 <- liftIO $ initEnv stateStore (pgVer, conn, allRoles)
   liftIO $ runHaxl env0 $ do
-    roles   <- dataFetch $ GetHashesReq HRole [] (filtersForRoles allRoles)
+    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings [] []
+    roles <- dataFetch $ GetHashesReq HRole [] (filtersForRoles allRoles)
     schemas <- dataFetch
       $ GetHashesReq HSchema [] (filtersForSchemas allSchemas)
-    DbHashes <$> getSchemaHash schemas <*> pure
+    let
+      dbSettings = case allDbSettings of
+        [(_, h)] -> h
+        _ ->
+          error
+            "More than one database returned from pg_database. Please file a bug."
+    DbHashes dbSettings <$> getSchemaHash schemas <*> pure
       (listToMap $ map (uncurry RoleHash) roles)
 
 getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)

@@ -14,9 +14,10 @@ import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.ToField
                                                as DB
 
-data CatalogTable = PgNamespace | PgClass | PgProc | PgAuthId | PgIndex | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings | PgViews deriving stock Show
+data CatalogTable = PgDatabase | PgNamespace | PgClass | PgProc | PgAuthId | PgIndex | PgLanguage | PgType | PgConstraint | PgOperator | PgAttribute | PgTrigger | PgAccessMethod | PgCollation | PgPolicy | PgSequence | PgRoleSettings | PgViews deriving stock Show
 pgTableName :: CatalogTable -> QueryFrag
 pgTableName = \case
+  PgDatabase     -> "pg_database"
   PgNamespace    -> "pg_namespace"
   PgClass        -> "pg_class"
   PgProc         -> "pg_proc"

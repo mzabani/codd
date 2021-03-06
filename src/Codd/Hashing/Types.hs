@@ -18,11 +18,13 @@ import           Database.PostgreSQL.Simple.ToField
 import           GHC.Generics                   ( Generic )
 import           System.FilePath                ( (</>) )
 
-data HashableObject = HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy
+data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
-data DbHashes = DbHashes (Map ObjName SchemaHash) (Map ObjName RoleHash)
+data DbHashes = DbHashes ObjHash
+                         (Map ObjName SchemaHash)
+                         (Map ObjName RoleHash)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash)

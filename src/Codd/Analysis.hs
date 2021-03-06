@@ -246,9 +246,11 @@ checkMigration dbInfoApp@(CoddSettings { superUserConnString, dbName }) mig =
 
 -- | TODO: It'd be interesting to show which changes we detected as destructive
 someDestructiveChangeHasBeenApplied :: DbHashes -> DbHashes -> Bool
-someDestructiveChangeHasBeenApplied (DbHashes (Map.elems -> sbf) (Map.elems -> rbf)) (DbHashes (Map.elems -> saf) (Map.elems -> raf))
+someDestructiveChangeHasBeenApplied (DbHashes dbsh1 (Map.elems -> sbf) (Map.elems -> rbf)) (DbHashes dbsh2 (Map.elems -> saf) (Map.elems -> raf))
     = anyDrop (map DbObject sbf) (map DbObject saf)
         || anyDrop (map DbObject rbf) (map DbObject raf)
+        || dbsh1
+        /= dbsh2
 
 anyDrop :: [DbObject] -> [DbObject] -> Bool
 anyDrop objs1 objs2 =

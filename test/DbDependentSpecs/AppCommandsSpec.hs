@@ -10,6 +10,7 @@ import           Codd.AppCommands.WriteChecksums
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..) )
+import           Codd.Hashing.Types             ( ObjHash(ObjHash) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -57,7 +58,7 @@ doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
             { dbName        = "non-existing-db-name"
-            , onDiskHashes  = Right $ DbHashes Map.empty Map.empty
+            , onDiskHashes  = Right $ DbHashes (ObjHash "") Map.empty Map.empty
             , sqlMigrations = Right [migThatWontRun]
             }
     runStdoutLoggingT $ do
@@ -81,7 +82,7 @@ doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
             { dbName        = "new_checksums_test_db"
-            , onDiskHashes  = Right $ DbHashes Map.empty Map.empty
+            , onDiskHashes  = Right $ DbHashes (ObjHash "") Map.empty Map.empty
             , sqlMigrations = Right [migThatWontRun]
             }
 

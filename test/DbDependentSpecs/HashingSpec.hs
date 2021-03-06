@@ -416,21 +416,22 @@ migrationsAndHashChange = zipWith
       )
 
       -- ROLES
-      -- Unmapped Role does not affect hashing
+      -- Unmapped Roles are not hashed
     , ("CREATE ROLE any_new_role", ChangeEq [])
     , ("DROP ROLE any_new_role", ChangeEq [])
     , ( "CREATE ROLE \"extra-codd-test-user\""
       , ChangeEq [("roles/extra-codd-test-user", OnlyRight)]
       )
-    -- , ( "DROP ROLE \"extra-codd-test-user\""
-    --   , ChangeEq [("roles/extra-codd-test-user", OnlyLeft)]
-    --   )
     , ( "ALTER ROLE \"codd-test-user\" SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
+    , ( "ALTER ROLE \"codd-test-user\" WITH BYPASSRLS; ALTER ROLE \"codd-test-user\" WITH REPLICATION; "
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+    , ("ALTER ROLE \"codd-test-user\" WITH BYPASSRLS", ChangeEq [])
 
     -- TODO: GRANT permission should affect role checksum!
-    -- , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+    -- , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
     --   , ChangeEq [("roles/codd-test-user", BothButDifferent)]
     --   )
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
@@ -502,7 +503,7 @@ migrationsAndHashChange = zipWith
       )
 
       -- Permissions of unmapped role don't affect hashing
-      -- TODO: Views not working yet
+      -- TODO: Views not working yet for some reason
     , ( "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; -- GRANT ALL ON all_employee_names TO unmapped_role1"
       , ChangeEq []
       )
