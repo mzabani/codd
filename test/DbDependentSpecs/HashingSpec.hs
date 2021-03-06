@@ -316,27 +316,6 @@ migrationsAndHashChange = zipWith
         [("schemas/public/routines/increment_text;int4", BothButDifferent)]
       )
 
-      -- VIEWS
-    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)"
-      , ChangeEq [("schemas/public/views/all_employee_names", OnlyRight)]
-      )
-    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
-      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
-      )
-    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
-      , ChangeEq []
-      )
-    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT 'Mr. ' || employee_name FROM employee)"
-      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
-      )
-    , ( "ALTER VIEW all_employee_names OWNER TO \"codd-test-user\""
-      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
-      )
-    , ( "DROP VIEW all_employee_names"
-      , ChangeEq [("schemas/public/views/all_employee_names", OnlyLeft)]
-      )
-
-
       -- TRIGGERS
     , ("ALTER TABLE employee ADD COLUMN name TEXT", SomeChange)
     , ( "CREATE FUNCTION employee_name_rename_set_new() RETURNS TRIGGER AS $$\n"
@@ -376,6 +355,22 @@ migrationsAndHashChange = zipWith
     , ("ALTER TABLE employee DROP COLUMN employee_name", SomeChange)
     , ("ALTER TABLE employee RENAME COLUMN name TO employee_name", SomeChange)
 
+      -- VIEWS
+    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)"
+      , ChangeEq [("schemas/public/views/all_employee_names", OnlyRight)]
+      )
+    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
+      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+      )
+    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
+      , ChangeEq []
+      )
+    , ( "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT 'Mr. ' || employee_name FROM employee)"
+      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+      )
+    , ( "ALTER VIEW all_employee_names OWNER TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+      )
 
       -- ROW LEVEL SECURITY
     , ( "ALTER TABLE employee ENABLE ROW LEVEL SECURITY"
@@ -427,9 +422,9 @@ migrationsAndHashChange = zipWith
     , ( "CREATE ROLE \"extra-codd-test-user\""
       , ChangeEq [("roles/extra-codd-test-user", OnlyRight)]
       )
-    , ( "DROP ROLE \"extra-codd-test-user\""
-      , ChangeEq [("roles/extra-codd-test-user", OnlyLeft)]
-      )
+    -- , ( "DROP ROLE \"extra-codd-test-user\""
+    --   , ChangeEq [("roles/extra-codd-test-user", OnlyLeft)]
+    --   )
     , ( "ALTER ROLE \"codd-test-user\" SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
@@ -451,6 +446,9 @@ migrationsAndHashChange = zipWith
 
       -- PERMISSIONS
       -- For tables
+    , ( "GRANT ALL ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
     , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
       , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
       )
@@ -479,6 +477,36 @@ migrationsAndHashChange = zipWith
           )
         ]
       )
+
+      -- Order of granting does not matter, nor do grantors
+    , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "GRANT INSERT ON TABLE employee TO \"codd-test-user\"; GRANT DELETE ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT DELETE ON TABLE employee TO \"codd-test-user\"; GRANT INSERT ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq []
+      )
+    , ( "GRANT ALL ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\""
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+    , ( "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
+      , ChangeEq []
+      )
+    , ( "GRANT ALL ON TABLE employee TO PUBLIC"
+      , ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+      )
+
+      -- Permissions of unmapped role don't affect hashing
+      -- TODO: Views not working yet
+    , ( "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; -- GRANT ALL ON all_employee_names TO unmapped_role1"
+      , ChangeEq []
+      )
+    , ("DROP OWNED BY unmapped_role1; DROP ROLE unmapped_role1", ChangeEq [])
 
       -- CREATING UNMAPPED AND MAPPED SCHEMAS
     , ("CREATE SCHEMA unmappedschema", ChangeEq [])

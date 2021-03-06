@@ -103,7 +103,10 @@ instance DbVersionHash Pg10 where
             PgViews        -> []
 
     hashingColsOf at@(CatTableAliased t _) = case t of
-        PgNamespace -> [OidColumn (tableNoAlias PgAuthId) "nspowner", "nspacl"]
+        PgNamespace ->
+            [ OidColumn (tableNoAlias PgAuthId) "nspowner"
+            , AclItemsColumn at "nspacl"
+            ]
         PgClass ->
             let oidCols =
                     [ (PgType        , "reltype")
@@ -119,7 +122,6 @@ instance DbVersionHash Pg10 where
                     , "relforcerowsecurity"
                     , "relreplident"
                     , "relispartition"
-                    , "relacl"
                     , "reloptions"
                     , "relpartbound"
                     ]
@@ -130,6 +132,7 @@ instance DbVersionHash Pg10 where
                         )
                         oidCols
                     ++ map (RegularColumn at) otherCols
+                    ++ [AclItemsColumn at "relacl"]
         PgProc ->
             [ OidColumn (tableNoAlias PgAuthId)   "proowner"
             , OidColumn (tableNoAlias PgLanguage) "prolang"
@@ -152,7 +155,7 @@ instance DbVersionHash Pg10 where
             , "prosrc"
             , "probin"
             , "proconfig"
-            , "proacl"
+            , AclItemsColumn at "proacl"
             ]
         PgConstraint ->
             [ "contype"
@@ -203,7 +206,7 @@ instance DbVersionHash Pg10 where
             , "attislocal"
             , "attinhcount"
             , OidColumn (tableNoAlias PgCollation) "attcollation"
-            , "attacl"
+            , AclItemsColumn at "attacl"
             , "attoptions"
             , "attfdwoptions"
             , "attnum"
@@ -287,7 +290,7 @@ instance DbVersionHash Pg10 where
             let pgClassAliased = CatTableAliased PgClass "pg_class_idx_table"
             in  [ JoinTable "indexrelid" (tableNoAlias PgClass)
                 , JoinTable "indrelid"   pgClassAliased
-                    -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
+                            -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
                 , JoinTableFull
                     (tableNoAlias PgNamespace)
                     [ ( RegularColumn pgClassAliased             "relnamespace"
