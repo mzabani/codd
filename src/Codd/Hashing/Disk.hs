@@ -47,7 +47,8 @@ import           UnliftIO.Directory             ( copyFile
 readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
 readAllHashes dir =
     DbHashes
-        <$> readMultiple (dir </> "schemas") readSchemaHash
+        <$> readFileAsHash (dir </> "db-settings")
+        <*> readMultiple (dir </> "schemas") readSchemaHash
         <*> readMultiple (dir </> "roles")   (simpleObjHashFileRead RoleHash)
 readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaHash
 readSchemaHash dir =
@@ -114,8 +115,9 @@ concatReaders :: (MonadError Text m, MonadIO m, Monoid s) => [m s] -> m s
 concatReaders readers = mconcat <$> sequenceA readers
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
-toFiles (DbHashes (Map.elems -> schemas) (Map.elems -> roles)) =
-    concatMap objToFiles $ map DbObject schemas ++ map DbObject roles
+toFiles (DbHashes dbSettingsHash (Map.elems -> schemas) (Map.elems -> roles)) =
+    ("db-settings", dbSettingsHash)
+        : concatMap objToFiles (map DbObject schemas ++ map DbObject roles)
   where
     objToFiles :: DbObject -> [(FilePath, ObjHash)]
     objToFiles obj =
@@ -134,7 +136,7 @@ persistHashesToDisk dbHashes dir = do
     createDirectoryIfMissing False tempDir
     forM_ (nubOrd $ map fst $ toFiles dbHashes) $ \filepath ->
         createDirectoryIfMissing True (tempDir </> takeDirectory filepath)
-    forM_ (toFiles dbHashes) $ \(filepath, (ObjHash filecontents)) ->
+    forM_ (toFiles dbHashes) $ \(filepath, ObjHash filecontents) ->
         liftIO $ writeFile (tempDir </> filepath) filecontents
 
     -- If the directory doesn't exist, we should simply ignore it

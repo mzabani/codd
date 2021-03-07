@@ -11,7 +11,9 @@ import           Codd.Analysis                  ( DestructiveSectionCheck(..)
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
-import           Codd.Hashing.Types             ( DbHashes(..) )
+import           Codd.Hashing.Types             ( DbHashes(..)
+                                                , ObjHash(..)
+                                                )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -114,7 +116,8 @@ spec = do
 
                 it "Bogus on-disk hashes makes applying migrations fail"
                     $ \emptyTestDbInfo -> do
-                          let bogusDbHashes = DbHashes Map.empty Map.empty
+                          let bogusDbHashes =
+                                  DbHashes (ObjHash "") Map.empty Map.empty
                           void @IO $ do
                               runStdoutLoggingT
                                       (applyMigrations

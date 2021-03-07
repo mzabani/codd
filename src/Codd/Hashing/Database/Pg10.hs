@@ -22,6 +22,10 @@ tableNoAlias t = CatTableAliased t (pgTableName t)
 instance DbVersionHash Pg10 where
     type CatTable Pg10 = CatalogTable
     hashableObjCatalogTable = \case
+        HDatabaseSettings ->
+            ( tableNoAlias PgDatabase
+            , Just "pg_database.datname = current_database()"
+            )
         HSchema -> (tableNoAlias PgNamespace, Nothing)
         HTable ->
             (tableNoAlias PgClass, Just "pg_class.relkind IN ('r', 'f', 'p')")
@@ -41,6 +45,7 @@ instance DbVersionHash Pg10 where
         HPolicy -> (tableNoAlias PgPolicy, Nothing)
 
     tableName (CatTableAliased tbl _) = case tbl of
+        PgDatabase     -> "pg_database"
         PgNamespace    -> "pg_namespace"
         PgClass        -> "pg_class"
         PgProc         -> "pg_proc"
@@ -60,6 +65,7 @@ instance DbVersionHash Pg10 where
         PgViews        -> "pg_views"
 
     fqObjNameCol at@(CatTableAliased t _) = case t of
+        PgDatabase     -> RegularColumn at "datname"
         PgNamespace    -> RegularColumn at "nspname"
         PgClass        -> RegularColumn at "relname"
         PgProc         -> RegularColumn at "proname"
@@ -81,6 +87,7 @@ instance DbVersionHash Pg10 where
 
     fqTableIdentifyingCols at@(CatTableAliased t _) =
         fqObjNameCol at : case t of
+            PgDatabase   -> []
             PgNamespace  -> []
             PgClass      -> []
             PgProc       -> [OidArrayColumn (tableNoAlias PgType) "proargtypes"]
@@ -103,7 +110,12 @@ instance DbVersionHash Pg10 where
             PgViews        -> []
 
     hashingColsOf at@(CatTableAliased t _) = case t of
-        PgNamespace -> [OidColumn (tableNoAlias PgAuthId) "nspowner", "nspacl"]
+        PgDatabase -> PureSqlExpression "pg_encoding_to_char(encoding)"
+            : map (RegularColumn at) ["datcollate", "datctype"]
+        PgNamespace ->
+            [ OidColumn (tableNoAlias PgAuthId) "nspowner"
+            , AclItemsColumn at "nspacl"
+            ]
         PgClass ->
             let oidCols =
                     [ (PgType        , "reltype")
@@ -119,7 +131,6 @@ instance DbVersionHash Pg10 where
                     , "relforcerowsecurity"
                     , "relreplident"
                     , "relispartition"
-                    , "relacl"
                     , "reloptions"
                     , "relpartbound"
                     ]
@@ -130,6 +141,7 @@ instance DbVersionHash Pg10 where
                         )
                         oidCols
                     ++ map (RegularColumn at) otherCols
+                    ++ [AclItemsColumn at "relacl"]
         PgProc ->
             [ OidColumn (tableNoAlias PgAuthId)   "proowner"
             , OidColumn (tableNoAlias PgLanguage) "prolang"
@@ -152,7 +164,7 @@ instance DbVersionHash Pg10 where
             , "prosrc"
             , "probin"
             , "proconfig"
-            , "proacl"
+            , AclItemsColumn at "proacl"
             ]
         PgConstraint ->
             [ "contype"
@@ -203,7 +215,7 @@ instance DbVersionHash Pg10 where
             , "attislocal"
             , "attinhcount"
             , OidColumn (tableNoAlias PgCollation) "attcollation"
-            , "attacl"
+            , AclItemsColumn at "attacl"
             , "attoptions"
             , "attfdwoptions"
             , "attnum"
@@ -287,7 +299,7 @@ instance DbVersionHash Pg10 where
             let pgClassAliased = CatTableAliased PgClass "pg_class_idx_table"
             in  [ JoinTable "indexrelid" (tableNoAlias PgClass)
                 , JoinTable "indrelid"   pgClassAliased
-                    -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
+                                                -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
                 , JoinTableFull
                     (tableNoAlias PgNamespace)
                     [ ( RegularColumn pgClassAliased             "relnamespace"

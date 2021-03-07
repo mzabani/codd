@@ -1,17 +1,24 @@
 module DbUtils where
 
 import           Codd                           ( withDbAndDrop )
-import           Codd.Environment               ( CoddSettings(..) )
+import           Codd.Environment               ( CoddSettings(..)
+                                                , superUserInAppDatabaseConnInfo
+                                                )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
                                                 , parseSqlPieces
                                                 )
+import           Codd.Query                     ( execvoid_
+                                                , query
+                                                )
 import           Codd.Types                     ( DeploymentWorkflow(..)
                                                 , Include(..)
                                                 )
+import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( NominalDiffTime
@@ -98,12 +105,37 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     coddSettings <- testCoddSettings startingMigs
     runStdoutLoggingT $ withDbAndDrop coddSettings $ \_ ->
         liftIO (act coddSettings) `finally` withConnection
-            (superUserConnString coddSettings)
-                    -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB instance. So we reset these things here, always.
-            (\conn -> liftIO $ DB.execute
-                conn
-                "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; DROP ROLE IF EXISTS \"extra-codd-test-user\";"
-                ()
+            (superUserInAppDatabaseConnInfo coddSettings)
+                        -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB/postgres instance.
+                        -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
+                        -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
+            (\conn -> do
+                execvoid_
+                    conn
+                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL;"
+                allRoles :: [String] <-
+                    map DB.fromOnly
+                        <$> query
+                                conn
+                                "SELECT rolname FROM pg_roles WHERE rolname NOT IN ('postgres') AND rolname NOT LIKE 'pg_%' ORDER BY rolname DESC"
+                                ()
+                forM_ allRoles $ \role -> do
+                    let escapedRole = fromString ("\"" <> role <> "\"")
+                    execvoid_ conn
+                        $  "DROP OWNED BY "
+                        <> escapedRole
+                        -- <> "; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "
+                        -- <> escapedRole
+                        -- <> "; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "
+                        -- <> escapedRole
+                        -- <> "; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "
+                        -- <> escapedRole
+                        -- <> "; REVOKE ALL ON SCHEMA public FROM "
+                        -- <> escapedRole
+                        -- <> "; REVOKE ALL ON DATABASE \"codd-test-db\" FROM "
+                        -- <> escapedRole
+                        <> "; DROP ROLE "
+                        <> escapedRole
             )
 
 -- | Returns a Postgres UTC Timestamp that increases with its input parameter.
