@@ -46,6 +46,7 @@ import           Data.Typeable
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.ToField
                                                as DB
+import           Debug.Trace                    ( traceShowId )
 import           GHC.Stack                      ( HasCallStack )
 import           Haxl.Core
 import           UnliftIO                       ( MonadIO(..)
@@ -93,7 +94,11 @@ instance DataSource HaxlEnv HashReq where
     getResultsGroupedPerIdx
       :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, ObjHash)]
     getResultsGroupedPerIdx qip =
-      let qf = queryInPiecesToQueryFrag qip <> "\n ORDER BY artificial_idx"
+      let
+        qf =
+          traceShowId
+            $  queryInPiecesToQueryFrag qip
+            <> "\n ORDER BY artificial_idx"
       in  NE.groupWith fst3 <$> withQueryFrag qf (DB.query conn)
 
     mergeResults
@@ -166,11 +171,14 @@ instance DataSource HaxlEnv HashReq where
                                       of
                                         [] -> Nothing
                                         fs -> Just $ interspBy True " OR " fs
+                , groupByExprs      = Just $ maybe "artificial_idx"
+                                                   (<> ", artificial_idx")
+                                                   (groupByExprs (qp x))
                 }
           in  (finalQip, sffs)
 
       forM_ queriesPerFormat $ \(qip, sffs) -> do
-        -- print qip
+        print qip
         allResults <- getResultsGroupedPerIdx qip
         -- print allResults
         let mergedResults = mergeResults
@@ -351,6 +359,7 @@ data QueryInPieces = QueryInPieces
   , joinClauses         :: QueryFrag
   , nonIdentifyingWhere :: Maybe QueryFrag
   , identifyingWheres   :: Maybe QueryFrag
+  , groupByExprs        :: Maybe QueryFrag
   }
   deriving Show
 queryObjNamesAndHashesQuery
@@ -366,11 +375,16 @@ queryObjNamesAndHashesQuery (PgVersion (_ :: a)) hobj allRoles getJoinTables =
   fullQuery
  where
   fullQuery = QueryInPieces
-    (objNameCol <> " AS obj_name, " <> hashProjection objTbl allRoles)
+    (  objNameCol
+    <> " AS obj_name, MD5(ARRAY_TO_STRING(ARRAY_AGG("
+    <> hashProjection objTbl allRoles
+    <> "), ';'))"
+    )
     (tableNameAndAlias objTbl)
     joins
     (unWhereFilter <$> nonIdWhere)
     idWheres
+    (Just "obj_name")
   (objTbl :: CatTableAliased a, nonIdWhere) = hashableObjCatalogTable hobj
   objNameCol               = concatenatedIdentityColsOfInContext objTbl
   (joinTbls, whereFilters) = getJoinTables @a
@@ -405,12 +419,12 @@ queryInPiecesToQueryFrag :: QueryInPieces -> QueryFrag
 queryInPiecesToQueryFrag QueryInPieces {..} =
   "SELECT "
     <> selectExprs
-    <> " FROM "
+    <> "\n FROM "
     <> fromTbl
     <> "\n"
     <> joinClauses
-    <> "\n"
-    <> maybe "" ("WHERE " <>) allWhere
+    <> maybe "" ("\n WHERE " <>)    allWhere
+    <> maybe "" ("\n GROUP BY " <>) groupByExprs
  where
   allWhere = case (nonIdentifyingWhere, identifyingWheres) of
     (Nothing, Nothing) -> Nothing
