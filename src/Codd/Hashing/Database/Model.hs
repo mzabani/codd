@@ -149,3 +149,13 @@ mapCatTableCol f = \case
 -- deriving instance Show a => Show (CatalogTableColumn a)
 instance IsString (CatalogTableColumn a) where
   fromString s = PureSqlExpression $ QueryFrag (fromString s) ()
+
+data HashQuery = HashQuery
+  { objNameCol    :: QueryFrag
+  , checksumCols  :: [QueryFrag]
+  , fromTable     :: QueryFrag
+  , joins         :: QueryFrag
+  , nonIdentWhere :: Maybe QueryFrag
+  , identWhere    :: Maybe QueryFrag
+  , groupByCols   :: [QueryFrag]
+  }

@@ -8,6 +8,7 @@ import           Codd.Hashing.Database.Model    ( (<<>)
                                                 , CatalogTableColumn(..)
                                                 , ColumnComparison(..)
                                                 , DbVersionHash(..)
+                                                , HashQuery(..)
                                                 , JoinTable(..)
                                                 , QueryFrag(..)
                                                 , ToQueryFrag(..)
@@ -16,9 +17,15 @@ import           Codd.Hashing.Database.Model    ( (<<>)
                                                 , tableNameAndAlias
                                                 , withQueryFrag
                                                 )
-import           Codd.Hashing.Database.Pg10     ( Pg10(..) )
+import           Codd.Hashing.Database.Pg10     ( Pg10(..)
+                                                , hashQueryFor
+                                                )
 import           Codd.Hashing.Database.Pg11     ( Pg11(..) )
 import           Codd.Hashing.Database.Pg12     ( Pg12(..) )
+import           Codd.Hashing.Database.SqlGen   ( includeSql
+                                                , interspBy
+                                                , parens
+                                                )
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( Include(..)
@@ -44,8 +51,6 @@ import           Data.Text                      ( Text )
 import           Data.Traversable               ( for )
 import           Data.Typeable
 import qualified Database.PostgreSQL.Simple    as DB
-import qualified Database.PostgreSQL.Simple.ToField
-                                               as DB
 import           Debug.Trace                    ( traceShowId )
 import           GHC.Stack                      ( HasCallStack )
 import           Haxl.Core
@@ -57,25 +62,49 @@ data HashReq a where
   GetHashesReq ::HashableObject -> [ObjName] -> (forall b. DbVersionHash b => [ColumnComparison b]) -> HashReq [(ObjName, ObjHash)]
   deriving stock (Typeable)
 
+data HashReq2 a where
+  GetHashesReq2 ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq2 [(ObjName, ObjHash)]
+  deriving stock (Typeable)
+
 instance Eq (HashReq a) where
   GetHashesReq hobj1 ids1 _ == GetHashesReq hobj2 ids2 _ =
     hobj1 == hobj2 && ids1 == ids2
+
+instance Eq (HashReq2 a) where
+  GetHashesReq2 hobj1 sn1 tn1 == GetHashesReq2 hobj2 sn2 tn2 =
+    (hobj1, sn1, tn1) == (hobj2, sn2, tn2)
+
 instance Hashable (HashReq a) where
   hashWithSalt s (GetHashesReq hobj identifyingNames _) =
     hashWithSalt s (hobj, identifyingNames)
 
+instance Hashable (HashReq2 a) where
+  hashWithSalt s (GetHashesReq2 hobj sn tn) = hashWithSalt s (hobj, sn, tn)
+
 instance Show (HashReq a) where
   show (GetHashesReq hobj ids _) = "GetHashesReq: " ++ show (hobj, ids)
+
+instance Show (HashReq2 a) where
+  show (GetHashesReq2 hobj sn tn) = "GetHashesReq: " ++ show (hobj, sn, tn)
 instance ShowP HashReq where
+  showp = show
+
+instance ShowP HashReq2 where
   showp = show
 
 instance StateKey HashReq where
   data State HashReq = UserState {}
 
+instance StateKey HashReq2 where
+  data State HashReq2 = UserState2 {}
+
 instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
-type HaxlEnv = (PgVersion, DB.Connection, Include SqlRole)
+instance DataSourceName HashReq2 where
+  dataSourceName _ = "CatalogHashSource"
+
+type HaxlEnv = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole)
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
@@ -86,19 +115,23 @@ data SameQueryFormatFetch = SameQueryFormatFetch
   , rvar      :: ResultVar [(ObjName, ObjHash)]
   }
 
+data SameQueryFormatFetch2 = SameQueryFormatFetch2
+  { uniqueIdx2 :: Int
+  , hobj2      :: HashableObject
+  , ids2       :: (Maybe ObjName, Maybe ObjName)
+  , qp2        :: HashQuery
+  , rvar2      :: ResultVar [(ObjName, ObjHash)]
+  }
+
 instance DataSource HaxlEnv HashReq where
-  fetch _ _ (pgVer, conn, allRoles) = SyncFetch combineQueriesWithWhere
+  fetch _ _ (pgVer, conn, _, allRoles) = SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
 
     getResultsGroupedPerIdx
       :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, ObjHash)]
     getResultsGroupedPerIdx qip =
-      let
-        qf =
-          traceShowId
-            $  queryInPiecesToQueryFrag qip
-            <> "\n ORDER BY artificial_idx"
+      let qf = queryInPiecesToQueryFrag qip <> "\n ORDER BY artificial_idx"
       in  NE.groupWith fst3 <$> withQueryFrag qf (DB.query conn)
 
     mergeResults
@@ -178,11 +211,123 @@ instance DataSource HaxlEnv HashReq where
           in  (finalQip, sffs)
 
       forM_ queriesPerFormat $ \(qip, sffs) -> do
-        print qip
+        -- print qip
         allResults <- getResultsGroupedPerIdx qip
         -- print allResults
         let mergedResults = mergeResults
               (map (\sff -> (uniqueIdx sff, rvar sff)) $ NE.toList sffs)
+              allResults
+        forM_ mergedResults $ uncurry putSuccess
+
+instance DataSource HaxlEnv HashReq2 where
+  fetch _ _ (pgVer, conn, allSchemas, allRoles) = SyncFetch
+    combineQueriesWithWhere
+   where
+    fst3 (a, _, _) = a
+
+    getResultsGroupedPerIdx
+      :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, ObjHash)]
+    getResultsGroupedPerIdx qip =
+      let qf = queryInPiecesToQueryFrag qip <> "\n ORDER BY artificial_idx"
+      in  NE.groupWith fst3 <$> withQueryFrag qf (DB.query conn)
+
+    mergeResults
+      :: [(Int, ResultVar [(ObjName, ObjHash)])]
+      -> [NE.NonEmpty (Int, ObjName, ObjHash)]
+      -> [(ResultVar [(ObjName, ObjHash)], [(ObjName, ObjHash)])]
+    mergeResults [] [] = []
+    mergeResults [] _ =
+      error "Empty idx list but non empty results in mergeResults"
+    mergeResults (i : is) [] = (snd i, []) : mergeResults is []
+    mergeResults (i : is) (r : rs) =
+      let idx          = fst i
+          (ridx, _, _) = NE.head r
+          rvar         = snd i
+      in  if idx < ridx
+            then (rvar, []) : mergeResults is (r : rs)
+            else if idx == ridx
+              then
+                (rvar, map (\(_, n, h) -> (n, h)) $ NE.toList r)
+                  : mergeResults is rs
+              else error "idx > ridx in mergeResults"
+
+    -- This is a different batching mechanism, which will `OR` the conditions for queries with the same
+    -- HashableObject, because they have the same SELECT, FROM and JOINs. Then, prepend an increasing number to the select exprs
+    -- which is 1 if the first "WHERE expression" is True, 2 when the second is True, 3 for the third and so on..
+    -- Hopefully it'll all just turn into a big sequential scan, so we'll have one sequential scan for tables,
+    -- one for views, one for triggers and so on..
+    combineQueriesWithWhere blockedFetches = do
+      let
+        allHashReqs :: [SameQueryFormatFetch2]
+        allHashReqs = zipWith
+          (\i (a, b, c, d) -> SameQueryFormatFetch2 i a b c d)
+          [1 ..]
+          [ ( hobj
+            , (schemaName, tblName)
+            -- TODO: hashQueryFor that depends on DB version
+            , hashQueryFor allRoles allSchemas schemaName tblName hobj
+            , r
+            )
+          | BlockedFetch (GetHashesReq2 hobj schemaName tblName) r <-
+            blockedFetches
+          ]
+
+        fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch2]
+        fetchesPerQueryFormat = NE.groupAllWith hobj2 allHashReqs
+
+        queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch2)]
+        queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
+          let
+            -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
+            finalHashExpr =
+              "MD5("
+                <> interspBy False " || " (map coalesce (checksumCols (qp2 x)))
+                <> ")"
+            coalesce expr =
+              "CASE WHEN "
+                <> expr
+                <> " IS NULL THEN '' ELSE '_' || ("
+                <> expr
+                <> ")::TEXT END"
+            finalQip = QueryInPieces
+              { selectExprs         = "CASE "
+                                      <> foldMap
+                                           (\qip ->
+                                             "\n WHEN "
+                                               <> fromMaybe "TRUE"
+                                                            (identWhere (qp2 qip))
+                                               <> QueryFrag " THEN ?"
+                                                            (DB.Only (uniqueIdx2 qip))
+                                           )
+                                           sffs
+                                      <> " END AS artificial_idx, "
+                                      <> objNameCol (qp2 x)
+                                      <> ", "
+                                      <> finalHashExpr
+              , fromTbl             = fromTable (qp2 x)
+              , joinClauses         = joins (qp2 x)
+              , nonIdentifyingWhere = nonIdentWhere (qp2 x)
+              , identifyingWheres   = case
+                                        mapMaybe (identWhere . qp2)
+                                          $ NE.toList sffs
+                                      of
+                                        [] -> Nothing
+                                        fs -> Just $ interspBy True " OR " fs
+              , groupByExprs        = if null (groupByCols (qp2 x))
+                then Nothing
+                else
+                  Just $ interspBy False ", " $ "artificial_idx" : groupByCols
+                    (qp2 x)
+              }
+          in
+            (finalQip, sffs)
+
+      forM_ queriesPerFormat $ \(qip, sffs) -> do
+        -- print qip
+        allResults <- getResultsGroupedPerIdx qip
+        -- print allResults
+        let mergedResults = mergeResults
+              (map (\sff -> (uniqueIdx2 sff, rvar2 sff)) $ NE.toList sffs)
               allResults
         forM_ mergedResults $ uncurry putSuccess
 
@@ -300,7 +445,7 @@ hashProjection objTable allRoles =
       -- NOTE: It is not clear what being a grantor means, so we remain open
       -- to having to include 
       hashExpr
-      $ "(SELECT ARRAY_AGG(grantee_role.rolname || ';' || privilege_type || ';' || is_grantable ORDER BY COALESCE(grantee_role.rolname, ''), privilege_type, is_grantable) FROM (SELECT "
+      $ "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) FROM (SELECT "
       <> acls
       <> ".grantee, "
       <> acls
@@ -330,28 +475,6 @@ hashProjection objTable allRoles =
             <<> ") WITH ORDINALITY s(elem, idx) ON "
             <>  RegularColumn otherTbl "oid"
             <<> "=s.elem)"
-
-interspBy :: Bool -> QueryFrag -> [QueryFrag] -> QueryFrag
-interspBy _  _ []  = ""
-interspBy ps _ [c] = if ps then parens c else c
-interspBy ps sep (c : cs) =
-  (if ps then parens c else c) <> sep <> interspBy ps sep cs
-
-parens :: QueryFrag -> QueryFrag
-parens q = "(" <> q <> ")"
-
--- | Generates an "IN" or "NOT IN" for the supplied table's object's name column.
-includeSql :: DB.ToField b => Include b -> QueryFrag -> QueryFrag
-includeSql inc sqlexpr = case inc of
-  Include [] -> "FALSE"
-  Exclude [] -> "TRUE"
-  Exclude objNames ->
-    sqlexpr <> QueryFrag " NOT IN ?" (DB.Only $ DB.In objNames)
-  Include objNames -> sqlexpr <> QueryFrag " IN ?" (DB.Only $ DB.In objNames)
-  IncludeExclude incNames excNames ->
-    includeSql (Include incNames) sqlexpr
-      <> " AND "
-      <> includeSql (Exclude excNames) sqlexpr
 
 data QueryInPieces = QueryInPieces
   { selectExprs         :: QueryFrag
@@ -485,8 +608,9 @@ readHashesFromDatabase
   -> Include SqlRole
   -> m DbHashes
 readHashesFromDatabase pgVer conn allSchemas allRoles = do
-  let stateStore = stateSet UserState{} stateEmpty
-  env0 <- liftIO $ initEnv stateStore (pgVer, conn, allRoles)
+  let stateStore =
+        stateSet UserState{} stateEmpty <> stateSet UserState2{} stateEmpty
+  env0 <- liftIO $ initEnv stateStore (pgVer, conn, allSchemas, allRoles)
   liftIO $ runHaxl env0 $ do
     allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings [] []
     roles <- dataFetch $ GetHashesReq HRole [] (filtersForRoles allRoles)
@@ -504,18 +628,10 @@ readHashesFromDatabase pgVer conn allSchemas allRoles = do
 getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)
 getSchemaHash schemas =
   fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
-    tables <- dataFetch
-      $ GetHashesReq HTable [schemaName] (underSchemaFilter HTable schemaName)
-    views <- dataFetch
-      $ GetHashesReq HView [schemaName] (underSchemaFilter HView schemaName)
-    routines <- dataFetch $ GetHashesReq
-      HRoutine
-      [schemaName]
-      (underSchemaFilter HRoutine schemaName)
-    sequences <- dataFetch $ GetHashesReq
-      HSequence
-      [schemaName]
-      (underSchemaFilter HSequence schemaName)
+    tables      <- dataFetch $ GetHashesReq2 HTable (Just schemaName) Nothing
+    views       <- dataFetch $ GetHashesReq2 HView (Just schemaName) Nothing
+    routines    <- dataFetch $ GetHashesReq2 HRoutine (Just schemaName) Nothing
+    sequences   <- dataFetch $ GetHashesReq2 HSequence (Just schemaName) Nothing
 
     tableHashes <- getTablesHashes schemaName tables
     let allObjs =
@@ -528,22 +644,19 @@ getSchemaHash schemas =
 
 getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [SchemaObjectHash]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
-  columns <- dataFetch $ GetHashesReq
-    HColumn
-    [schemaName, tblName]
-    (underTableFilter HColumn schemaName tblName)
-  constraints <- dataFetch $ GetHashesReq
-    HTableConstraint
-    [schemaName, tblName]
-    (underTableFilter HTableConstraint schemaName tblName)
+  columns <- dataFetch $ GetHashesReq2 HColumn (Just schemaName) (Just tblName)
+  constraints <- dataFetch
+    $ GetHashesReq2 HTableConstraint (Just schemaName) (Just tblName)
   triggers <- dataFetch $ GetHashesReq
     HTrigger
     [schemaName, tblName]
     (underTableFilter HTrigger schemaName tblName)
-  policies <- dataFetch $ GetHashesReq
-    HPolicy
-    [schemaName, tblName]
-    (underTableFilter HPolicy schemaName tblName)
+  policies2 <- dataFetch
+    $ GetHashesReq2 HPolicy (Just schemaName) (Just tblName)
+  -- policies <- dataFetch $ GetHashesReq
+  --   HPolicy
+  --   [schemaName, tblName]
+  --   (underTableFilter HPolicy schemaName tblName)
   indexes <- dataFetch $ GetHashesReq
     HIndex
     [schemaName, tblName]
@@ -553,5 +666,5 @@ getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
                    (listToMap $ map (uncurry TableColumn) columns)
                    (listToMap $ map (uncurry TableConstraint) constraints)
                    (listToMap $ map (uncurry TableTrigger) triggers)
-                   (listToMap $ map (uncurry TablePolicy) policies)
+                   (listToMap $ map (uncurry TablePolicy) policies2)
                    (listToMap $ map (uncurry TableIndex) indexes)

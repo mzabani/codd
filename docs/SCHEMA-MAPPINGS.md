@@ -173,9 +173,8 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-proc.html
 
 ### Columns included
 
-OidColumn PgAuthId "proowner",  
-OidColumn PgLanguage "prolang",  
-OidColumn PgType "provariadic",  
+"proowner",  
+"prolang",  
 "prokind",  
 "prosecdef",  
 "proleakproof",  
@@ -185,15 +184,12 @@ OidColumn PgType "provariadic",
 "proparallel",  
 "pronargs",  
 "pronargdefaults",  
-OidColumn PgType "prorettype",  
-OidArrayColumn PgType "proargtypes",  
-OidArrayColumn PgType "proallargtypes",  
+"prorettype",  
+"proargtypes",  
+"prosrc", but only when the language of the function is NOT internal  
 "proargmodes",  
 "proargnames",  
 "proargdefaults",  
-OidArrayColumn PgType "protrftypes",  
-"prosrc",  
-"probin",  
 "proconfig",  
 "proacl"  
 
@@ -204,6 +200,11 @@ OidArrayColumn PgType "protrftypes",
 - pronamespace  
 - procost  
 - prorows  
+- provariadic  
+- proallargtypes  
+- protrftypes  
+- prosrc, but only when the language of the function is internal
+- probin (ignored because of linked symbols might differ across machines?)  
 
 ## Constraints
 
