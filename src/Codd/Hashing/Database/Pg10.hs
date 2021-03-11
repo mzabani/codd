@@ -23,8 +23,7 @@ aclArrayTbl allRoles aclArrayIdentifier =
       -- Grantee 0 is PUBLIC, which we always want to include.
       -- NOTE: It is not clear what being a grantor means, so we remain open
       -- to having to include 
-      -- TODO: Is ARRAY_TO_STRING necessary?
-        "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions_string FROM (SELECT "
+        "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions FROM (SELECT "
         <> acls
         <> ".grantee, "
         <> acls
@@ -51,6 +50,11 @@ oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl hashExpr =
         <> "."
         <> oidColInJoinedTbl
         <> " = s._oid)"
+
+-- | Receives a SQL expression that is an array and returns a SQL expression that is that array, sorted.
+sortArrayExpr :: QueryFrag -> QueryFrag
+sortArrayExpr col =
+    "(select array_agg(x.* order by x.*) from unnest(" <> col <> ") x)"
 
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
@@ -79,7 +83,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relispartition"
                       , "pg_class.reloptions"
                       , "pg_class.relpartbound"
-                      , "_codd_roles.permissions_string"
+                      , "_codd_roles.permissions"
                       ]
     , fromTable     = "pg_catalog.pg_class"
     , joins         =
@@ -120,7 +124,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         }
     HSchema -> HashQuery
         { objNameCol    = "nspname"
-        , checksumCols = ["nsp_owner.rolname", "_codd_roles.permissions_string"]
+        , checksumCols  = ["nsp_owner.rolname", "_codd_roles.permissions"]
         , fromTable     = "pg_catalog.pg_namespace"
         , joins         =
             "JOIN pg_catalog.pg_authid AS nsp_owner ON nsp_owner.oid=pg_namespace.nspowner"
@@ -140,7 +144,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "rolcanlogin"
                           , "rolreplication"
                           , "rolbypassrls"
-                          , "rolconfig"
+                          , sortArrayExpr "rolconfig"
                           , "_codd_roles.permissions"
                           ]
         , fromTable     = "pg_catalog.pg_roles"
@@ -247,8 +251,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 , "proargmodes"
                 , "proargnames"
                 , "proargdefaults"
-                , "proconfig"
-                , "_codd_roles.permissions_string"
+                , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
+                , "_codd_roles.permissions"
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
                 -- is compiled, so we ignore this column in those cases.
                 -- Note that this means that functions with different implementations could be considered equal,
@@ -297,7 +301,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attoptions"
             , "attfdwoptions"
             , "attnum"
-            , "_codd_roles.permissions_string"
+            , "_codd_roles.permissions"
             ]
         , fromTable     = "pg_catalog.pg_attribute"
         , joins         =
