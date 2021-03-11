@@ -1,19 +1,9 @@
 module Codd.Hashing.Database.Pg10
-    ( Pg10(..)
-    , CatalogTable(..)
-    , hashQueryFor
+    ( hashQueryFor
     ) where
 
-import           Codd.Hashing.Database.Model    ( CatTable(..)
-                                                , CatTableAliased(..)
-                                                , CatalogTable(..)
-                                                , CatalogTableColumn(..)
-                                                , ColumnComparison(..)
-                                                , DbVersionHash(..)
-                                                , HashQuery(..)
-                                                , JoinTable(..)
+import           Codd.Hashing.Database.Model    ( HashQuery(..)
                                                 , QueryFrag(..)
-                                                , pgTableName
                                                 )
 import           Codd.Hashing.Database.SqlGen   ( includeSql )
 import           Codd.Hashing.Types             ( HashableObject(..)
@@ -24,12 +14,6 @@ import           Codd.Types                     ( Include
                                                 , SqlSchema
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
-data Pg10 = Pg10
-
-tableNoAlias :: CatalogTable -> CatTableAliased Pg10
-tableNoAlias t = CatTableAliased t (pgTableName t)
-
-
 
 aclArrayTbl :: Include SqlRole -> QueryFrag -> QueryFrag
 aclArrayTbl allRoles aclArrayIdentifier =
@@ -70,8 +54,9 @@ oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl hashExpr =
 
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
-pgOperatorNameTbl :: QueryFrag
-pgOperatorNameTbl =
+-- We still don't use it, but it might become useful in the future.
+_pgOperatorNameTbl :: QueryFrag
+_pgOperatorNameTbl =
     "(SELECT oid, (oprname || ';' || typleft.typname || '_' || typright.typname || '_' || typret.typname) AS op_full_name"
         <> "\n FROM pg_operator"
         <> "\n JOIN pg_type typleft ON oprleft=typleft.oid"
@@ -318,38 +303,31 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
     HTableConstraint -> HashQuery
-        { objNameCol = "conname || COALESCE(';' || pg_domain_type.typname, '')"
-        , checksumCols  = [ "contype"
-                          , "condeferrable"
-                          , "condeferred"
-                          , "convalidated"
+        { objNameCol    =
+            "pg_constraint.conname || COALESCE(';' || pg_domain_type.typname, '')"
+        , checksumCols  = [ "pg_constraint.contype"
+                          , "pg_constraint.condeferrable"
+                          , "pg_constraint.condeferred"
+                          , "pg_constraint.convalidated"
                           , "pg_class_ind.relname"
                           , "pg_class_frel.relname"
-                          , "confupdtype"
-                          , "confdeltype"
-                          , "confmatchtype"
-                          , "conislocal"
-                          , "coninhcount"
-                          , "connoinherit"
-                          , "conkey"
-                          , "confkey"
-            -- , OidArrayColumn (tableNoAlias PgOperator) "conpfeqop"
-            -- , OidArrayColumn (tableNoAlias PgOperator) "conppeqop"
-            -- , OidArrayColumn (tableNoAlias PgOperator) "conffeqop"
-            -- , OidArrayColumn (tableNoAlias PgOperator) "conexclop"
+                          , "pg_constraint.confupdtype"
+                          , "pg_constraint.confdeltype"
+                          , "pg_constraint.confmatchtype"
+                          , "pg_constraint.conislocal"
+                          , "pg_constraint.coninhcount"
+                          , "pg_constraint.connoinherit"
+                          , "pg_constraint.conkey"
+                          , "pg_constraint.confkey"
                           , "pg_get_constraintdef(pg_constraint.oid)"
                           ]
         , fromTable     = "pg_catalog.pg_constraint"
         , joins         =
-            "JOIN pg_catalog.pg_class ON pg_class.oid=conrelid"
+            "JOIN pg_catalog.pg_class ON pg_class.oid=pg_constraint.conrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_class.relnamespace"
             <> "\nLEFT JOIN pg_catalog.pg_type pg_domain_type ON pg_domain_type.oid=pg_constraint.contypid"
             <> "\nLEFT JOIN pg_catalog.pg_class pg_class_ind ON pg_class_ind.oid=pg_constraint.conindid"
             <> "\nLEFT JOIN pg_catalog.pg_class pg_class_frel ON pg_class_frel.oid=pg_constraint.confrelid"
-                -- <> "\nLEFT JOIN LATERAL " <> oidArrayTbl "conpfeqop" "pg_operator" "oid" "oprname" <> " pfeqop ON TRUE"
-                -- <> "\nLEFT JOIN LATERAL " <> oidArrayTbl "conpfeqop" "pg_operator" "oid" "oprname" <> " pfeqop ON TRUE"
-                -- <> "\nLEFT JOIN LATERAL " <> oidArrayTbl "conpfeqop" "pg_operator" "oid" "oprname" <> " pfeqop ON TRUE"
-                -- <> "\nLEFT JOIN LATERAL " <> oidArrayTbl "conpfeqop" "pg_operator" "oid" "oprname" <> " pfeqop ON TRUE"
         , nonIdentWhere = Nothing
         , identWhere    = Just
                           $  "TRUE"
@@ -422,355 +400,3 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                  (DB.Only <$> tableName)
         , groupByCols   = []
         }
-
-    _ -> error "not implemented"
-
-instance DbVersionHash Pg10 where
-    type CatTable Pg10 = CatalogTable
-    hashableObjCatalogTable = \case
-        HDatabaseSettings ->
-            ( tableNoAlias PgDatabase
-            , Just "pg_database.datname = current_database()"
-            )
-        HSchema -> (tableNoAlias PgNamespace, Nothing)
-        HTable ->
-            (tableNoAlias PgClass, Just "pg_class.relkind IN ('r', 'f', 'p')")
-        HView     -> (tableNoAlias PgViews, Nothing)
-        HSequence -> (tableNoAlias PgSequence, Nothing)
-        HRoutine  -> (tableNoAlias PgProc, Nothing)
-        HColumn ->
-            ( tableNoAlias PgAttribute
-            , Just
-                "NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')"
-            )
-        HIndex           -> (tableNoAlias PgIndex, Nothing)
-        HTableConstraint -> (tableNoAlias PgConstraint, Nothing)
-        HTrigger ->
-            (tableNoAlias PgTrigger, Just "NOT pg_trigger.tgisinternal")
-        HRole   -> (tableNoAlias PgAuthId, Nothing)
-        HPolicy -> (tableNoAlias PgPolicy, Nothing)
-
-    tableName (CatTableAliased tbl _) = case tbl of
-        PgDatabase     -> "pg_database"
-        PgNamespace    -> "pg_namespace"
-        PgClass        -> "pg_class"
-        PgProc         -> "pg_proc"
-        PgConstraint   -> "pg_constraint"
-        PgAuthId       -> "pg_authid"
-        PgIndex        -> "pg_index"
-        PgLanguage     -> "pg_language"
-        PgType         -> "pg_type"
-        PgOperator     -> "pg_operator"
-        PgAttribute    -> "pg_attribute"
-        PgTrigger      -> "pg_trigger"
-        PgAccessMethod -> "pg_am"
-        PgCollation    -> "pg_collation"
-        PgPolicy       -> "pg_policy"
-        PgSequence     -> "pg_sequence"
-        PgRoleSettings -> "pg_db_role_setting"
-        PgViews        -> "pg_views"
-
-    fqObjNameCol at@(CatTableAliased t _) = case t of
-        PgDatabase     -> RegularColumn at "datname"
-        PgNamespace    -> RegularColumn at "nspname"
-        PgClass        -> RegularColumn at "relname"
-        PgProc         -> RegularColumn at "proname"
-        PgConstraint   -> RegularColumn at "conname"
-        PgAuthId       -> RegularColumn at "rolname"
-        PgIndex        -> RegularColumn (tableNoAlias PgClass) "relname"
-        PgLanguage     -> RegularColumn at "lanname"
-        PgType         -> RegularColumn at "typname"
-        PgOperator     -> RegularColumn at "oprname"
-        PgAttribute    -> RegularColumn at "attname"
-        PgTrigger      -> RegularColumn at "tgname"
-        PgAccessMethod -> RegularColumn at "amname"
-        PgCollation    -> RegularColumn at "collname"
-        PgPolicy       -> RegularColumn at "polname"
-        PgSequence     -> fqObjNameCol (tableNoAlias PgClass)
-        PgRoleSettings ->
-            error "at shouldn't be querying PgRoleSettings like this!"
-        PgViews -> RegularColumn at "viewname"
-
-    fqTableIdentifyingCols at@(CatTableAliased t _) =
-        fqObjNameCol at : case t of
-            PgDatabase   -> []
-            PgNamespace  -> []
-            PgClass      -> []
-            PgProc       -> [OidArrayColumn (tableNoAlias PgType) "proargtypes"]
-            PgConstraint -> [OidColumn (tableNoAlias PgType) "contypid"]
-            PgAuthId     -> []
-            PgIndex      -> []
-            PgLanguage   -> []
-            PgType       -> []
-            PgOperator ->
-                [ OidColumn (tableNoAlias PgType) "oprleft"
-                , OidColumn (tableNoAlias PgType) "oprright"
-                ]
-            PgAttribute    -> []
-            PgTrigger      -> []
-            PgAccessMethod -> []
-            PgCollation    -> ["collencoding"]
-            PgPolicy       -> []
-            PgSequence     -> []
-            PgRoleSettings -> []
-            PgViews        -> []
-
-    hashingColsOf at@(CatTableAliased t _) = case t of
-        PgDatabase -> PureSqlExpression "pg_encoding_to_char(encoding)"
-            : map (RegularColumn at) ["datcollate", "datctype"]
-        PgNamespace ->
-            [ OidColumn (tableNoAlias PgAuthId) "nspowner"
-            , AclItemsColumn at "nspacl"
-            ]
-        PgClass ->
-            let oidCols =
-                    [ (PgType        , "reltype")
-                    , (PgType        , "reloftype")
-                    , (PgAuthId      , "relowner")
-                    , (PgAccessMethod, "relam")
-                    ]
-                otherCols =
-                    [ "relisshared"
-                    , "relpersistence"
-                    , "relkind"
-                    , "relrowsecurity"
-                    , "relforcerowsecurity"
-                    , "relreplident"
-                    , "relispartition"
-                    , "reloptions"
-                    , "relpartbound"
-                    ]
-            in  map
-                        (\(tbl, col) -> OidColumn
-                            (tableNoAlias tbl)
-                            (RegularColumn (tableNoAlias PgClass) col)
-                        )
-                        oidCols
-                    ++ map (RegularColumn at) otherCols
-                    ++ [AclItemsColumn at "relacl"]
-        PgProc ->
-            [ OidColumn (tableNoAlias PgAuthId)   "proowner"
-            , OidColumn (tableNoAlias PgLanguage) "prolang"
-            , OidColumn (tableNoAlias PgType)     "provariadic"
-            , "prosecdef"
-            , "proleakproof"
-            , "proisstrict"
-            , "proretset"
-            , "provolatile"
-            , "proparallel"
-            , "pronargs"
-            , "pronargdefaults"
-            , OidColumn (tableNoAlias PgType) "prorettype"
-            , OidArrayColumn (tableNoAlias PgType) "proargtypes"
-            , OidArrayColumn (tableNoAlias PgType) "proallargtypes"
-            , "proargmodes"
-            , "proargnames"
-            , "proargdefaults"
-            , OidArrayColumn (tableNoAlias PgType) "protrftypes"
-            , "prosrc"
-            , "probin"
-            , "proconfig"
-            , AclItemsColumn at "proacl"
-            ]
-        PgConstraint ->
-            [ "contype"
-            , "condeferrable"
-            , "condeferred"
-            , "convalidated"
-            , OidColumn (tableNoAlias PgClass) "conrelid"
-            , OidColumn (tableNoAlias PgType)  "contypid"
-            , OidColumn (tableNoAlias PgClass) "conindid"
-            , OidColumn (tableNoAlias PgClass) "confrelid"
-            , "confupdtype"
-            , "confdeltype"
-            , "confmatchtype"
-            , "conislocal"
-            , "coninhcount"
-            , "connoinherit"
-            , "conkey"
-            , "confkey"
-            , OidArrayColumn (tableNoAlias PgOperator) "conpfeqop"
-            , OidArrayColumn (tableNoAlias PgOperator) "conppeqop"
-            , OidArrayColumn (tableNoAlias PgOperator) "conffeqop"
-            , OidArrayColumn (tableNoAlias PgOperator) "conexclop"
-            , PureSqlExpression "pg_get_constraintdef(pg_constraint.oid)"
-            ]
-        PgAuthId ->
-            [ "rolsuper"
-            , "rolinherit"
-            , "rolcreaterole"
-            , "rolcreatedb"
-            , "rolcanlogin"
-            , "rolreplication"
-            , "rolbypassrls"
-            , RegularColumn (tableNoAlias PgRoleSettings) "setconfig"
-            ]
-        PgIndex ->
-            ["indisunique", "indisprimary", "indisexclusion", "indimmediate"] -- TODO: Still missing lots of columns!!
-                ++ hashingColsOf (tableNoAlias PgClass)
-        PgLanguage -> error "pglanguage cols missing"
-        PgType     -> error "pgtype cols missing"
-        PgOperator -> error "pgoperator cols missing"
-        PgAttribute ->
-            [ OidColumn (tableNoAlias PgType) "atttypid"
-            , "attnotnull"
-            , "atthasdef"
-            , PureSqlExpression
-                "(SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM pg_catalog.pg_attrdef WHERE pg_attrdef.adrelid=pg_attribute.attrelid AND pg_attrdef.adnum=pg_attribute.attnum)"
-            , "attidentity"
-            , "attislocal"
-            , "attinhcount"
-            , OidColumn (tableNoAlias PgCollation) "attcollation"
-            , AclItemsColumn at "attacl"
-            , "attoptions"
-            , "attfdwoptions"
-            , "attnum"
-            ]
-        PgTrigger ->
-            [ OidColumn (tableNoAlias PgProc) "tgfoid"
-            , "tgtype"
-            , "tgenabled"
-            , "tgisinternal"
-            , OidColumn (tableNoAlias PgClass)      "tgconstrrelid"
-            , OidColumn (tableNoAlias PgClass)      "tgconstrindid"
-            , OidColumn (tableNoAlias PgConstraint) "tgconstraint"
-            , "tgdeferrable"
-            , "tginitdeferred"
-            , "tgnargs"
-            , "tgattr"
-            , "tgargs"
-            , "tgqual"
-            , "tgoldtable"
-            , "tgnewtable"
-            ]
-        PgAccessMethod -> error "pg_am cols missing"
-        PgCollation    -> error "pg_collation cols missing"
-        PgPolicy ->
-            [ "polcmd"
-            , "polpermissive"
-            , OidArrayColumn (tableNoAlias PgAuthId) "polroles"
-            , "pg_get_expr(polqual, polrelid)"
-            , "pg_get_expr(polwithcheck, polrelid)"
-            ]
-        PgSequence ->
-            [ OidColumn (tableNoAlias PgType) "seqtypid"
-                , "seqstart"
-                , "seqincrement"
-                , "seqmax"
-                , "seqmin"
-                , "seqcache"
-                , "seqcycle"
-                ]
-                ++ hashingColsOf (tableNoAlias PgClass)
-        -- TODO: Owned objects should affect PgClass, not just PgSequence!
-        -- Also, maybe it's best that both related objects are affected instead of just a single one? What if, for example, someone changes ownership of
-        -- a sequence and someone else renames the column? We want a git conflict in that scenario!
-        -- select pg_class.relname, objsubid, refobjid, refobj.relname, refobjsubid, deptype from pg_depend join pg_class on pg_depend.objid=pg_class.oid join pg_class refobj on pg_depend.refobjid=refobj.oid where pg_class.relname='employee_employee_id_seq';
-
-        PgRoleSettings -> []
-        PgViews        -> hashingColsOf (tableNoAlias PgClass)
-            ++ map (RegularColumn at) ["definition"]
-
-    joinsFor = \case
-        HTable -> [JoinTable "relnamespace" (tableNoAlias PgNamespace)]
-        HView ->
-            [ JoinTableFull
-                (tableNoAlias PgNamespace)
-                [ ( RegularColumn (tableNoAlias PgViews)     "schemaname"
-                  , RegularColumn (tableNoAlias PgNamespace) "nspname"
-                  )
-                ]
-            , JoinTableFull
-                (tableNoAlias PgClass)
-                [ ( RegularColumn (tableNoAlias PgViews) "viewname"
-                  , RegularColumn (tableNoAlias PgClass) "relname"
-                  )
-                , ( RegularColumn (tableNoAlias PgNamespace) "oid"
-                  , RegularColumn (tableNoAlias PgClass)     "relnamespace"
-                  )
-                ]
-            ]
-        HRoutine -> [JoinTable "pronamespace" (tableNoAlias PgNamespace)]
-        HSequence ->
-            [ JoinTable "seqrelid"     (tableNoAlias PgClass)
-            , JoinTable "relnamespace" (tableNoAlias PgNamespace)
-            ]
-        HColumn ->
-            [ JoinTable "attrelid" (tableNoAlias PgClass)
-            , JoinTable
-                (RegularColumn (tableNoAlias PgClass) "relnamespace")
-                (tableNoAlias PgNamespace)
-            ]
-        HIndex ->
-            let pgClassAliased = CatTableAliased PgClass "pg_class_idx_table"
-            in  [ JoinTable "indexrelid" (tableNoAlias PgClass)
-                , JoinTable "indrelid"   pgClassAliased
-                                                                                                                                                                                            -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
-                , JoinTableFull
-                    (tableNoAlias PgNamespace)
-                    [ ( RegularColumn pgClassAliased             "relnamespace"
-                      , RegularColumn (tableNoAlias PgNamespace) "oid"
-                      )
-                    ]
-                ]
-        HTableConstraint ->
-            [ JoinTable "conrelid" (tableNoAlias PgClass)
-            , JoinTable
-                (RegularColumn (tableNoAlias PgClass) "relnamespace")
-                (tableNoAlias PgNamespace)
-            ]
-        HTrigger ->
-            [ JoinTable "tgrelid" (tableNoAlias PgClass)
-            , JoinTable
-                (RegularColumn (tableNoAlias PgClass) "relnamespace")
-                (tableNoAlias PgNamespace)
-            ]
-        HRole -> [LeftJoinTable "oid" (tableNoAlias PgRoleSettings) "setrole"]
-        HPolicy ->
-            [ JoinTable "polrelid" (tableNoAlias PgClass)
-            , JoinTable
-                (RegularColumn (tableNoAlias PgClass) "relnamespace")
-                (tableNoAlias PgNamespace)
-            ]
-        _ -> []
-
-    filtersForSchemas includedSchemas =
-        [ColumnIn (fqObjNameCol (tableNoAlias PgNamespace)) includedSchemas]
-    filtersForRoles includedRoles =
-        [ColumnIn (fqObjNameCol (tableNoAlias PgAuthId)) includedRoles]
-
-    underSchemaFilter hobj schemaName = case hobj of
-        HTable ->
-            [ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName]
-        HView ->
-            [ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName]
-        HRoutine ->
-            [ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName]
-        HSequence ->
-            [ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName]
-        _ -> []
-
-    underTableFilter hobj schemaName tblName = case hobj of
-        HColumn ->
-            [ ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName
-            , ColumnEq (fqObjNameCol (tableNoAlias PgClass))     tblName
-            ]
-        HTableConstraint ->
-            [ ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName
-            , ColumnEq (fqObjNameCol (tableNoAlias PgClass))     tblName
-            ]
-        HTrigger ->
-            [ ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName
-            , ColumnEq (fqObjNameCol (tableNoAlias PgClass))     tblName
-            ]
-        HPolicy ->
-            [ ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName
-            , ColumnEq (fqObjNameCol (tableNoAlias PgClass))     tblName
-            ]
-        HIndex ->
-            [ ColumnEq (fqObjNameCol (tableNoAlias PgNamespace)) schemaName
-            , ColumnEq
-                (fqObjNameCol (CatTableAliased PgClass "pg_class_idx_table"))
-                tblName
-            ]
-        _ -> []

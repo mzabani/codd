@@ -1,49 +1,40 @@
-module Codd.Hashing.Database.Pg11 (Pg11(..), CatalogTablePg11(..)) where
+module Codd.Hashing.Database.Pg11
+    ( hashQueryFor
+    ) where
 
-import Codd.Hashing.Database.Model (DbVersionHash(..), CatTableAliased(..), CatalogTableColumn(..), JoinTable(..), CatTable(..), ColumnComparison, mapCatTableAliased, mapCatTableCol, mapJoinTableTbl, mapColumnComparisonTbl)
-import Codd.Hashing.Database.Pg10 (Pg10, CatalogTable(..))
+import           Codd.Hashing.Database.Model    ( HashQuery(..) )
+import qualified Codd.Hashing.Database.Pg10    as Pg10
+import           Codd.Hashing.Types             ( HashableObject(..)
+                                                , ObjName
+                                                )
+import           Codd.Types                     ( Include
+                                                , SqlRole
+                                                , SqlSchema
+                                                )
 
-data Pg11 = Pg11
-newtype CatalogTablePg11 = CatalogTablePg11 CatalogTable
-
-toTblAliased :: CatTableAliased Pg10 -> CatTableAliased Pg11
-toTblAliased = mapCatTableAliased CatalogTablePg11
-
-toPg11Col :: CatalogTableColumn Pg10 -> CatalogTableColumn Pg11
-toPg11Col = mapCatTableCol toTblAliased
-
-toPg11Joins :: [JoinTable Pg10] -> [JoinTable Pg11]
-toPg11Joins = map (mapJoinTableTbl toTblAliased)
-
-toPg11Filters :: [ColumnComparison Pg10] -> [ColumnComparison Pg11]
-toPg11Filters = map (mapColumnComparisonTbl toTblAliased)
-
-instance DbVersionHash Pg11 where
-    type CatTable Pg11 = CatalogTablePg11
-    hashableObjCatalogTable hobj = let (tbl, wfilter) = hashableObjCatalogTable @Pg10 hobj in (toTblAliased tbl, wfilter)
-
-    tableName (CatTableAliased (CatalogTablePg11 tbl) alias) = tableName $ CatTableAliased @Pg10 tbl alias
-
-    fqObjNameCol (CatTableAliased (CatalogTablePg11 tbl) alias) = toPg11Col $ fqObjNameCol (CatTableAliased @Pg10 tbl alias)
-
-    fqTableIdentifyingCols (CatTableAliased (CatalogTablePg11 tbl) alias) = map toPg11Col $ fqTableIdentifyingCols (CatTableAliased @Pg10 tbl alias)
-
-    hashingColsOf (CatTableAliased (CatalogTablePg11 tbl) alias) = 
-        let
-            pg10tbl = CatTableAliased @Pg10 tbl alias
-        in
-            map toPg11Col $ hashingColsOf pg10tbl ++
-                case tbl of
-                    PgConstraint -> [ OidColumn pg10tbl "conparentid" ]
-                    PgProc -> [ "prokind" ]
-                    PgAttribute -> [ "atthasmissing", "attmissingval" ]
-                    _ -> []
-
-    joinsFor h = toPg11Joins $ joinsFor @Pg10 h
-
-    filtersForSchemas includedSchemas = toPg11Filters $ filtersForSchemas @Pg10 includedSchemas
-    filtersForRoles includedRoles = toPg11Filters $ filtersForRoles @Pg10 includedRoles
-
-    underSchemaFilter h n = toPg11Filters $ underSchemaFilter @Pg10 h n
-    
-    underTableFilter h sn tn = toPg11Filters $ underTableFilter @Pg10 h sn tn
+hashQueryFor
+    :: Include SqlRole
+    -> Include SqlSchema
+    -> Maybe ObjName
+    -> Maybe ObjName
+    -> HashableObject
+    -> HashQuery
+hashQueryFor allRoles allSchemas schemaName tableName hobj =
+    let hq = Pg10.hashQueryFor allRoles allSchemas schemaName tableName hobj
+    in
+        case hobj of
+            HTableConstraint -> hq
+                { checksumCols = checksumCols hq
+                                     ++ ["pg_parent_constraint.conname"] -- TODO: Full constraint name
+                , joins        =
+                    joins hq
+                        <> "\n LEFT JOIN pg_constraint pg_parent_constraint ON pg_parent_constraint.oid=pg_constraint.conparentid"
+                }
+            HRoutine -> hq { checksumCols = checksumCols hq ++ ["prokind"]
+                           , groupByCols  = groupByCols hq ++ ["prokind"]
+                           }
+            HColumn -> hq
+                { checksumCols = checksumCols hq
+                                     ++ ["atthasmissing", "attmissingval"]
+                }
+            _ -> hq

@@ -3,11 +3,11 @@
 A complete list of all columns that affect our DB hashing algorithm can be found in this document.
 The rationale behind not including a column is that we don't want/need to include columns that satisfy any of these criteria:
 
-- Are DB-instance-dependent: plain OIDs always satisfy this.
+- Are DB-instance-dependent: plain OIDs always satisfy this. When a OID column appears included in this document, it's the referenced object's name that we hash.  
 - Are already accounted for in a hierarchical on-disk ancestor or descendant.
 - Affect naming of folders and/or files in the on-disk hashes.
 - Are redundant, i.e. at least one other column will always change when the ignored column changes.
-- Most importantly: do not affect any possible query's results for the Application User. On-Disk size of objects, user's password and others fall in this category.
+- Do not affect any possible query's results for the Application User. On-Disk size of objects, user's password and others fall in this category.
 
 
 **IMPORTANT:** Not all features are currently perfectly mapped. Search this document for "TODO" to find missing/imperfect mappings.
@@ -18,7 +18,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-namespace.html
 
 ### Columns included
 
-OidColumn PgAuthId "nspowner",  
+"nspowner",  
 "nspacl"  
 
 ### Ignored columns
@@ -32,10 +32,10 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-class.html
 
 ### Columns included
 
-OidColumn PgType "reltype",  
-OidColumn PgType "reloftype",  
-OidColumn PgAuthId "relowner",  
-OidColumn PgAccessMethod "relam",  
+"reltype",  
+"reloftype",  
+"relowner",  
+"relam",  
 "relisshared",  
 "relpersistence",  
 "relkind",  
@@ -78,7 +78,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-sequence.html
 
 ### Columns included
 
-OidColumn PgType "seqtypid",  
+"seqtypid",  
 "seqstart",  
 "seqincrement",  
 "seqmax",  
@@ -104,7 +104,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-attribute.html
 
 ### Columns included
 
-OidColumn PgType "atttypid",  
+"atttypid",  
 "attnotnull",  
 PureSqlExpression "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM pg_catalog.pg_attrdef WHERE pg_attrdef.adrelid=pg_attribute.attrelid AND   pg_attrdef.adnum=pg_attribute.attnum" -- This is what we use instead of "atthasdef", which is described as: This column has a default expression or generation   expression, in which case there will be a corresponding entry in the pg_attrdef catalog that actually defines the expression. (Check attgenerated to determine   whether this is a default or a generation expression.)  
 "atthasmissing",  
@@ -112,7 +112,7 @@ PureSqlExpression "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM
 "attgenerated",  
 "attislocal",  
 "attinhcount",  
-OidColumn PgCollation "attcollation",  
+"attcollation",  
 "attacl",  
 "attoptions",  
 "attfdwoptions",  
@@ -216,11 +216,11 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-constraint.html
 "condeferrable",  
 "condeferred",  
 "convalidated",  
-OidColumn PgClass "conrelid",  
-OidColumn PgType "contypid",  
-OidColumn PgClass "conindid"  
-OidColumn PgConstraint "conparentid",  
-OidColumn PgClass "confrelid",  
+"conrelid",  
+"contypid",  
+"conindid"  
+"conparentid",  
+"confrelid",  
 "confupdtype",  
 "confdeltype",  
 "confmatchtype",  
@@ -248,13 +248,13 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 
 ### Columns included
 
-OidColumn PgProc "tgfoid",  
+"tgfoid",  
 "tgtype",  
 "tgenabled",  
 "tgisinternal",  
-OidColumn PgClass "tgconstrrelid",  
-OidColumn PgClass "tgconstrindid",  
-OidColumn PgConstraint "tgconstraint",  
+"tgconstrrelid",  
+"tgconstrindid",  
+"tgconstraint",  
 "tgdeferrable",  
 "tginitdeferred",  
 "tgnargs",  
