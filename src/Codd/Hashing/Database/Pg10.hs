@@ -57,10 +57,13 @@ oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl hashExpr =
     "(SELECT ARRAY_AGG("
         <> hashExpr
         <> " ORDER BY s._idx)"
-        <> "\n FROM UNNEST(" <> oidArrayCol <> ") WITH ORDINALITY s(_oid, _idx)"
+        <> "\n FROM UNNEST("
+        <> oidArrayCol
+        <> ") WITH ORDINALITY s(_oid, _idx)"
         <> "\n JOIN "
         <> tblToJoin
-        <> " ON " <> tblToJoin
+        <> " ON "
+        <> tblToJoin
         <> "."
         <> oidColInJoinedTbl
         <> " = s._oid)"
@@ -77,32 +80,32 @@ pgOperatorNameTbl =
 
 pgClassHashQuery :: Include SqlRole -> Maybe ObjName -> HashQuery
 pgClassHashQuery allRoles schemaName = HashQuery
-    { objNameCol    = "relname"
+    { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
                       , "pg_reloftype.typname"
                       , "pg_roles.rolname"
                       , "pg_am.amname"
-                      , "relisshared"
-                      , "relpersistence"
-                      , "relkind"
-                      , "relrowsecurity"
-                      , "relforcerowsecurity"
-                      , "relreplident"
-                      , "relispartition"
-                      , "reloptions"
-                      , "relpartbound"
+                      , "pg_class.relisshared"
+                      , "pg_class.relpersistence"
+                      , "pg_class.relkind"
+                      , "pg_class.relrowsecurity"
+                      , "pg_class.relforcerowsecurity"
+                      , "pg_class.relreplident"
+                      , "pg_class.relispartition"
+                      , "pg_class.reloptions"
+                      , "pg_class.relpartbound"
                       , "_codd_roles.permissions_string"
                       ]
     , fromTable     = "pg_catalog.pg_class"
     , joins         =
-        "LEFT JOIN pg_catalog.pg_type pg_reltype ON reltype=pg_reltype.oid"
-        <> "\nLEFT JOIN pg_catalog.pg_type pg_reloftype ON reloftype=pg_reloftype.oid"
-        <> "\nLEFT JOIN pg_catalog.pg_roles ON relowner=pg_roles.oid"
-        <> "\nLEFT JOIN pg_catalog.pg_am ON relam=pg_am.oid"
+        "LEFT JOIN pg_catalog.pg_type pg_reltype ON pg_class.reltype=pg_reltype.oid"
+        <> "\nLEFT JOIN pg_catalog.pg_type pg_reloftype ON pg_class.reloftype=pg_reloftype.oid"
+        <> "\nLEFT JOIN pg_catalog.pg_roles ON pg_class.relowner=pg_roles.oid"
+        <> "\nLEFT JOIN pg_catalog.pg_am ON pg_class.relam=pg_am.oid"
         <> "\nLEFT JOIN LATERAL "
         <> aclArrayTbl allRoles "relacl"
         <> " _codd_roles ON TRUE"
-        <> "\nJOIN pg_catalog.pg_namespace ON relnamespace=pg_namespace.oid"
+        <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid"
     , nonIdentWhere = Nothing
     , identWhere    = Just $ maybe ""
                                    (QueryFrag "pg_namespace.nspname=?")
@@ -143,6 +146,23 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , identWhere    = Nothing
         , groupByCols   = []
         }
+    HRole -> HashQuery
+        { objNameCol    = "rolname"
+        , checksumCols  = [ "rolsuper"
+                          , "rolinherit"
+                          , "rolcreaterole"
+                          , "rolcreatedb"
+                          , "rolcanlogin"
+                          , "rolreplication"
+                          , "rolbypassrls"
+                          , "rolconfig"
+                          ]
+        , fromTable     = "pg_catalog.pg_roles"
+        , joins         = ""
+        , nonIdentWhere = Just $ includeSql allRoles "rolname"
+        , identWhere    = Nothing
+        , groupByCols   = []
+        }
     HTable ->
         let hq = pgClassHashQuery allRoles schemaName
         in  hq { nonIdentWhere = Just "relkind IN ('r', 'f', 'p')" }
@@ -168,7 +188,9 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             "LEFT JOIN pg_catalog.pg_roles ON pg_roles.oid = ANY(polroles)"
             <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_policy.polrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace = pg_namespace.oid"
-        , nonIdentWhere = Just $ "pg_roles.rolname IS NULL OR " <> includeSql allRoles "pg_roles.rolname"
+        , nonIdentWhere = Just $ "pg_roles.rolname IS NULL OR " <> includeSql
+                              allRoles
+                              "pg_roles.rolname"
         , identWhere    = Just
                           $  "TRUE"
                           <> maybe ""
@@ -204,7 +226,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                         <> "\nJOIN pg_catalog.pg_sequence pg_seq_type ON seqrelid=pg_class.oid"
                 }
     HRoutine ->
-        let nonAggCols =
+        let
+            nonAggCols =
                 [ "pg_roles.rolname"
                 , "pg_language.lanname"
                 , "prosecdef"
@@ -227,16 +250,16 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
                 ]
-            inputTypesExpr = "COALESCE(" <> oidArrayExpr "proargtypes" "pg_type" "oid" "typname" <> "::TEXT, '')"
+            inputTypesExpr =
+                "COALESCE("
+                    <> oidArrayExpr "proargtypes" "pg_type" "oid" "typname"
+                    <> "::TEXT, '')"
         in
             HashQuery
                 { objNameCol    = "proname || ';' || " <> inputTypesExpr
-                , checksumCols  =
-                    nonAggCols
-                        ++ [
+                , checksumCols  = nonAggCols ++ [
                 -- TODO: Is '{"", NULL}'::TEXT equal to '{NULL, NULL}'::TEXT ? If so, COALESCE properly to differentiate
-                             inputTypesExpr
-                           ]
+                                                 inputTypesExpr]
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
                     "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace"
@@ -252,7 +275,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                       ""
                                       (QueryFrag "\nAND pg_namespace.nspname = ?")
                                       (DB.Only <$> schemaName)
-                , groupByCols   = [ "proname", "proargtypes" ] ++ nonAggCols
+                , groupByCols   = ["proname", "proargtypes"] ++ nonAggCols
                 }
     HColumn -> HashQuery
         { objNameCol    = "attname"
@@ -295,7 +318,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
     HTableConstraint -> HashQuery
-        { objNameCol    = "conname || COALESCE(';' || pg_domain_type.typname, '')"
+        { objNameCol = "conname || COALESCE(';' || pg_domain_type.typname, '')"
         , checksumCols  = [ "contype"
                           , "condeferrable"
                           , "condeferred"
@@ -338,6 +361,68 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                    (DB.Only <$> tableName)
         , groupByCols   = []
         }
+    HIndex ->
+        let hq = pgClassHashQuery allRoles schemaName
+        in
+            hq
+                {
+            -- TODO: Lots of columns still missing!!
+                  checksumCols = checksumCols hq
+                                     ++ [ "indisunique"
+                                        , "indisprimary"
+                                        , "indisexclusion"
+                                        , "indimmediate"
+                                        ]
+                , joins        =
+                    joins hq
+                        <> "\n JOIN pg_catalog.pg_index ON pg_index.indexrelid=pg_class.oid \
+                                  \\n JOIN pg_catalog.pg_class pg_index_table ON pg_index.indrelid=pg_index_table.oid"
+                , identWhere   =
+                    (<> maybe ""
+                              (QueryFrag " AND pg_index_table.relname=?")
+                              (DB.Only <$> tableName)
+                        )
+                        <$> identWhere hq
+                }
+    HTrigger -> HashQuery
+        { objNameCol    = "tgname"
+        , checksumCols  = [ "pg_proc.proname" -- TODO: Use full function name that includes types!!
+                          , "tgtype"
+                          , "tgenabled"
+                          , "tgisinternal"
+                          , "pg_ref_table.relname"
+                          , "pg_trigger_ind.relname"
+                          , "pg_trigger_constr.conname" -- TODO: Use full constraint name that includes domain type!!
+                          , "tgdeferrable"
+                          , "tginitdeferred"
+                          , "tgnargs"
+                          , "tgattr"
+                          , "tgargs"
+                          , "tgqual"
+                          , "tgoldtable"
+                          , "tgnewtable"
+                          ]
+        , fromTable     = "pg_catalog.pg_trigger"
+        , joins         =
+            "JOIN pg_catalog.pg_class pg_trigger_table ON pg_trigger_table.oid=pg_trigger.tgrelid \
+               \\n JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_trigger_table.relnamespace \
+               \\n LEFT JOIN pg_catalog.pg_proc ON pg_proc.oid=tgfoid \
+               \\n LEFT JOIN pg_catalog.pg_class pg_ref_table ON pg_ref_table.oid=tgconstrrelid \
+               \\n LEFT JOIN pg_catalog.pg_class pg_trigger_ind ON pg_trigger_ind.oid=tgconstrindid \
+               \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint"
+        , nonIdentWhere = Just "NOT tgisinternal"
+        , identWhere    = Just
+                          $  "TRUE"
+                          <> maybe ""
+                                   (QueryFrag "\nAND pg_namespace.nspname = ?")
+                                   (DB.Only <$> schemaName)
+                          <> maybe
+                                 ""
+                                 (QueryFrag "\nAND pg_trigger_table.relname = ?")
+                                 (DB.Only <$> tableName)
+        , groupByCols   = []
+        }
+
     _ -> error "not implemented"
 
 instance DbVersionHash Pg10 where
@@ -620,7 +705,7 @@ instance DbVersionHash Pg10 where
             let pgClassAliased = CatTableAliased PgClass "pg_class_idx_table"
             in  [ JoinTable "indexrelid" (tableNoAlias PgClass)
                 , JoinTable "indrelid"   pgClassAliased
-                                                                                                                                                                        -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
+                                                                                                                                                                                            -- A second join to "pg_class AS pg_class_idx_table" for the index's table. This is a nasty way to encode aliases into our internal model.
                 , JoinTableFull
                     (tableNoAlias PgNamespace)
                     [ ( RegularColumn pgClassAliased             "relnamespace"

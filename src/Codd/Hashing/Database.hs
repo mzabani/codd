@@ -612,10 +612,9 @@ readHashesFromDatabase pgVer conn allSchemas allRoles = do
         stateSet UserState{} stateEmpty <> stateSet UserState2{} stateEmpty
   env0 <- liftIO $ initEnv stateStore (pgVer, conn, allSchemas, allRoles)
   liftIO $ runHaxl env0 $ do
-    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings [] []
-    roles <- dataFetch $ GetHashesReq HRole [] (filtersForRoles allRoles)
-    schemas <- dataFetch
-      $ GetHashesReq HSchema [] (filtersForSchemas allSchemas)
+    allDbSettings <- dataFetch $ GetHashesReq2 HDatabaseSettings Nothing Nothing
+    roles         <- dataFetch $ GetHashesReq2 HRole Nothing Nothing
+    schemas       <- dataFetch $ GetHashesReq2 HSchema Nothing Nothing
     let
       dbSettings = case allDbSettings of
         [(_, h)] -> h
@@ -647,24 +646,14 @@ getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
   columns <- dataFetch $ GetHashesReq2 HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch
     $ GetHashesReq2 HTableConstraint (Just schemaName) (Just tblName)
-  triggers <- dataFetch $ GetHashesReq
-    HTrigger
-    [schemaName, tblName]
-    (underTableFilter HTrigger schemaName tblName)
-  policies2 <- dataFetch
-    $ GetHashesReq2 HPolicy (Just schemaName) (Just tblName)
-  -- policies <- dataFetch $ GetHashesReq
-  --   HPolicy
-  --   [schemaName, tblName]
-  --   (underTableFilter HPolicy schemaName tblName)
-  indexes <- dataFetch $ GetHashesReq
-    HIndex
-    [schemaName, tblName]
-    (underTableFilter HIndex schemaName tblName)
+  triggers <- dataFetch
+    $ GetHashesReq2 HTrigger (Just schemaName) (Just tblName)
+  policies <- dataFetch $ GetHashesReq2 HPolicy (Just schemaName) (Just tblName)
+  indexes  <- dataFetch $ GetHashesReq2 HIndex (Just schemaName) (Just tblName)
   pure $ TableHash tblName
                    tableHash
                    (listToMap $ map (uncurry TableColumn) columns)
                    (listToMap $ map (uncurry TableConstraint) constraints)
                    (listToMap $ map (uncurry TableTrigger) triggers)
-                   (listToMap $ map (uncurry TablePolicy) policies2)
+                   (listToMap $ map (uncurry TablePolicy) policies)
                    (listToMap $ map (uncurry TableIndex) indexes)
