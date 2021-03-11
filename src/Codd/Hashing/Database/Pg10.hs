@@ -24,7 +24,7 @@ aclArrayTbl allRoles aclArrayIdentifier =
       -- NOTE: It is not clear what being a grantor means, so we remain open
       -- to having to include 
       -- TODO: Is ARRAY_TO_STRING necessary?
-        "(SELECT ARRAY_TO_STRING(ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable), ';') AS permissions_string FROM (SELECT "
+        "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions_string FROM (SELECT "
         <> acls
         <> ".grantee, "
         <> acls
@@ -141,13 +141,33 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "rolreplication"
                           , "rolbypassrls"
                           , "rolconfig"
+                          , "_codd_roles.permissions"
                           ]
         , fromTable     = "pg_catalog.pg_roles"
-        , joins         = ""
+        , joins         =
+            "JOIN pg_catalog.pg_database ON pg_database.datname = current_database() \
+                       \\n LEFT JOIN LATERAL "
+            <> dbPermsTable
+            <> " _codd_roles ON TRUE"
         , nonIdentWhere = Just $ includeSql allRoles "rolname"
         , identWhere    = Nothing
         , groupByCols   = []
         }
+      where
+        dbPermsTable :: QueryFrag
+        dbPermsTable =
+            let acls = "(ACLEXPLODE(pg_database.datacl))"
+            in
+                "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions FROM (SELECT "
+                <> acls
+                <> ".grantee, "
+                <> acls
+                <> ".privilege_type, "
+                <> acls
+                <> ".is_grantable) perms_subq "
+                <> "\n INNER JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid=perms_subq.grantee "
+                <> "\n WHERE grantee_role.rolname=pg_roles.rolname"
+                <> ")"
     HTable ->
         let hq = pgClassHashQuery allRoles schemaName
         in  hq { nonIdentWhere = Just "relkind IN ('r', 'f', 'p')" }

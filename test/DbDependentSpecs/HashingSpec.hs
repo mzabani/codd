@@ -297,7 +297,8 @@ migrationsAndHashChange = zipWith
       )
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{int4}", BothButDifferent)]
+      , ChangeEq
+        [("schemas/public/routines/increment;{int4}", BothButDifferent)]
       )
       -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$"
@@ -429,11 +430,9 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
     , ("ALTER ROLE \"codd-test-user\" WITH BYPASSRLS", ChangeEq [])
-
-    -- TODO: GRANT permission should affect role checksum!
-    -- , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
-    --   , ChangeEq [("roles/codd-test-user", BothButDifferent)]
-    --   )
+    , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/postgres", BothButDifferent)]
       )

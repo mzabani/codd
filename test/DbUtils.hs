@@ -112,7 +112,8 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
             (\conn -> do
                 execvoid_
                     conn
-                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL;"
+                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+
                 allRoles :: [String] <-
                     map DB.fromOnly
                         <$> query
