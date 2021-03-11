@@ -85,7 +85,7 @@ executables:
     - optparse-applicative
 
 tests:
-  codd-test:
+  codd-test: 
     main:                Main.hs
     source-dirs:         test
     ghc-options:

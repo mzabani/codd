@@ -83,7 +83,7 @@ migrationsAndHashChange = zipWith
         [ ("schemas/public/sequences/employee_employee_id_seq", OnlyRight)
         , ("schemas/public/tables/employee/cols/employee_id"  , OnlyRight)
         , ("schemas/public/tables/employee/cols/employee_name", OnlyRight)
-        , ( "schemas/public/tables/employee/constraints/employee_pkey_"
+        , ( "schemas/public/tables/employee/constraints/employee_pkey"
           , OnlyRight
           )
         , ("schemas/public/tables/employee/indexes/employee_pkey", OnlyRight)
@@ -135,7 +135,7 @@ migrationsAndHashChange = zipWith
     , ( "ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;"
       , ChangeEq
         [ ("schemas/public/tables/employee/cols/employee_id", BothButDifferent)
-        , ( "schemas/public/tables/employee/constraints/employee_pkey_"
+        , ( "schemas/public/tables/employee/constraints/employee_pkey"
           , BothButDifferent
           )
         ]
@@ -179,7 +179,7 @@ migrationsAndHashChange = zipWith
       -- CHECK CONSTRAINTS
     , ( "ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
       , ChangeEq
-        [ ( "schemas/public/tables/employee/constraints/employee_ck_name_"
+        [ ( "schemas/public/tables/employee/constraints/employee_ck_name"
           , OnlyRight
           )
         ]
@@ -189,7 +189,7 @@ migrationsAndHashChange = zipWith
       )
     , ( "ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY')"
       , ChangeEq
-        [ ( "schemas/public/tables/employee/constraints/employee_ck_name_"
+        [ ( "schemas/public/tables/employee/constraints/employee_ck_name"
           , BothButDifferent
           )
         ]
@@ -211,7 +211,7 @@ migrationsAndHashChange = zipWith
         , ( "schemas/public/tables/employee_computer/cols/employee_id"
           , OnlyRight
           )
-        , ( "schemas/public/tables/employee_computer/constraints/employee_computer_employee_id_key_"
+        , ( "schemas/public/tables/employee_computer/constraints/employee_computer_employee_id_key"
           , OnlyRight
           )
         , ( "schemas/public/tables/employee_computer/indexes/employee_computer_employee_id_key"
@@ -222,35 +222,35 @@ migrationsAndHashChange = zipWith
       )
     , ( "ALTER TABLE employee_car ADD CONSTRAINT employee_car_employee_fk FOREIGN KEY (employee_id) REFERENCES employee(employee_id)"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
           , OnlyRight
           )
         ]
       )
     , ( "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk DEFERRABLE INITIALLY DEFERRED"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
           , BothButDifferent
           )
         ]
       )
     , ( "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk DEFERRABLE INITIALLY IMMEDIATE"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
           , BothButDifferent
           )
         ]
       )
     , ( "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk NOT DEFERRABLE"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
           , BothButDifferent
           )
         ]
       )
     , ( "ALTER TABLE employee_car ADD CONSTRAINT employee__employee_fk FOREIGN KEY (employee_id) REFERENCES employee(employee_id)"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk"
           , OnlyRight
           )
         ]
@@ -258,7 +258,7 @@ migrationsAndHashChange = zipWith
       -- Same FK on the same table and column, referencing a different table, but with the same referenced column name as before.
     , ( "ALTER TABLE employee_car DROP CONSTRAINT employee__employee_fk; ALTER TABLE employee_car ADD CONSTRAINT employee__employee_fk FOREIGN KEY (employee_id) REFERENCES employee_computer(employee_id)"
       , ChangeEq
-        [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk_"
+        [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk"
           , BothButDifferent
           )
         ]
@@ -270,10 +270,10 @@ migrationsAndHashChange = zipWith
       )
     , ( "ALTER TABLE employee RENAME CONSTRAINT unique_employee TO employee_unique_name"
       , ChangeEq
-        [ ( "schemas/public/tables/employee/constraints/employee_unique_name_"
+        [ ( "schemas/public/tables/employee/constraints/employee_unique_name"
           , OnlyRight
           )
-        , ( "schemas/public/tables/employee/constraints/unique_employee_"
+        , ( "schemas/public/tables/employee/constraints/unique_employee"
           , OnlyLeft
           )
         , ( "schemas/public/tables/employee/indexes/employee_unique_name"
@@ -293,27 +293,28 @@ migrationsAndHashChange = zipWith
       -- FUNCTIONS
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment_int4", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;{int4}", OnlyRight)]
       )
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment_int4", BothButDifferent)]
+      , ChangeEq
+        [("schemas/public/routines/increment;{int4}", BothButDifferent)]
       )
       -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment_int4;text", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;{int4,text}", OnlyRight)]
       )
         -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment_text;int4", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;{text,int4}", OnlyRight)]
       )
         -- Same everything as existing function, just changing return type
     , ( "DROP FUNCTION increment(text, integer); CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS bigint AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq
-        [("schemas/public/routines/increment_text;int4", BothButDifferent)]
+        [("schemas/public/routines/increment;{text,int4}", BothButDifferent)]
       )
 
       -- TRIGGERS
@@ -429,11 +430,9 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
     , ("ALTER ROLE \"codd-test-user\" WITH BYPASSRLS", ChangeEq [])
-
-    -- TODO: GRANT permission should affect role checksum!
-    -- , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
-    --   , ChangeEq [("roles/codd-test-user", BothButDifferent)]
-    --   )
+    , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/postgres", BothButDifferent)]
       )

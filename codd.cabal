@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7b401b4623848cb147adae5c0db4c2c4794b2d473fd0b381f187434ce62b7d7b
+-- hash: aee3d2d354448f433f093e7a5b3003e00da41fe08ee3d0cec88f4ea42c0d53fc
 
 name:           codd
 version:        0.1.0.0
@@ -41,6 +41,7 @@ library
       Codd.Hashing.Database.Pg10
       Codd.Hashing.Database.Pg11
       Codd.Hashing.Database.Pg12
+      Codd.Hashing.Database.SqlGen
       Codd.Hashing.Disk
       Codd.Hashing.Types
       Codd.Internal
