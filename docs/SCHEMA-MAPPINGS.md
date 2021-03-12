@@ -9,6 +9,10 @@ The rationale behind not including a column is that we don't want/need to includ
 - Are redundant, i.e. at least one other column will always change when the ignored column changes.
 - Do not affect any possible query's results for the Application User. On-Disk size of objects, user's password and others fall in this category.
 
+## Other notes
+
+- We still use system functions from https://www.postgresql.org/docs/13/functions-info.html to checksum objects' contents some times. However, we want to remove all usage of functions that return object definitions in text form. The reasoning is that even slightly changing what those functions return (maybe even spacing) would likely not be considered breaking behaviour by Postgres devs, but it would break _codd_.  
+  - Whether these functions are more reliable than `::TEXT` representations of objects' definitions, though...  
 
 **IMPORTANT:** Not all features are currently perfectly mapped. Search this document for "TODO" to find missing/imperfect mappings.
 
@@ -283,7 +287,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and ht
 "rolcanlogin",  
 "rolreplication",  
 "rolbypassrls",  
-RegularColumn PgRoleSettings "setconfig"  
+"setconfig"  
 
 ### Ignored columns
 

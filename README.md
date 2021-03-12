@@ -133,11 +133,11 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 
 - Tables, columns, CHECK constraints, FKs, indexes and other constraints
 - Indexes
-- Sequences (although attributes such as the sequence's owner-column and its RESTART value are not included)
+- Sequences (although their _RESTART_ value are not currently checked)
 - Functions, operators and VIEWs
 - Triggers
 - Row Level Security
-- Roles, including some of their attributes such as `search_path`
+- Roles, including some of their attributes such as `search_path`, but not yet which other roles each role belongs to.
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 

@@ -138,6 +138,9 @@ migrationsAndHashChange = zipWith
         , ( "schemas/public/tables/employee/constraints/employee_pkey"
           , BothButDifferent
           )
+        , ("schemas/public/sequences/employee_employee_id_seq",BothButDifferent) -- This change happens because due to sequence ownership, we need to
+        -- either include the owner column's name or its attnum. We chose the latter thinking it's more common case to rename columns than change
+        -- their relative positions.
         ]
       )
 
@@ -173,8 +176,7 @@ migrationsAndHashChange = zipWith
     , ( "ALTER SEQUENCE some_seq CACHE 2"
       , ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
       )
-      -- , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", SomeChange)
-      -- TODO: Couldn't find owner table in the pg_catalog..
+    , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", ChangeEq [("schemas/public/sequences/some_seq",BothButDifferent)])
 
       -- CHECK CONSTRAINTS
     , ( "ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
