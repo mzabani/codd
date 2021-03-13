@@ -138,6 +138,9 @@ migrationsAndHashChange = zipWith
         , ( "schemas/public/tables/employee/constraints/employee_pkey"
           , BothButDifferent
           )
+        , ("schemas/public/sequences/employee_employee_id_seq",BothButDifferent) -- This change happens because due to sequence ownership, we need to
+        -- either include the owner column's name or its attnum. We chose the latter thinking it's more common case to rename columns than change
+        -- their relative positions.
         ]
       )
 
@@ -173,8 +176,7 @@ migrationsAndHashChange = zipWith
     , ( "ALTER SEQUENCE some_seq CACHE 2"
       , ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
       )
-      -- , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", SomeChange)
-      -- TODO: Couldn't find owner table in the pg_catalog..
+    , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", ChangeEq [("schemas/public/sequences/some_seq",BothButDifferent)])
 
       -- CHECK CONSTRAINTS
     , ( "ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
@@ -264,7 +266,7 @@ migrationsAndHashChange = zipWith
         ]
       )
 
-      -- UNIQUE CONSTRAINTS AND INDICES
+      -- UNIQUE CONSTRAINTS AND INDEXES
     , ( "ALTER TABLE employee ADD CONSTRAINT unique_employee UNIQUE(employee_name)"
       , SomeChange
       )
@@ -417,9 +419,8 @@ migrationsAndHashChange = zipWith
       )
 
       -- ROLES
-      -- Unmapped Roles are not hashed
-    , ("CREATE ROLE any_new_role", ChangeEq [])
-    , ("DROP ROLE any_new_role", ChangeEq [])
+    , ("CREATE ROLE any_unmapped_role", ChangeEq [])
+    , ("DROP ROLE any_unmapped_role", ChangeEq [])
     , ( "CREATE ROLE \"extra-codd-test-user\""
       , ChangeEq [("roles/extra-codd-test-user", OnlyRight)]
       )
@@ -430,9 +431,27 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
     , ("ALTER ROLE \"codd-test-user\" WITH BYPASSRLS", ChangeEq [])
+
+    -- Database-related permissions affect only roles, not db-settings
     , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
+    , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+    , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+      , ChangeEq []
+      )
+      
+    -- Role membership
+    , ( "GRANT \"extra-codd-test-user\" TO \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+    , ( "REVOKE \"extra-codd-test-user\" FROM \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+
+    -- Config attributes
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/postgres", BothButDifferent)]
       )

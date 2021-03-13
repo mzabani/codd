@@ -9,6 +9,10 @@ The rationale behind not including a column is that we don't want/need to includ
 - Are redundant, i.e. at least one other column will always change when the ignored column changes.
 - Do not affect any possible query's results for the Application User. On-Disk size of objects, user's password and others fall in this category.
 
+## Other notes
+
+- We still use system functions from https://www.postgresql.org/docs/13/functions-info.html to checksum objects' contents some times. However, we want to remove all usage of functions that return object definitions in text form. The reasoning is that even slightly changing what those functions return (maybe even spacing) would likely not be considered breaking behaviour by Postgres devs, but it would break _codd_.  
+  - Whether these functions are more reliable than `::TEXT` representations of objects' definitions, though...  
 
 **IMPORTANT:** Not all features are currently perfectly mapped. Search this document for "TODO" to find missing/imperfect mappings.
 
@@ -272,7 +276,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 
 ## Roles and role settings
 
-This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and https://www.postgresql.org/docs/12/catalog-pg-db-role-setting.html
+This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html, https://www.postgresql.org/docs/12/catalog-pg-auth-members.html and even https://www.postgresql.org/docs/12/catalog-pg-database.html due to its `dataacl` column.
 
 ### Columns included
 
@@ -283,7 +287,9 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and ht
 "rolcanlogin",  
 "rolreplication",  
 "rolbypassrls",  
-RegularColumn PgRoleSettings "setconfig"  
+"setconfig"  
+
+.. also others from the other tables
 
 ### Ignored columns
 
@@ -294,12 +300,7 @@ Ignored from pg_authid:
 - rolconnlimit: For roles that can log in, this sets maximum number of concurrent connections this role can make. -1 means no limit.
 - rolpassword: Password (possibly encrypted); null if none. The format depends on the form of encryption used.
 - rolvaliduntil: Password expiry time (only used for password authentication); null if no expiration
-
-Ignored from pg_db_role_setting:
-
-- setdatabase	oid	pg_database.oid	The OID of the database the setting is applicable to, or zero if not database-specific
-- setrole	oid	pg_authid.oid	The OID of the role the setting is applicable to, or zero if not role-specific
-
+- 
 ## Row Level Security Policis
 
 https://www.postgresql.org/docs/12/catalog-pg-policy.html

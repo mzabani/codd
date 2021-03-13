@@ -129,19 +129,18 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 
 ## Schema equality checks
 
-*Codd*'s Database checksum process does not yet checksum every DB object or every DB object's attributes. For a more thorough (but a bit drafty) description of what is checksummed, see [SCHEMA-MAPPINGS.md](docs/SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, but be aware that not all pertinent attributes are necessarily included:
+*Codd*'s Database checksum process does not yet checksum every DB object or every DB object's attributes. For a more thorough - but a bit drafty and _not necessarily up to date_ - description of what is checksummed, see [SCHEMA-MAPPINGS.md](docs/SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, but be aware that not all pertinent attributes are necessarily included:
 
 - Tables, columns, CHECK constraints, FKs, indexes and other constraints
 - Indexes
-- Sequences (although attributes such as the sequence's owner-column and its RESTART value are not included)
+- Sequences (although their _RESTART_ value are not currently checked)
 - Functions, operators and VIEWs
 - Triggers
 - Row Level Security
-- Roles, including some of their attributes such as `search_path`
+- Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions.
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
-- CONNECT permissions per role
 - Collations
 - Extensions
 - Partitioning
