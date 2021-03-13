@@ -266,7 +266,7 @@ migrationsAndHashChange = zipWith
         ]
       )
 
-      -- UNIQUE CONSTRAINTS AND INDICES
+      -- UNIQUE CONSTRAINTS AND INDEXES
     , ( "ALTER TABLE employee ADD CONSTRAINT unique_employee UNIQUE(employee_name)"
       , SomeChange
       )
@@ -419,9 +419,8 @@ migrationsAndHashChange = zipWith
       )
 
       -- ROLES
-      -- Unmapped Roles are not hashed
-    , ("CREATE ROLE any_new_role", ChangeEq [])
-    , ("DROP ROLE any_new_role", ChangeEq [])
+    , ("CREATE ROLE any_unmapped_role", ChangeEq [])
+    , ("DROP ROLE any_unmapped_role", ChangeEq [])
     , ( "CREATE ROLE \"extra-codd-test-user\""
       , ChangeEq [("roles/extra-codd-test-user", OnlyRight)]
       )
@@ -432,9 +431,27 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
     , ("ALTER ROLE \"codd-test-user\" WITH BYPASSRLS", ChangeEq [])
+
+    -- Database-related permissions affect only roles, not db-settings
     , ( "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
       )
+    , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+    , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+      , ChangeEq []
+      )
+      
+    -- Role membership
+    , ( "GRANT \"extra-codd-test-user\" TO \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+    , ( "REVOKE \"extra-codd-test-user\" FROM \"codd-test-user\""
+      , ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      )
+
+    -- Config attributes
     , ( "ALTER ROLE postgres SET search_path TO public, pg_catalog"
       , ChangeEq [("roles/postgres", BothButDifferent)]
       )

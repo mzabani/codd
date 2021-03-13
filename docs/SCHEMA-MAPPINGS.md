@@ -276,7 +276,7 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 
 ## Roles and role settings
 
-This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and https://www.postgresql.org/docs/12/catalog-pg-db-role-setting.html
+This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html, https://www.postgresql.org/docs/12/catalog-pg-auth-members.html and even https://www.postgresql.org/docs/12/catalog-pg-database.html due to its `dataacl` column.
 
 ### Columns included
 
@@ -289,6 +289,8 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-authid.html and ht
 "rolbypassrls",  
 "setconfig"  
 
+.. also others from the other tables
+
 ### Ignored columns
 
 Ignored from pg_authid:
@@ -298,12 +300,7 @@ Ignored from pg_authid:
 - rolconnlimit: For roles that can log in, this sets maximum number of concurrent connections this role can make. -1 means no limit.
 - rolpassword: Password (possibly encrypted); null if none. The format depends on the form of encryption used.
 - rolvaliduntil: Password expiry time (only used for password authentication); null if no expiration
-
-Ignored from pg_db_role_setting:
-
-- setdatabase	oid	pg_database.oid	The OID of the database the setting is applicable to, or zero if not database-specific
-- setrole	oid	pg_authid.oid	The OID of the role the setting is applicable to, or zero if not role-specific
-
+- 
 ## Row Level Security Policis
 
 https://www.postgresql.org/docs/12/catalog-pg-policy.html

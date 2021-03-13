@@ -135,27 +135,32 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , identWhere    = Nothing
         , groupByCols   = []
         }
-    HRole -> HashQuery
-        { objNameCol    = "rolname"
-        , checksumCols  = [ "rolsuper"
-                          , "rolinherit"
-                          , "rolcreaterole"
-                          , "rolcreatedb"
-                          , "rolcanlogin"
-                          , "rolreplication"
-                          , "rolbypassrls"
-                          , sortArrayExpr "rolconfig"
+    HRole ->
+        let nonAggCols = [  "pg_roles.rolsuper"
+                          , "pg_roles.rolinherit"
+                          , "pg_roles.rolcreaterole"
+                          , "pg_roles.rolcreatedb"
+                          , "pg_roles.rolcanlogin"
+                          , "pg_roles.rolreplication"
+                          , "pg_roles.rolbypassrls"
+                          , sortArrayExpr "pg_roles.rolconfig"
                           , "_codd_roles.permissions"
                           ]
+        in
+        HashQuery
+        { objNameCol    = "pg_roles.rolname"
+        , checksumCols  = nonAggCols ++ [ "ARRAY_AGG(other_role.rolname || ';' || pg_auth_members.admin_option ORDER BY other_role.rolname, pg_auth_members.admin_option)" ]
         , fromTable     = "pg_catalog.pg_roles"
         , joins         =
             "JOIN pg_catalog.pg_database ON pg_database.datname = current_database() \
-                       \\n LEFT JOIN LATERAL "
+         \\n LEFT JOIN pg_catalog.pg_auth_members ON pg_auth_members.member=pg_roles.oid \
+         \\n LEFT JOIN pg_catalog.pg_roles other_role ON other_role.oid=pg_auth_members.roleid \
+         \\n LEFT JOIN LATERAL "
             <> dbPermsTable
             <> " _codd_roles ON TRUE"
-        , nonIdentWhere = Just $ includeSql allRoles "rolname"
+        , nonIdentWhere = Just $ includeSql allRoles "pg_roles.rolname"
         , identWhere    = Nothing
-        , groupByCols   = []
+        , groupByCols   = "pg_roles.rolname" : nonAggCols
         }
       where
         dbPermsTable :: QueryFrag
