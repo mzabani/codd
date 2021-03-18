@@ -5,7 +5,9 @@ module Codd.Hashing.Database.Pg10
 import           Codd.Hashing.Database.Model    ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 )
-import           Codd.Hashing.Database.SqlGen   ( includeSql )
+import           Codd.Hashing.Database.SqlGen   ( includeSql
+                                                , safeStringConcat
+                                                )
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
@@ -56,6 +58,30 @@ sortArrayExpr :: QueryFrag -> QueryFrag
 sortArrayExpr col =
     "(select array_agg(x.* order by x.*) from unnest(" <> col <> ") x)"
 
+-- | Given the alias for a in-context "pg_proc" table, returns an expression
+--   of type text with the function's unambiguous name - one that includes
+--   the names of its input arguments' types.
+pronameExpr :: QueryFrag -> QueryFrag
+pronameExpr pronameTbl =
+    qual "proname || ';' || "
+        <> "ARRAY_TO_STRING(COALESCE("
+        <> oidArrayExpr (qual "proargtypes")
+                        "pg_catalog.pg_type"
+                        "oid"
+                        "typname"
+        <> ", '{}'), ',')"
+    where qual e = pronameTbl <> "." <> e
+
+-- | Given aliases for in-context "pg_proc" and "pg_domain_type" tables, returns an expression
+--   of type text with the constraints's unambiguous name - one that includes
+--   the name of its type.
+constraintnameExpr :: QueryFrag -> QueryFrag -> QueryFrag
+constraintnameExpr conTbl pgDomainTypeTbl =
+    conTbl
+        <> ".conname || COALESCE(';' || "
+        <> pgDomainTypeTbl
+        <> ".typname, '')"
+
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
 -- We still don't use it, but it might become useful in the future.
@@ -72,7 +98,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
     { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
                       , "pg_reloftype.typname"
-                      , "pg_roles.rolname"
+                      , "rel_owner_role.rolname"
                       , "pg_am.amname"
                       , "pg_class.relisshared"
                       , "pg_class.relpersistence"
@@ -81,7 +107,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relforcerowsecurity"
                       , "pg_class.relreplident"
                       , "pg_class.relispartition"
-                      , "pg_class.reloptions"
+                      , sortArrayExpr "pg_class.reloptions"
                       , "pg_class.relpartbound"
                       , "_codd_roles.permissions"
                       ]
@@ -89,10 +115,10 @@ pgClassHashQuery allRoles schemaName = HashQuery
     , joins         =
         "LEFT JOIN pg_catalog.pg_type pg_reltype ON pg_class.reltype=pg_reltype.oid"
         <> "\nLEFT JOIN pg_catalog.pg_type pg_reloftype ON pg_class.reloftype=pg_reloftype.oid"
-        <> "\nLEFT JOIN pg_catalog.pg_roles ON pg_class.relowner=pg_roles.oid"
+        <> "\nLEFT JOIN pg_catalog.pg_roles rel_owner_role ON pg_class.relowner=rel_owner_role.oid"
         <> "\nLEFT JOIN pg_catalog.pg_am ON pg_class.relam=pg_am.oid"
         <> "\nLEFT JOIN LATERAL "
-        <> aclArrayTbl allRoles "relacl"
+        <> aclArrayTbl allRoles "pg_class.relacl"
         <> " _codd_roles ON TRUE"
         <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid"
     , nonIdentWhere = Nothing
@@ -110,18 +136,35 @@ hashQueryFor
     -> HashableObject
     -> HashQuery
 hashQueryFor allRoles allSchemas schemaName tableName = \case
-    HDatabaseSettings -> HashQuery
-        { objNameCol    = "datname"
-        , checksumCols  = [ "pg_encoding_to_char(encoding)"
-                          , "datcollate"
-                          , "datctype"
-                          ]
-        , fromTable     = "pg_catalog.pg_database"
-        , joins         = ""
-        , nonIdentWhere = Just "datname = current_database()"
-        , identWhere    = Nothing
-        , groupByCols   = []
-        }
+    HDatabaseSettings ->
+        let nonAggCols =
+                ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
+        in
+            HashQuery
+                { objNameCol    = "datname"
+                , checksumCols  = [ "pg_encoding_to_char(encoding)"
+                                  , "datcollate"
+                                  , "datctype"
+                                  , sortArrayExpr
+                                  $  "ARRAY_AGG("
+                                  <> safeStringConcat
+                                         [ "pg_settings.name"
+                                         , "pg_settings.setting"
+                                         , "pg_settings.reset_val"
+                                         , "pg_settings.min_val"
+                                         , "pg_settings.max_val"
+                                         , "pg_settings.enumvals"
+                                         ]
+                                  <> " ORDER BY pg_settings.name)"
+                                  ]
+                , fromTable     = "pg_catalog.pg_database"
+                , joins         = "LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
+                , nonIdentWhere =
+                    Just
+                        "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
+                , identWhere    = Nothing
+                , groupByCols   = "datname" : nonAggCols
+                }
     HSchema -> HashQuery
         { objNameCol    = "nspname"
         , checksumCols  = ["nsp_owner.rolname", "_codd_roles.permissions"]
@@ -136,32 +179,36 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
     HRole ->
-        let nonAggCols = [  "pg_roles.rolsuper"
-                          , "pg_roles.rolinherit"
-                          , "pg_roles.rolcreaterole"
-                          , "pg_roles.rolcreatedb"
-                          , "pg_roles.rolcanlogin"
-                          , "pg_roles.rolreplication"
-                          , "pg_roles.rolbypassrls"
-                          , sortArrayExpr "pg_roles.rolconfig"
-                          , "_codd_roles.permissions"
-                          ]
+        let nonAggCols =
+                [ "pg_roles.rolsuper"
+                , "pg_roles.rolinherit"
+                , "pg_roles.rolcreaterole"
+                , "pg_roles.rolcreatedb"
+                , "pg_roles.rolcanlogin"
+                , "pg_roles.rolreplication"
+                , "pg_roles.rolbypassrls"
+                , sortArrayExpr "pg_roles.rolconfig"
+                , "_codd_roles.permissions"
+                ]
         in
-        HashQuery
-        { objNameCol    = "pg_roles.rolname"
-        , checksumCols  = nonAggCols ++ [ "ARRAY_AGG(other_role.rolname || ';' || pg_auth_members.admin_option ORDER BY other_role.rolname, pg_auth_members.admin_option)" ]
-        , fromTable     = "pg_catalog.pg_roles"
-        , joins         =
-            "JOIN pg_catalog.pg_database ON pg_database.datname = current_database() \
+            HashQuery
+                { objNameCol    = "pg_roles.rolname"
+                , checksumCols  =
+                    nonAggCols
+                        ++ [ "ARRAY_AGG(other_role.rolname || ';' || pg_auth_members.admin_option ORDER BY other_role.rolname, pg_auth_members.admin_option)"
+                           ]
+                , fromTable     = "pg_catalog.pg_roles"
+                , joins         =
+                    "JOIN pg_catalog.pg_database ON pg_database.datname = current_database() \
          \\n LEFT JOIN pg_catalog.pg_auth_members ON pg_auth_members.member=pg_roles.oid \
          \\n LEFT JOIN pg_catalog.pg_roles other_role ON other_role.oid=pg_auth_members.roleid \
          \\n LEFT JOIN LATERAL "
-            <> dbPermsTable
-            <> " _codd_roles ON TRUE"
-        , nonIdentWhere = Just $ includeSql allRoles "pg_roles.rolname"
-        , identWhere    = Nothing
-        , groupByCols   = "pg_roles.rolname" : nonAggCols
-        }
+                    <> dbPermsTable
+                    <> " _codd_roles ON TRUE"
+                , nonIdentWhere = Just $ includeSql allRoles "pg_roles.rolname"
+                , identWhere    = Nothing
+                , groupByCols   = "pg_roles.rolname" : nonAggCols
+                }
       where
         dbPermsTable :: QueryFrag
         dbPermsTable =
@@ -184,7 +231,22 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         let hq = pgClassHashQuery allRoles schemaName
         in
             hq
-                { checksumCols = "pg_views.definition" : checksumCols hq
+                { checksumCols = "pg_views.definition"
+                                     : [ "pg_reltype.typname"
+                                       , "pg_reloftype.typname"
+                                       , "rel_owner_role.rolname"
+                                       , "pg_am.amname"
+                                       , "pg_class.relisshared"
+                                       , "pg_class.relpersistence"
+                                       , "pg_class.relkind"
+                                       , "pg_class.relrowsecurity"
+                                       , "pg_class.relforcerowsecurity"
+                                       , "pg_class.relreplident"
+                                       , "pg_class.relispartition"
+                                       , sortArrayExpr "pg_class.reloptions"
+                                       , "pg_class.relpartbound"
+                                       , "_codd_roles.permissions"
+                                       ]
                 , joins        =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_views ON pg_views.schemaname=pg_namespace.nspname AND pg_views.viewname=pg_class.relname"
@@ -247,8 +309,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           \\n LEFT JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid"
                 }
     HRoutine ->
-        let
-            nonAggCols =
+        let nonAggCols =
                 [ "pg_roles.rolname"
                 , "pg_language.lanname"
                 , "prosecdef"
@@ -271,16 +332,10 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
                 ]
-            inputTypesExpr =
-                "COALESCE("
-                    <> oidArrayExpr "proargtypes" "pg_type" "oid" "typname"
-                    <> "::TEXT, '')"
         in
             HashQuery
-                { objNameCol    = "proname || ';' || " <> inputTypesExpr
-                , checksumCols  = nonAggCols ++ [
-                -- TODO: Is '{"", NULL}'::TEXT equal to '{NULL, NULL}'::TEXT ? If so, COALESCE properly to differentiate
-                                                 inputTypesExpr]
+                { objNameCol    = pronameExpr "pg_proc"
+                , checksumCols  = nonAggCols
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
                     "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace"
@@ -310,8 +365,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attinhcount"
             , "pg_collation.collname"
             , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-            , "attoptions"
-            , "attfdwoptions"
+            , sortArrayExpr "attoptions"
+            , sortArrayExpr "attfdwoptions"
             , "attnum"
             , "_codd_roles.permissions"
             ]
@@ -339,8 +394,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
     HTableConstraint -> HashQuery
-        { objNameCol    =
-            "pg_constraint.conname || COALESCE(';' || pg_domain_type.typname, '')"
+        { objNameCol    = constraintnameExpr "pg_constraint" "pg_domain_type"
         , checksumCols  = [ "pg_constraint.contype"
                           , "pg_constraint.condeferrable"
                           , "pg_constraint.condeferred"
@@ -400,13 +454,14 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 }
     HTrigger -> HashQuery
         { objNameCol    = "tgname"
-        , checksumCols  = [ "pg_proc.proname" -- TODO: Use full function name that includes types!!
+        , checksumCols  = [ pronameExpr "pg_proc"
                           , "tgtype"
                           , "tgenabled"
                           , "tgisinternal"
                           , "pg_ref_table.relname"
                           , "pg_trigger_ind.relname"
-                          , "pg_trigger_constr.conname" -- TODO: Use full constraint name that includes domain type!!
+                          , constraintnameExpr "pg_trigger_constr"
+                                               "pg_trigger_constr_type"
                           , "tgdeferrable"
                           , "tginitdeferred"
                           , "tgnargs"
@@ -423,7 +478,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                \\n LEFT JOIN pg_catalog.pg_proc ON pg_proc.oid=tgfoid \
                \\n LEFT JOIN pg_catalog.pg_class pg_ref_table ON pg_ref_table.oid=tgconstrrelid \
                \\n LEFT JOIN pg_catalog.pg_class pg_trigger_ind ON pg_trigger_ind.oid=tgconstrindid \
-               \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint"
+               \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint \
+               \\n LEFT JOIN pg_catalog.pg_type pg_trigger_constr_type ON pg_trigger_constr_type.oid=pg_trigger_constr.contypid"
         , nonIdentWhere = Just "NOT tgisinternal"
         , identWhere    = Just
                           $  "TRUE"

@@ -77,6 +77,7 @@ migrationsAndHashChange = zipWith
 
 
 
+
       -- TABLES AND COLUMNS
       ( "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT)"
       , ChangeEq
@@ -138,7 +139,9 @@ migrationsAndHashChange = zipWith
         , ( "schemas/public/tables/employee/constraints/employee_pkey"
           , BothButDifferent
           )
-        , ("schemas/public/sequences/employee_employee_id_seq",BothButDifferent) -- This change happens because due to sequence ownership, we need to
+        , ( "schemas/public/sequences/employee_employee_id_seq"
+          , BothButDifferent
+          ) -- This change happens because due to sequence ownership, we need to
         -- either include the owner column's name or its attnum. We chose the latter thinking it's more common case to rename columns than change
         -- their relative positions.
         ]
@@ -176,7 +179,9 @@ migrationsAndHashChange = zipWith
     , ( "ALTER SEQUENCE some_seq CACHE 2"
       , ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
       )
-    , ("ALTER SEQUENCE some_seq OWNED BY employee.employee_id", ChangeEq [("schemas/public/sequences/some_seq",BothButDifferent)])
+    , ( "ALTER SEQUENCE some_seq OWNED BY employee.employee_id"
+      , ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+      )
 
       -- CHECK CONSTRAINTS
     , ( "ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
@@ -295,28 +300,27 @@ migrationsAndHashChange = zipWith
       -- FUNCTIONS
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{int4}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;int4", OnlyRight)]
       )
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq
-        [("schemas/public/routines/increment;{int4}", BothButDifferent)]
+      , ChangeEq [("schemas/public/routines/increment;int4", BothButDifferent)]
       )
       -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{int4,text}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;int4,text", OnlyRight)]
       )
         -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{text,int4}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;text,int4", OnlyRight)]
       )
         -- Same everything as existing function, just changing return type
     , ( "DROP FUNCTION increment(text, integer); CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS bigint AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq
-        [("schemas/public/routines/increment;{text,int4}", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
       )
 
       -- TRIGGERS
@@ -442,7 +446,7 @@ migrationsAndHashChange = zipWith
     , ( "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
       , ChangeEq []
       )
-      
+
     -- Role membership
     , ( "GRANT \"extra-codd-test-user\" TO \"codd-test-user\""
       , ChangeEq [("roles/codd-test-user", BothButDifferent)]
@@ -521,8 +525,9 @@ migrationsAndHashChange = zipWith
       )
 
       -- Permissions of unmapped role don't affect hashing
-      -- TODO: Views not working yet for some reason
-    , ( "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; -- GRANT ALL ON all_employee_names TO unmapped_role1"
+      -- For some reason, GRANTing to unmapped_role1 for a VIEW also adds permissions to the VIEW owner. This doesn't seem to happen for tables or sequences..
+    , ("GRANT ALL ON all_employee_names TO \"codd-test-user\"", SomeChange)
+    , ( "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; GRANT ALL ON all_employee_names TO unmapped_role1"
       , ChangeEq []
       )
     , ("DROP OWNED BY unmapped_role1; DROP ROLE unmapped_role1", ChangeEq [])
@@ -537,6 +542,10 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("schemas/codd-extra-mapped-schema/objhash", OnlyLeft)]
       )
 
+      -- DATABASE SETTINGS
+    , ( "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'"
+      , ChangeEq [("db-settings", BothButDifferent)]
+      )
 
       -- CRUD
     , ("INSERT INTO employee (employee_name) VALUES ('Marcelo')", ChangeEq [])

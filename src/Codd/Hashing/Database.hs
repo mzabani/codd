@@ -11,6 +11,7 @@ import qualified Codd.Hashing.Database.Pg11    as Pg11
 import qualified Codd.Hashing.Database.Pg12    as Pg12
 import           Codd.Hashing.Database.SqlGen   ( interspBy
                                                 , parens
+                                                , safeStringConcat
                                                 )
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
@@ -140,15 +141,7 @@ instance DataSource HaxlEnv HashReq2 where
           let
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
             finalHashExpr =
-              "MD5("
-                <> interspBy False " || " (map coalesce (checksumCols (qp2 x)))
-                <> ")"
-            coalesce expr =
-              "CASE WHEN "
-                <> expr
-                <> " IS NULL THEN '' ELSE '_' || ("
-                <> expr
-                <> ")::TEXT END"
+              "MD5(" <> safeStringConcat (checksumCols (qp2 x)) <> ")"
             finalQip = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap
