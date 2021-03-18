@@ -72,7 +72,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
     { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
                       , "pg_reloftype.typname"
-                      , "pg_roles.rolname"
+                      , "rel_owner_role.rolname"
                       , "pg_am.amname"
                       , "pg_class.relisshared"
                       , "pg_class.relpersistence"
@@ -81,7 +81,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relforcerowsecurity"
                       , "pg_class.relreplident"
                       , "pg_class.relispartition"
-                      , "pg_class.reloptions"
+                      , sortArrayExpr "pg_class.reloptions"
                       , "pg_class.relpartbound"
                       , "_codd_roles.permissions"
                       ]
@@ -89,10 +89,10 @@ pgClassHashQuery allRoles schemaName = HashQuery
     , joins         =
         "LEFT JOIN pg_catalog.pg_type pg_reltype ON pg_class.reltype=pg_reltype.oid"
         <> "\nLEFT JOIN pg_catalog.pg_type pg_reloftype ON pg_class.reloftype=pg_reloftype.oid"
-        <> "\nLEFT JOIN pg_catalog.pg_roles ON pg_class.relowner=pg_roles.oid"
+        <> "\nLEFT JOIN pg_catalog.pg_roles rel_owner_role ON pg_class.relowner=rel_owner_role.oid"
         <> "\nLEFT JOIN pg_catalog.pg_am ON pg_class.relam=pg_am.oid"
         <> "\nLEFT JOIN LATERAL "
-        <> aclArrayTbl allRoles "relacl"
+        <> aclArrayTbl allRoles "pg_class.relacl"
         <> " _codd_roles ON TRUE"
         <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid"
     , nonIdentWhere = Nothing
@@ -184,7 +184,22 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         let hq = pgClassHashQuery allRoles schemaName
         in
             hq
-                { checksumCols = "pg_views.definition" : checksumCols hq
+                { checksumCols = "pg_views.definition" : 
+                                     [ "pg_reltype.typname"
+                                    , "pg_reloftype.typname"
+                                    , "rel_owner_role.rolname"
+                                    , "pg_am.amname"
+                                    , "pg_class.relisshared"
+                                    , "pg_class.relpersistence"
+                                    , "pg_class.relkind"
+                                    , "pg_class.relrowsecurity"
+                                    , "pg_class.relforcerowsecurity"
+                                    , "pg_class.relreplident"
+                                    , "pg_class.relispartition"
+                                    , sortArrayExpr "pg_class.reloptions"
+                                    , "pg_class.relpartbound"
+                                    , "_codd_roles.permissions"
+                                     ]
                 , joins        =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_views ON pg_views.schemaname=pg_namespace.nspname AND pg_views.viewname=pg_class.relname"
@@ -310,8 +325,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attinhcount"
             , "pg_collation.collname"
             , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-            , "attoptions"
-            , "attfdwoptions"
+            , sortArrayExpr "attoptions"
+            , sortArrayExpr "attfdwoptions"
             , "attnum"
             , "_codd_roles.permissions"
             ]
