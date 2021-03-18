@@ -77,6 +77,7 @@ migrationsAndHashChange = zipWith
 
 
 
+
       -- TABLES AND COLUMNS
       ( "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT)"
       , ChangeEq
@@ -299,28 +300,27 @@ migrationsAndHashChange = zipWith
       -- FUNCTIONS
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{int4}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;int4", OnlyRight)]
       )
     , ( "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq
-        [("schemas/public/routines/increment;{int4}", BothButDifferent)]
+      , ChangeEq [("schemas/public/routines/increment;int4", BothButDifferent)]
       )
       -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{int4,text}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;int4,text", OnlyRight)]
       )
         -- Change in function args means new function
     , ( "CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
-      , ChangeEq [("schemas/public/routines/increment;{text,int4}", OnlyRight)]
+      , ChangeEq [("schemas/public/routines/increment;text,int4", OnlyRight)]
       )
         -- Same everything as existing function, just changing return type
     , ( "DROP FUNCTION increment(text, integer); CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS bigint AS $$"
         <> "BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       , ChangeEq
-        [("schemas/public/routines/increment;{text,int4}", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
       )
 
       -- TRIGGERS

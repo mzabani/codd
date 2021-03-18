@@ -58,6 +58,20 @@ sortArrayExpr :: QueryFrag -> QueryFrag
 sortArrayExpr col =
     "(select array_agg(x.* order by x.*) from unnest(" <> col <> ") x)"
 
+-- | Given the alias for a in-context "pg_proc" table, returns an expression
+--   of type text with the function's unambiguous name - one that includes
+--   the names of its input arguments' types.
+pronameExpr :: QueryFrag -> QueryFrag
+pronameExpr pronameTbl =
+    qual "proname || ';' || "
+        <> "ARRAY_TO_STRING(COALESCE("
+        <> oidArrayExpr (qual "proargtypes")
+                        "pg_catalog.pg_type"
+                        "oid"
+                        "typname"
+        <> ", '{}'), ',')"
+    where qual e = pronameTbl <> "." <> e
+
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
 -- We still don't use it, but it might become useful in the future.
@@ -285,8 +299,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           \\n LEFT JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid"
                 }
     HRoutine ->
-        let
-            nonAggCols =
+        let nonAggCols =
                 [ "pg_roles.rolname"
                 , "pg_language.lanname"
                 , "prosecdef"
@@ -309,16 +322,10 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
                 ]
-            inputTypesExpr =
-                "COALESCE("
-                    <> oidArrayExpr "proargtypes" "pg_type" "oid" "typname"
-                    <> "::TEXT, '')"
         in
             HashQuery
-                { objNameCol    = "proname || ';' || " <> inputTypesExpr
-                , checksumCols  = nonAggCols ++ [
-                -- TODO: Is '{"", NULL}'::TEXT equal to '{NULL, NULL}'::TEXT ? If so, COALESCE properly to differentiate
-                                                 inputTypesExpr]
+                { objNameCol    = pronameExpr "pg_proc"
+                , checksumCols  = nonAggCols
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
                     "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace"
