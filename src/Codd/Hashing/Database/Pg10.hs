@@ -72,6 +72,16 @@ pronameExpr pronameTbl =
         <> ", '{}'), ',')"
     where qual e = pronameTbl <> "." <> e
 
+-- | Given aliases for in-context "pg_proc" and "pg_domain_type" tables, returns an expression
+--   of type text with the constraints's unambiguous name - one that includes
+--   the name of its type.
+constraintnameExpr :: QueryFrag -> QueryFrag -> QueryFrag
+constraintnameExpr conTbl pgDomainTypeTbl =
+    conTbl
+        <> ".conname || COALESCE(';' || "
+        <> pgDomainTypeTbl
+        <> ".typname, '')"
+
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
 -- We still don't use it, but it might become useful in the future.
@@ -384,8 +394,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
     HTableConstraint -> HashQuery
-        { objNameCol    =
-            "pg_constraint.conname || COALESCE(';' || pg_domain_type.typname, '')"
+        { objNameCol    = constraintnameExpr "pg_constraint" "pg_domain_type"
         , checksumCols  = [ "pg_constraint.contype"
                           , "pg_constraint.condeferrable"
                           , "pg_constraint.condeferred"
@@ -445,13 +454,14 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 }
     HTrigger -> HashQuery
         { objNameCol    = "tgname"
-        , checksumCols  = [ "pg_proc.proname" -- TODO: Use full function name that includes types!!
+        , checksumCols  = [ pronameExpr "pg_proc"
                           , "tgtype"
                           , "tgenabled"
                           , "tgisinternal"
                           , "pg_ref_table.relname"
                           , "pg_trigger_ind.relname"
-                          , "pg_trigger_constr.conname" -- TODO: Use full constraint name that includes domain type!!
+                          , constraintnameExpr "pg_trigger_constr"
+                                               "pg_trigger_constr_type"
                           , "tgdeferrable"
                           , "tginitdeferred"
                           , "tgnargs"
@@ -468,7 +478,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                \\n LEFT JOIN pg_catalog.pg_proc ON pg_proc.oid=tgfoid \
                \\n LEFT JOIN pg_catalog.pg_class pg_ref_table ON pg_ref_table.oid=tgconstrrelid \
                \\n LEFT JOIN pg_catalog.pg_class pg_trigger_ind ON pg_trigger_ind.oid=tgconstrindid \
-               \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint"
+               \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint \
+               \\n LEFT JOIN pg_catalog.pg_type pg_trigger_constr_type ON pg_trigger_constr_type.oid=pg_trigger_constr.contypid"
         , nonIdentWhere = Just "NOT tgisinternal"
         , identWhere    = Just
                           $  "TRUE"
