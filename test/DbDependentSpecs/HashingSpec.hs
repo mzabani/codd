@@ -542,6 +542,10 @@ migrationsAndHashChange = zipWith
       , ChangeEq [("schemas/codd-extra-mapped-schema/objhash", OnlyLeft)]
       )
 
+      -- DATABASE SETTINGS
+    , ( "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'"
+      , ChangeEq [("db-settings", BothButDifferent)]
+      )
 
       -- CRUD
     , ("INSERT INTO employee (employee_name) VALUES ('Marcelo')", ChangeEq [])

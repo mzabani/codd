@@ -161,7 +161,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 , joins         = "LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
                 , nonIdentWhere =
                     Just
-                        "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation'))" -- TODO: What other settings matter for correctness?
+                        "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
                 , identWhere    = Nothing
                 , groupByCols   = "datname" : nonAggCols
                 }

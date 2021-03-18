@@ -137,8 +137,8 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 - Functions, operators and VIEWs
 - Triggers
 - Row Level Security
-- Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions.
-- Database encoding and its `default_transaction_isolation`
+- Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions
+- Database encoding and its `default_transaction_*` settings
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
