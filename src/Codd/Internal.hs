@@ -4,6 +4,7 @@ import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes
+                                                , logHashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal.MultiQueryStatement
@@ -20,14 +21,15 @@ import           Codd.Query                     ( execvoid_
                                                 )
 import           Control.Monad                  ( forM
                                                 , forM_
+                                                , unless
                                                 , void
                                                 , when
-                                                , unless
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Logger           ( MonadLogger
                                                 , NoLoggingT
                                                 , logDebugN
+                                                , logInfoN
                                                 , logWarnN
                                                 , runNoLoggingT
                                                 )
@@ -96,19 +98,17 @@ beginRollbackTxnBracket conn f =
 
 type TxnBracket m = forall a . DB.Connection -> m a -> m a
 
-checkExpectedHashesAfterAction
+checkExpectedHashesOrFail
     :: (MonadLogger m, MonadUnliftIO m, MonadIO m)
     => CoddSettings
-    -> Maybe DbHashes
+    -> DbHashes
     -> DB.Connection
     -> m ()
-checkExpectedHashesAfterAction coddSettings mExpectedHashes conn = do
-    case mExpectedHashes of
-        Nothing             -> pure ()
-        Just expectedHashes -> do
-            dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
-            when (dbhashes /= expectedHashes) $ throwIO $ userError
-                "DB checksums check failed."
+checkExpectedHashesOrFail coddSettings expectedHashes conn = do
+    dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
+    when (dbhashes /= expectedHashes) $ do
+        logHashDifferences dbhashes expectedHashes
+        throwIO $ userError "DB checksums check failed. Differences printed"
 
 -- | Creates the App's Database and Codd's schema if it does not yet exist.
 createEmptyDbIfNecessary
@@ -123,8 +123,11 @@ createEmptyDbIfNecessary settings = runNoLoggingT
   where
     applyZeroMigs
         :: DB.Connection -> TxnBracket n -> [NonEmpty MigrationToRun] -> n ()
-    applyZeroMigs conn txnBracket _ =
-        baseApplyMigsBlock (const $ pure ()) conn txnBracket []
+    applyZeroMigs conn txnBracket _ = baseApplyMigsBlock DontCheckHashes
+                                                         (const $ pure ())
+                                                         conn
+                                                         txnBracket
+                                                         []
 
 applyMigrationsInternal
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
@@ -132,7 +135,7 @@ applyMigrationsInternal
     -> (DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a)
     -> CoddSettings
     -> m a
-applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUserConnString, dbName })
+applyMigrationsInternal txnBracket txnApp coddSettings@CoddSettings { superUserConnString, dbName }
     = do
         let unsafeDbName = dbIdentifier dbName
         logDebugN
@@ -166,8 +169,7 @@ applyMigrationsInternal txnBracket txnApp (coddSettings@CoddSettings { superUser
                     "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ? AND schemaname = ?"
                     ("sql_migrations" :: String, "codd_schema" :: String)
                 unless schemaAlreadyExists
-                    $ execvoid_ conn
-                    $ "CREATE SCHEMA codd_schema"
+                    $ execvoid_ conn "CREATE SCHEMA codd_schema"
                 unless tblAlreadyExists $ do
                     execvoid_ conn
                         $  "CREATE TABLE codd_schema.sql_migrations ( "
@@ -193,7 +195,7 @@ collectPendingMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
     -> m [BlockOfMigrations]
-collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow })
+collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }
     = do
         let appDbSuperUserConnString =
                 superUserConnString { DB.connectDatabase = Text.unpack dbName }
@@ -308,50 +310,68 @@ collectPendingMigrations (CoddSettings { superUserConnString, dbName, sqlMigrati
             -- Run all Migrations now. Group them in blocks of consecutive transactions by in-txn/no-txn.
             return $ NE.groupWith runInTxn pendingParsedMigrations
 
-mainAppApplyMigsBlock
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
-    => CoddSettings
-    -> Maybe DbHashes
-    -> DB.Connection
-    -> TxnBracket m
-    -> [BlockOfMigrations]
-    -> m ()
-mainAppApplyMigsBlock coddSettings mExpectedHashes conn txnBracket pendingMigBlocks
-    = do
-        let actionAfter =
-                checkExpectedHashesAfterAction coddSettings mExpectedHashes
-        baseApplyMigsBlock actionAfter conn txnBracket pendingMigBlocks
+data CheckHashes = DoCheckHashes CoddSettings DbHashes | DontCheckHashes
 
 -- | Note: "actionAfter" runs in the same transaction if all supplied migrations are in-txn, or separately, and not in an explicit transaction, otherwise.
+-- A hash check only happens after "actionAfter" runs in any case, and kills the app in case they don't match. However, if even one no-txn migration is present,
+-- all migrations are applied and committed before "actionAfter" and then the hash check run.
+-- Note: An exception to the above is that if "checkHashes" is DontCheckHashes, then hash checking never occurs.
 baseApplyMigsBlock
     :: forall m a
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
-    => (DB.Connection -> m a)
+    => CheckHashes
+    -> (DB.Connection -> m a)
     -> DB.Connection
     -> TxnBracket m
     -> [BlockOfMigrations]
     -> m a
-baseApplyMigsBlock actionAfter conn txnBracket blocksOfMigs = do
+baseApplyMigsBlock checkHashes actionAfter conn txnBracket blocksOfMigs = do
     case blocksOfMigs of
         []                   -> actionAfter conn
-        [b1] | blockInTxn b1 -> runBlock actionAfter b1
+        [b1] | blockInTxn b1 -> runBlock lastActionThenCheck b1
         _                    -> do
+            hashLog
+                logWarnN
+                "IMPORTANT: Schema checks disabled due to presence of no-txn migrations"
             forM_ blocksOfMigs $ runBlock (const (pure ()))
-            actionAfter conn
+            hashLog
+                logWarnN
+                "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been successfully applied and committed without checking schemas."
+            hashLog
+                logWarnN
+                "IMPORTANT: Still, we'll run a schema check now for you to make sure everything's ok, and exit with an error in case it isn't."
+            lastActionThenCheck conn
 
   where
+    hashLog logf t = case checkHashes of
+        DoCheckHashes _ _ -> logf t
+        _                 -> pure ()
     runMigs migs = forM_ migs $ \(MigrationToRun asqlmig ap) ->
         applySingleMigration conn ap asqlmig
     runBlock :: (DB.Connection -> m b) -> BlockOfMigrations -> m b
     runBlock act migBlock = do
         if blockInTxn migBlock
             then do
-                txnBracket conn $ do
+                logDebugN "BEGINning transaction"
+                res <- txnBracket conn $ do
                     runMigs migBlock
                     act conn
+                logDebugN "COMMITed transaction"
+                pure res
             else do
                 runMigs migBlock
                 act conn
+
+    lastActionThenCheck c = do
+        res <- actionAfter c
+        case checkHashes of
+            DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
+                checkExpectedHashesOrFail coddSettingsForDbHashes
+                                          expectedHashes
+                                          c
+                hashLog logInfoN "Database and expected schemas match."
+            _ -> pure ()
+        pure res
 
 data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
 
@@ -392,8 +412,8 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                             else NotInTransaction
                     in  multiQueryStatement_ inTxn conn nonDestSql
 
-                                        -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
-                                        -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                            -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
+                                                                                                                            -- since every migration will have both sections marked as ran sequentially.
             liftIO $ void $ DB.execute
                 conn
                 "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)"

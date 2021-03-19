@@ -169,6 +169,10 @@ main = do
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo UpDev = runStdoutLoggingT $ do
   Codd.applyMigrations dbInfo False
+  -- Important, and we don't have a test for it yet:
+  -- Getting checksums must happen in a connection opened after applying migrations
+  -- due to changes that are only reflected in the catalog for new connections
+  -- (e.g. ALTER DATABASE SET ...)
   checksum <- Codd.withConnection
     (Codd.superUserInAppDatabaseConnInfo dbInfo)
     (Codd.readHashesFromDatabaseWithSettings dbInfo)

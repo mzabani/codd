@@ -5,7 +5,7 @@ module Codd.AppCommands.VerifyChecksums
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
-import           Codd.Hashing                   ( hashDifferences
+import           Codd.Hashing                   ( logHashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 , readHashesFromDisk
                                                 )
@@ -13,17 +13,11 @@ import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Internal                  ( withConnection )
 import           Control.Monad                  ( when )
 import           Control.Monad.Logger           ( MonadLoggerIO
-                                                , logErrorN
                                                 , logInfoN
                                                 )
-import           Data.Aeson                     ( decode
-                                                , encode
-                                                )
-import           Data.ByteString.Lazy           ( hGetContents
-                                                , toStrict
-                                                )
+import           Data.Aeson                     ( decode )
+import           Data.ByteString.Lazy           ( hGetContents )
 import           Data.Maybe                     ( fromMaybe )
-import           Data.Text.Encoding             ( decodeUtf8 )
 import           System.Exit                    ( ExitCode(..)
                                                 , exitWith
                                                 )
@@ -53,13 +47,6 @@ verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes } fromStdin = do
     adminConnInfo
     (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
   when (dbHashes /= expectedChecksums) $ do
-    -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
-    logErrorN $ decodeUtf8 $ toStrict $ encode $ hashDifferences
-      dbHashes
-      expectedChecksums
-    logErrorN
-      "DB and expected checksums do not match. Differences right above this message. Left is Database, Right is expected."
-    logErrorN
-      "Do note some names will not be strictly the names of Database objects, because codd may add extra characters and strings due to DB name overloading."
+    logHashDifferences dbHashes expectedChecksums
     liftIO $ exitWith (ExitFailure 1)
   logInfoN "Database and expected checksums match."

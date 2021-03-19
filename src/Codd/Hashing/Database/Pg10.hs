@@ -153,7 +153,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                          , "pg_settings.reset_val"
                                          , "pg_settings.min_val"
                                          , "pg_settings.max_val"
-                                         , "pg_settings.enumvals"
+                                         , sortArrayExpr "pg_settings.enumvals"
                                          ]
                                   <> " ORDER BY pg_settings.name)"
                                   ]
