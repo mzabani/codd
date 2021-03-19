@@ -18,6 +18,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
+                                                , unsafeQuery1
                                                 )
 import           Control.Monad                  ( forM
                                                 , forM_
@@ -108,6 +109,11 @@ checkExpectedHashesOrFail coddSettings expectedHashes conn = do
     dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
     when (dbhashes /= expectedHashes) $ do
         logHashDifferences dbhashes expectedHashes
+        v :: (String, String) <- unsafeQuery1
+            conn
+            "SELECT name, setting FROM pg_settings WHERE name='default_transaction_isolation'"
+            ()
+        liftIO $ print v
         throwIO $ userError "DB checksums check failed. Differences printed"
 
 -- | Creates the App's Database and Codd's schema if it does not yet exist.
@@ -412,8 +418,8 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                             else NotInTransaction
                     in  multiQueryStatement_ inTxn conn nonDestSql
 
-                                                                                                                            -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
-                                                                                                                            -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                                -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
+                                                                                                                                -- since every migration will have both sections marked as ran sequentially.
             liftIO $ void $ DB.execute
                 conn
                 "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)"

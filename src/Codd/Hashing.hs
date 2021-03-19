@@ -7,7 +7,7 @@ module Codd.Hashing
     , matchOrd
     ) where
 
-import           Codd.Hashing.Database          ( HashReq2(..)
+import           Codd.Hashing.Database          ( HashReq(..)
                                                 , Haxl
                                                 , HaxlEnv
                                                 , PgVersion
