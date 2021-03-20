@@ -110,66 +110,64 @@ checkMigration
     => CoddSettings
     -> SqlMigration
     -> m MigrationCheck
-checkMigration dbInfoApp@(CoddSettings { superUserConnString, dbName }) mig =
-    do
-        createEmptyDbIfNecessary dbInfoApp
+checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
+    createEmptyDbIfNecessary dbInfoApp
 
-        -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
-        -- conflicts that aren't caught by on-disk hashes are detected by developers
+    -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
+    -- conflicts that aren't caught by on-disk hashes are detected by developers
 
-        -- Also: Everything must run in a throw-away Database, with can't use BEGIN ... ROLLBACK because
-        -- there might be deferrable constraints and triggers which run on COMMIT and which must also be tested.
-        let throwAwayDbName = dbIdentifier "codd-throwaway-db"
-            appDbName       = dbIdentifier dbName
-            throwAwayDbInfo =
-                dbInfoForExistingMigs { dbName = "codd-throwaway-db" }
+    -- Also: Everything must run in a throw-away Database, with can't use BEGIN ... ROLLBACK because
+    -- there might be deferrable constraints and triggers which run on COMMIT and which must also be tested.
+    -- TODO: Maybe we can PREPARE COMMIT when there are only in-txn migs?
+    let throwAwayDbName = dbIdentifier "codd-throwaway-db"
+        appDbName       = dbIdentifier dbName
+        throwAwayDbInfo =
+            dbInfoForExistingMigs { dbName = "codd-throwaway-db" }
 
-        numOtherConnected :: Int64 <-
-            fmap DB.fromOnly $ withConnection superUserConnString $ \conn ->
-                unsafeQuery1
+    numOtherConnected :: Int64 <-
+        fmap DB.fromOnly $ withConnection superUserConnString $ \conn ->
+            unsafeQuery1
+                conn
+                "select count(*) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
+                (DB.Only dbName)
+    when (numOtherConnected > 0) $ do
+        liftIO
+            $ putStrLn
+            $ "Warning: To analyze a migration, a throw-away Database will be created to avoid modifying the App's Database."
+        liftIO
+            $  putStrLn
+            $  "There are other open connections to database "
+            ++ show dbName
+            ++ ". Would you like to terminate them and proceed? [y/n]"
+        proceed <- liftIO getLine
+        case proceed of
+            "y" -> withConnection superUserConnString $ \conn ->
+                void $ query @(DB.Only Bool)
                     conn
-                    "select count(*) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
+                    "select pg_terminate_backend(pid) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
                     (DB.Only dbName)
-        when (numOtherConnected > 0) $ do
-            liftIO
-                $ putStrLn
-                $ "Warning: To analyze a migration, a throw-away Database will be created to avoid modifying the App's Database."
-            liftIO
-                $  putStrLn
-                $  "There are other open connections to database "
-                ++ show dbName
-                ++ ". Would you like to kill them and proceed? [y/n]"
-            proceed <- liftIO getLine
-            case proceed of
-                "y" -> withConnection superUserConnString $ \conn ->
-                    void $ query @(DB.Only Bool)
-                        conn
-                        "select pg_terminate_backend(pid) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
-                        (DB.Only dbName)
-                _ -> error "Exiting without analyzing migration."
+            _ -> error "Exiting without analyzing migration."
 
-        bracket_
-            (withConnection superUserConnString $ \conn -> liftIO $ do
-                void
-                    $  DB.execute_ conn
-                    $  "DROP DATABASE IF EXISTS "
-                    <> throwAwayDbName
-                DB.execute_ conn
-                    $  "CREATE DATABASE "
-                    <> throwAwayDbName
-                    <> " TEMPLATE "
-                    <> appDbName
-            )
-            (withConnection superUserConnString $ \conn ->
-                liftIO
-                    $  DB.execute_ conn
-                    $  "DROP DATABASE IF EXISTS "
-                    <> throwAwayDbName
-            )
-            (applyMigrationsInternal beginCommitTxnBracket
-                                     applyMigs
-                                     throwAwayDbInfo
-            )
+    bracket_
+        (withConnection superUserConnString $ \conn -> liftIO $ do
+            void
+                $  DB.execute_ conn
+                $  "DROP DATABASE IF EXISTS "
+                <> throwAwayDbName
+            DB.execute_ conn
+                $  "CREATE DATABASE "
+                <> throwAwayDbName
+                <> " TEMPLATE "
+                <> appDbName
+        )
+        (withConnection superUserConnString $ \conn ->
+            liftIO
+                $  DB.execute_ conn
+                $  "DROP DATABASE IF EXISTS "
+                <> throwAwayDbName
+        )
+        (applyMigrationsInternal beginCommitTxnBracket applyMigs throwAwayDbInfo
+        )
 
   where
     thisMigrationAdded    = AddedSqlMigration mig DB.PosInfinity
@@ -188,11 +186,10 @@ checkMigration dbInfoApp@(CoddSettings { superUserConnString, dbName }) mig =
         -> [NonEmpty MigrationToRun]
         -> m MigrationCheck
     applyMigs conn txnBracket allMigs =
-        baseApplyMigsBlock runLast conn txnBracket allMigs
+        baseApplyMigsBlock DontCheckHashes runLast conn txnBracket allMigs
 
     getTxId :: DB.Connection -> m Int64
-    getTxId conn =
-        fmap DB.fromOnly $ unsafeQuery1 conn "SELECT txid_current()" ()
+    getTxId conn = DB.fromOnly <$> unsafeQuery1 conn "SELECT txid_current()" ()
 
     runLast conn = do
         hbef                <- readHashesFromDatabaseWithSettings dbInfoApp conn

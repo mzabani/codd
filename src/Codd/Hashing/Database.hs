@@ -44,36 +44,36 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
 
-data HashReq2 a where
-  GetHashesReq2 ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq2 [(ObjName, ObjHash)]
+data HashReq a where
+  GetHashesReq ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, ObjHash)]
   deriving stock (Typeable)
 
-instance Eq (HashReq2 a) where
-  GetHashesReq2 hobj1 sn1 tn1 == GetHashesReq2 hobj2 sn2 tn2 =
+instance Eq (HashReq a) where
+  GetHashesReq hobj1 sn1 tn1 == GetHashesReq hobj2 sn2 tn2 =
     (hobj1, sn1, tn1) == (hobj2, sn2, tn2)
 
-instance Hashable (HashReq2 a) where
-  hashWithSalt s (GetHashesReq2 hobj sn tn) = hashWithSalt s (hobj, sn, tn)
+instance Hashable (HashReq a) where
+  hashWithSalt s (GetHashesReq hobj sn tn) = hashWithSalt s (hobj, sn, tn)
 
 
-instance Show (HashReq2 a) where
-  show (GetHashesReq2 hobj sn tn) = "GetHashesReq: " ++ show (hobj, sn, tn)
+instance Show (HashReq a) where
+  show (GetHashesReq hobj sn tn) = "GetHashesReq: " ++ show (hobj, sn, tn)
 
-instance ShowP HashReq2 where
+instance ShowP HashReq where
   showp = show
 
 
-instance StateKey HashReq2 where
-  data State HashReq2 = UserState2 {}
+instance StateKey HashReq where
+  data State HashReq = UserState {}
 
 
-instance DataSourceName HashReq2 where
+instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole)
 type Haxl = GenHaxl HaxlEnv ()
 
-data SameQueryFormatFetch2 = SameQueryFormatFetch2
+data SameQueryFormatFetch = SameQueryFormatFetch
   { uniqueIdx2 :: Int
   , hobj2      :: HashableObject
   , ids2       :: (Maybe ObjName, Maybe ObjName)
@@ -81,7 +81,7 @@ data SameQueryFormatFetch2 = SameQueryFormatFetch2
   , rvar2      :: ResultVar [(ObjName, ObjHash)]
   }
 
-instance DataSource HaxlEnv HashReq2 where
+instance DataSource HaxlEnv HashReq where
   fetch _ _ (hashQueryFor, conn, allSchemas, allRoles) = SyncFetch
     combineQueriesWithWhere
    where
@@ -120,23 +120,23 @@ instance DataSource HaxlEnv HashReq2 where
     -- one for views, one for triggers and so on..
     combineQueriesWithWhere blockedFetches = do
       let
-        allHashReqs :: [SameQueryFormatFetch2]
+        allHashReqs :: [SameQueryFormatFetch]
         allHashReqs = zipWith
-          (\i (a, b, c, d) -> SameQueryFormatFetch2 i a b c d)
+          (\i (a, b, c, d) -> SameQueryFormatFetch i a b c d)
           [1 ..]
           [ ( hobj
             , (schemaName, tblName)
             , hashQueryFor allRoles allSchemas schemaName tblName hobj
             , r
             )
-          | BlockedFetch (GetHashesReq2 hobj schemaName tblName) r <-
+          | BlockedFetch (GetHashesReq hobj schemaName tblName) r <-
             blockedFetches
           ]
 
-        fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch2]
+        fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch]
         fetchesPerQueryFormat = NE.groupAllWith hobj2 allHashReqs
 
-        queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch2)]
+        queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch)]
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
           let
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
@@ -272,12 +272,12 @@ readHashesFromDatabase
   -> Include SqlRole
   -> m DbHashes
 readHashesFromDatabase pgVer conn allSchemas allRoles = do
-  let stateStore = stateSet UserState2{} stateEmpty
+  let stateStore = stateSet UserState{} stateEmpty
   env0 <- liftIO $ initEnv stateStore (pgVer, conn, allSchemas, allRoles)
   liftIO $ runHaxl env0 $ do
-    allDbSettings <- dataFetch $ GetHashesReq2 HDatabaseSettings Nothing Nothing
-    roles         <- dataFetch $ GetHashesReq2 HRole Nothing Nothing
-    schemas       <- dataFetch $ GetHashesReq2 HSchema Nothing Nothing
+    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
+    roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing
+    schemas       <- dataFetch $ GetHashesReq HSchema Nothing Nothing
     let
       dbSettings = case allDbSettings of
         [(_, h)] -> h
@@ -290,10 +290,10 @@ readHashesFromDatabase pgVer conn allSchemas allRoles = do
 getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)
 getSchemaHash schemas =
   fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
-    tables      <- dataFetch $ GetHashesReq2 HTable (Just schemaName) Nothing
-    views       <- dataFetch $ GetHashesReq2 HView (Just schemaName) Nothing
-    routines    <- dataFetch $ GetHashesReq2 HRoutine (Just schemaName) Nothing
-    sequences   <- dataFetch $ GetHashesReq2 HSequence (Just schemaName) Nothing
+    tables      <- dataFetch $ GetHashesReq HTable (Just schemaName) Nothing
+    views       <- dataFetch $ GetHashesReq HView (Just schemaName) Nothing
+    routines    <- dataFetch $ GetHashesReq HRoutine (Just schemaName) Nothing
+    sequences   <- dataFetch $ GetHashesReq HSequence (Just schemaName) Nothing
 
     tableHashes <- getTablesHashes schemaName tables
     let allObjs =
@@ -306,13 +306,12 @@ getSchemaHash schemas =
 
 getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [SchemaObjectHash]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
-  columns <- dataFetch $ GetHashesReq2 HColumn (Just schemaName) (Just tblName)
+  columns <- dataFetch $ GetHashesReq HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch
-    $ GetHashesReq2 HTableConstraint (Just schemaName) (Just tblName)
-  triggers <- dataFetch
-    $ GetHashesReq2 HTrigger (Just schemaName) (Just tblName)
-  policies <- dataFetch $ GetHashesReq2 HPolicy (Just schemaName) (Just tblName)
-  indexes  <- dataFetch $ GetHashesReq2 HIndex (Just schemaName) (Just tblName)
+    $ GetHashesReq HTableConstraint (Just schemaName) (Just tblName)
+  triggers <- dataFetch $ GetHashesReq HTrigger (Just schemaName) (Just tblName)
+  policies <- dataFetch $ GetHashesReq HPolicy (Just schemaName) (Just tblName)
+  indexes  <- dataFetch $ GetHashesReq HIndex (Just schemaName) (Just tblName)
   pure $ TableHash tblName
                    tableHash
                    (listToMap $ map (uncurry TableColumn) columns)

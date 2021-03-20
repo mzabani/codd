@@ -25,7 +25,7 @@ This method will install an executable named `codd` and make it available in you
 
 ## Configuring Codd
 
-_Codd_ will hash DB Objects to ensure Database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects - such as schemas and roles - it will consider, and connection strings for it to connect.
+_Codd_ will checksum DB Objects to ensure Database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects - such as schemas and roles - it will consider, and connection strings for it to connect.
 
 Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable. We suggest you add this file to you project's root folder.
 
@@ -46,9 +46,9 @@ CODD_MIGRATION_DIRS=sql-migrations/all:sql-migrations/dev-only
 
 # Folder where files will be created with checksums of DB objects. This folder will be
 # wiped clean by codd every time it's necessary
-CODD_CHECKSUM_DIR=sql-migrations/on-disk-hashes
+CODD_CHECKSUM_DIR=sql-migrations/on-disk-cksums
 
-# Space separated schemas to hash
+# Space separated schemas to checksum
 CODD_SCHEMAS=public
 
 # Space separated roles other than the ones specified above that must also be considered
@@ -124,7 +124,7 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 ## Important notes about SQL migrations
 
 1. By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the Database in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
-2. _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly.  
+2. _Codd_ will run blocks of consecutive `in-txn` migrations (that can run in transactions) in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly. Also, if even one `no-txn` migration exists, _codd_ will apply and commit every pending migration without running a schema check, showing differences, if any, after doing so.  
 3. `COPY FROM STDIN` is supported but other forms of `COPY` or psql's meta commands, including `\COPY`, _are not_.  
 
 ## Schema equality checks
@@ -161,3 +161,14 @@ If you already have a Database and would like to start using _Codd_, here's a su
 5. Run `dropdb your_database; codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
 6. You should now have your Database back and managed through _Codd_.
 7. Make sure your Production `.env` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
+
+
+## Very important considerations for safety
+
+We recommend following these instructions closely to avoid several problems. Even then, they do not guarantee everything will work smoothly.
+
+- Never merge code that has been tested without `master` merged into it.
+  - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column.  
+- Always run `codd up-deploy` on CI because that's what will be used in your Production environments.
+- After running `codd up-deploy` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up-deploy` checks checksums, but in some corner cases checksums can differ from one DB connection to another.
+  - The reason is there are migrations which only affect Postgres's catalog for new connections and thus might not reflect on expected checksums properly. One such example is `ALTER DATABASE my_database SET default_transaction_isolation TO 'serializable';`. When writing migrations like this, `up-deploy` will pass but `verify-checksums` will fail. To make these kinds of changes, remember to also add a session-updating analogous statement such as `SET default_transaction_isolation TO 'serializable';` and re-adding the migration. TODO: Make `codd add` run this check automatically.  

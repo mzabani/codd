@@ -112,7 +112,8 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
             (\conn -> do
                 execvoid_
                     conn
-                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\"; \
+                   \ ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'read committed';"
 
                 allRoles :: [String] <-
                     map DB.fromOnly

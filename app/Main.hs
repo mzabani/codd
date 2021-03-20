@@ -1,27 +1,30 @@
 module Main where
 
 import qualified Codd
+import           Codd.AppCommands.AddMigration  ( AddMigrationOptions(..)
+                                                , addMigration
+                                                )
+import           Codd.AppCommands.CheckMigration
+                                                ( checkMigrationFile )
+import           Codd.AppCommands.VerifyChecksums
+                                                ( verifyChecksums )
+import           Codd.AppCommands.WriteChecksums
+                                                ( WriteChecksumsOpts(..)
+                                                , writeChecksums
+                                                )
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
 import qualified Codd.Hashing                  as Codd
-import qualified Codd.Internal                 as Codd
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runVerbosityLogger
+                                                )
 import           Codd.Types                     ( SqlFilePath(..) )
-import           Codd.AppCommands.AddMigration          ( AddMigrationOptions(..)
-                                                , addMigration
-                                                )
-import           Codd.AppCommands.CheckMigration        ( checkMigrationFile )
-import           Codd.AppCommands.VerifyChecksums       ( verifyChecksums )
-import           Codd.AppCommands.WriteChecksums        ( WriteChecksumsOpts(..)
-                                                , writeChecksums
-                                                )
+import           Control.Monad                  ( void )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Options.Applicative
-import           Codd.Logging                          ( Verbosity(..)
-                                                , runVerbosityLogger
-                                                )
 
 data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
 
@@ -168,10 +171,10 @@ main = do
 
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo UpDev = runStdoutLoggingT $ do
-  Codd.applyMigrations dbInfo False
-  checksum <- Codd.withConnection
-    (Codd.superUserInAppDatabaseConnInfo dbInfo)
-    (Codd.readHashesFromDatabaseWithSettings dbInfo)
+  -- Important, and we don't have a test for this:
+  -- check hashes in the same transaction as migrations
+  -- when possible, since that's what "up-deploy" does.
+  checksum        <- Codd.applyMigrations dbInfo False
   onDiskHashesDir <- either
     pure
     (error
@@ -179,7 +182,8 @@ doWork dbInfo UpDev = runStdoutLoggingT $ do
     )
     (onDiskHashes dbInfo)
   Codd.persistHashesToDisk checksum onDiskHashesDir
-doWork dbInfo UpDeploy = runStdoutLoggingT $ Codd.applyMigrations dbInfo True
+doWork dbInfo UpDeploy =
+  runStdoutLoggingT $ void $ Codd.applyMigrations dbInfo True
 doWork dbInfo (Analyze verbosity fp) =
   runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) =
