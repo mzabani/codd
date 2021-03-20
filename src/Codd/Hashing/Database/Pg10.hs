@@ -150,7 +150,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                   <> safeStringConcat
                                          [ "pg_settings.name"
                                          , "pg_settings.setting"
-                                         , "pg_settings.reset_val"
+                                         -- , "pg_settings.reset_val" -- Sadly, reset_val is only reflected by `ALTER DATABASE SET ..` in newly opened connections
                                          , "pg_settings.min_val"
                                          , "pg_settings.max_val"
                                          , sortArrayExpr "pg_settings.enumvals"

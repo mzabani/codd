@@ -168,6 +168,7 @@ If you already have a Database and would like to start using _Codd_, here's a su
 We recommend following these instructions closely to avoid several problems. Even then, they do not guarantee everything will work smoothly.
 
 - Never merge code that has been tested without `master` merged into it.
-   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column.  
-- Always use `codd up-deploy` on CI.
-   - These will ensure your on-disk/expected checksums are good. There are migrations which only affect Postgres's catalog for new connections and thus might not reflect on expected checksums properly, but these will be caught by `up-deploy`. One such example is `ALTER DATABASE my_database SET default_transaction_isolation TO 'serializable';`. When writing migrations like this, remember to also add a session-updating analogous statement such as `SET default_transaction_isolation TO 'serializable';` and re-adding the migration.
+  - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column.  
+- Always run `codd up-deploy` on CI because that's what will be used in your Production environments.
+- After running `codd up-deploy` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up-deploy` checks checksums, but in some corner cases checksums can differ from one DB connection to another.
+  - The reason is there are migrations which only affect Postgres's catalog for new connections and thus might not reflect on expected checksums properly. One such example is `ALTER DATABASE my_database SET default_transaction_isolation TO 'serializable';`. When writing migrations like this, `up-deploy` will pass but `verify-checksums` will fail. To make these kinds of changes, remember to also add a session-updating analogous statement such as `SET default_transaction_isolation TO 'serializable';` and re-adding the migration. TODO: Make `codd add` run this check automatically.  

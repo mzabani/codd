@@ -3,20 +3,15 @@ module Codd.AppCommands.AddMigration
   , addMigration
   ) where
 
-import qualified Codd                          as Codd
+import qualified Codd
 import           Codd.Analysis                  ( canRunEverythingInASingleTransaction
                                                 , checkMigration
                                                 , migrationErrors
                                                 )
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
-import           Codd.Hashing                   ( persistHashesToDisk
-                                                , readHashesFromDatabaseWithSettings
-                                                )
-import           Codd.Internal                  ( withConnection )
+import           Codd.Environment               ( CoddSettings(..) )
+import           Codd.Hashing                   ( persistHashesToDisk )
 import           Codd.Parsing                   ( ParsingOptions(..)
                                                 , parseSqlMigration
                                                 )
@@ -99,12 +94,10 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
                        moveMigrationBack
           $ \finalMigFile -> do
               unless dontApply $ do
-                Codd.applyMigrations dbInfo False
                 -- Important, and we don't have a test for this:
-                -- only check hashes on a different DB connection
-                hashes <- withConnection
-                  (superUserInAppDatabaseConnInfo dbInfo)
-                  (readHashesFromDatabaseWithSettings dbInfo)
+                -- check hashes in the same transaction as migrations
+                -- when possible, since that's what "up-deploy" does.
+                hashes <- Codd.applyMigrations dbInfo False
                 persistHashesToDisk hashes onDiskHashesDir
                 liftIO
                   $  putStrLn

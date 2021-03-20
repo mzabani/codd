@@ -18,7 +18,6 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
-                                                , unsafeQuery1
                                                 )
 import           Control.Monad                  ( forM
                                                 , forM_
@@ -98,23 +97,6 @@ beginRollbackTxnBracket conn f =
     (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
 
 type TxnBracket m = forall a . DB.Connection -> m a -> m a
-
-checkExpectedHashesOrFail
-    :: (MonadLogger m, MonadUnliftIO m, MonadIO m)
-    => CoddSettings
-    -> DbHashes
-    -> DB.Connection
-    -> m ()
-checkExpectedHashesOrFail coddSettings expectedHashes conn = do
-    dbhashes <- readHashesFromDatabaseWithSettings coddSettings conn
-    when (dbhashes /= expectedHashes) $ do
-        logHashDifferences dbhashes expectedHashes
-        v :: (String, String) <- unsafeQuery1
-            conn
-            "SELECT name, setting FROM pg_settings WHERE name='default_transaction_isolation'"
-            ()
-        liftIO $ print v
-        throwIO $ userError "DB checksums check failed. Differences printed"
 
 -- | Creates the App's Database and Codd's schema if it does not yet exist.
 createEmptyDbIfNecessary
@@ -318,10 +300,12 @@ collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigratio
 
 data CheckHashes = DoCheckHashes CoddSettings DbHashes | DontCheckHashes
 
--- | Note: "actionAfter" runs in the same transaction if all supplied migrations are in-txn, or separately, and not in an explicit transaction, otherwise.
--- A hash check only happens after "actionAfter" runs in any case, and kills the app in case they don't match. However, if even one no-txn migration is present,
--- all migrations are applied and committed before "actionAfter" and then the hash check run.
--- Note: An exception to the above is that if "checkHashes" is DontCheckHashes, then hash checking never occurs.
+-- | Applies the supplied migrations, running blocks of in-txn migrations with "txnBracket".
+-- Important notes:
+-- - "actionAfter" runs in the same transaction as the last migration iff that migration is in-txn, or separately, not in an explicit transaction and after the last migration otherwise.
+-- - Passing in DontCheckHashes ensures hashes are _never_ checked.
+-- - Passing in CheckHashes will check hashes after "lastAction" runs. It will do so in the same transaction as the last migration iff it's in-txn.
+--   Note that checking hashes will exit the App if they mismatch.
 baseApplyMigsBlock
     :: forall m a
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
@@ -333,25 +317,29 @@ baseApplyMigsBlock
     -> m a
 baseApplyMigsBlock checkHashes actionAfter conn txnBracket blocksOfMigs = do
     case blocksOfMigs of
-        []                   -> actionAfter conn
-        [b1] | blockInTxn b1 -> runBlock lastActionThenCheck b1
-        _                    -> do
-            hashLog
-                logWarnN
-                "IMPORTANT: Schema checks disabled due to presence of no-txn migrations"
-            forM_ blocksOfMigs $ runBlock (const (pure ()))
-            hashLog
-                logWarnN
-                "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been successfully applied and committed without checking schemas."
-            hashLog
-                logWarnN
-                "IMPORTANT: Still, we'll run a schema check now for you to make sure everything's ok, and exit with an error in case it isn't."
-            lastActionThenCheck conn
+        [] -> case checkHashes of
+            DontCheckHashes -> actionAfter conn
+            DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
+                (res, cksums) <- lastActionThenGetCksums
+                    coddSettingsForDbHashes
+                    conn
+                checkSchemasOrFail cksums expectedHashes
+                pure res
+        (x : xs) -> do
+            let bs         = x :| xs
+                allButLast = NE.init bs
+                lastBlock  = NE.last bs
+            forM_ allButLast $ runBlock (const (pure ()))
+            case checkHashes of
+                DontCheckHashes -> runBlock actionAfter lastBlock
+                DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
+                    (res, cksums) <- runBlock
+                        (lastActionThenGetCksums coddSettingsForDbHashes)
+                        lastBlock
+                    checkSchemasOrFail cksums expectedHashes
+                    pure res
 
   where
-    hashLog logf t = case checkHashes of
-        DoCheckHashes _ _ -> logf t
-        _                 -> pure ()
     runMigs migs = forM_ migs $ \(MigrationToRun asqlmig ap) ->
         applySingleMigration conn ap asqlmig
     runBlock :: (DB.Connection -> m b) -> BlockOfMigrations -> m b
@@ -368,16 +356,23 @@ baseApplyMigsBlock checkHashes actionAfter conn txnBracket blocksOfMigs = do
                 runMigs migBlock
                 act conn
 
-    lastActionThenCheck c = do
-        res <- actionAfter c
-        case checkHashes of
-            DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
-                checkExpectedHashesOrFail coddSettingsForDbHashes
-                                          expectedHashes
-                                          c
-                hashLog logInfoN "Database and expected schemas match."
-            _ -> pure ()
-        pure res
+    lastActionThenGetCksums coddSettingsForDbHashes c = do
+        res    <- actionAfter c
+        cksums <- readHashesFromDatabaseWithSettings coddSettingsForDbHashes c
+        pure (res, cksums)
+
+    checkSchemasOrFail cksums expectedHashes = do
+        unless (all blockInTxn blocksOfMigs) $ do
+            logWarnN
+                "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been successfully applied and committed without checking schemas."
+            logWarnN
+                "IMPORTANT: Still, we'll run a schema check now for you to make sure everything's ok, and exit with an error in case it isn't."
+        when (cksums /= expectedHashes) $ do
+            logHashDifferences cksums expectedHashes
+            throwIO $ userError
+                "DB checksums check failed. Differences printed above."
+
+        logInfoN "Database and expected schemas match."
 
 data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
 
@@ -418,8 +413,8 @@ applySingleMigration conn ap (AddedSqlMigration sqlMig migTimestamp) = do
                             else NotInTransaction
                     in  multiQueryStatement_ inTxn conn nonDestSql
 
-                                                                                                                                -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
-                                                                                                                                -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                                            -- We mark the destructive section as ran if it's empty as well. This goes well with the Simple Deployment workflow,
+                                                                                                                                            -- since every migration will have both sections marked as ran sequentially.
             liftIO $ void $ DB.execute
                 conn
                 "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)"

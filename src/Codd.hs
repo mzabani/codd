@@ -7,7 +7,10 @@ module Codd
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
-import           Codd.Hashing                   ( readHashesFromDisk )
+import           Codd.Hashing                   ( DbHashes
+                                                , readHashesFromDatabaseWithSettings
+                                                , readHashesFromDisk
+                                                )
 import           Codd.Internal                  ( CheckHashes(..)
                                                 , applyMigrationsInternal
                                                 , baseApplyMigsBlock
@@ -23,12 +26,13 @@ import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
 import           UnliftIO.Exception             ( bracket )
 
--- | Creates the new Database if it doesn't yet exist and applies every single migration.
+-- | Creates the new Database if it doesn't yet exist and applies every single migration, returning the Database's checksums after having
+-- migrations applied.
 applyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
     -> Bool
-    -> m ()
+    -> m DbHashes
 applyMigrations dbInfo@CoddSettings { onDiskHashes } checkHashes = do
     if checkHashes
         then do
@@ -37,9 +41,12 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes } checkHashes = do
                 beginCommitTxnBracket
                 (baseApplyMigsBlock (DoCheckHashes dbInfo eh) (const $ pure ()))
                 dbInfo
+            pure eh
         else applyMigrationsInternal
             beginCommitTxnBracket
-            (baseApplyMigsBlock DontCheckHashes (const $ pure ()))
+            (baseApplyMigsBlock DontCheckHashes
+                                (readHashesFromDatabaseWithSettings dbInfo)
+            )
             dbInfo
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database

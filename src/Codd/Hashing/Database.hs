@@ -73,7 +73,7 @@ instance DataSourceName HashReq where
 type HaxlEnv = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole)
 type Haxl = GenHaxl HaxlEnv ()
 
-data SameQueryFormatFetch2 = SameQueryFormatFetch2
+data SameQueryFormatFetch = SameQueryFormatFetch
   { uniqueIdx2 :: Int
   , hobj2      :: HashableObject
   , ids2       :: (Maybe ObjName, Maybe ObjName)
@@ -120,9 +120,9 @@ instance DataSource HaxlEnv HashReq where
     -- one for views, one for triggers and so on..
     combineQueriesWithWhere blockedFetches = do
       let
-        allHashReqs :: [SameQueryFormatFetch2]
+        allHashReqs :: [SameQueryFormatFetch]
         allHashReqs = zipWith
-          (\i (a, b, c, d) -> SameQueryFormatFetch2 i a b c d)
+          (\i (a, b, c, d) -> SameQueryFormatFetch i a b c d)
           [1 ..]
           [ ( hobj
             , (schemaName, tblName)
@@ -133,10 +133,10 @@ instance DataSource HaxlEnv HashReq where
             blockedFetches
           ]
 
-        fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch2]
+        fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch]
         fetchesPerQueryFormat = NE.groupAllWith hobj2 allHashReqs
 
-        queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch2)]
+        queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch)]
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
           let
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!

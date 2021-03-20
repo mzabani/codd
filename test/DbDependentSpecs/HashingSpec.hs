@@ -543,7 +543,7 @@ migrationsAndHashChange = zipWith
       )
 
       -- DATABASE SETTINGS
-    , ( "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'"
+    , ( "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'; SET default_transaction_isolation TO 'serializable';"
       , ChangeEq [("db-settings", BothButDifferent)]
       )
 
@@ -568,10 +568,10 @@ spec = do
               do
                 let newMigs = appliedMigs ++ [nextMig]
                     dbInfo  = emptyDbInfo { sqlMigrations = Right newMigs }
-                runStdoutLoggingT $ applyMigrations dbInfo False
-                dbHashesAfterMig <- getHashes dbInfo
-                let migText = parsedSqlText
-                      <$> nonDestructiveSql (addedSqlMig nextMig)
+                dbHashesAfterMig <- runStdoutLoggingT
+                  $ applyMigrations dbInfo False
+                let migText =
+                      parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
                     diff = hashDifferences hashSoFar dbHashesAfterMig
                 case expectedChanges of
                   ChangeEq c -> do

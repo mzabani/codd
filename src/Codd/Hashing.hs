@@ -12,7 +12,7 @@ import           Codd.Hashing.Database          ( HashReq(..)
                                                 , HaxlEnv
                                                 , PgVersion
                                                 , QueryInPieces(..)
-                                                , SameQueryFormatFetch2(..)
+                                                , SameQueryFormatFetch(..)
                                                 , State(..)
                                                 , getSchemaHash
                                                 , getTablesHashes
