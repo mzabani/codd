@@ -250,8 +250,13 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
                                        conn
                                        schemasToHash
                                        rolesToHash
+          -- Postgres 13 doesn't seem to have any hashable new features compared to 12
+          13 -> readHashesFromDatabase Pg12.hashQueryFor
+                                       conn
+                                       schemasToHash
+                                       rolesToHash
           v
-            | v < 13 -> error
+            | v <= 13 -> error
             $  "Unsupported PostgreSQL version "
             ++ show majorVersion
             | otherwise -> do
