@@ -5,7 +5,7 @@ _Codd_ is a tool to help teams of Developers version-control their Databases loc
 - Checksums of your Database to help minimize chances that your Production Database differs from your Development Database. This checksum is done in a way such that different developers writing SQL migrations that affect the same Database objects become merge conflicts, but touching distinct DB objects does not lead to conflicts. Currently, codd **can't guarantee complete schema equality**, so beware of that.  
 - A way to apply pending SQL migrations in a single DB Transaction when possible, rolling back in case checksums mismatch before committing.  
 
-**It is only compatible with PostgreSQL version 10, 11 and 12 (should also work with 13 but only supporting v12's features). No other databases are currently supported.**
+**It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
 
 ## Installing Codd
 

@@ -12,6 +12,10 @@ fi
 ./scripts/run-test.sh "$WITH_NIX" --skip "/DbDependentSpecs/"
 
 # Postgres-version dependent tests for each possible version next
+# Postgres 13
+echo Running tests on Postgres 13
+nix-shell nix/test-shell-pg13.nix --run "./scripts/run-test.sh $WITH_NIX --match \"/DbDependentSpecs/\""
+
 # Postgres 12
 echo Running tests on Postgres 12
 nix-shell nix/test-shell-pg12.nix --run "./scripts/run-test.sh $WITH_NIX --match \"/DbDependentSpecs/\""
