@@ -108,7 +108,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relreplident"
                       , "pg_class.relispartition"
                       , sortArrayExpr "pg_class.reloptions"
-                      , "pg_class.relpartbound"
+                      -- , "pg_class.relpartbound" -- a pg_node_tree for partition bound, but I couldn't find a function to get its definition
                       , "_codd_roles.permissions"
                       ]
     , fromTable     = "pg_catalog.pg_class"
@@ -296,17 +296,19 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                         , "seqmin"
                                         , "seqcache"
                                         , "seqcycle"
-                                        , "owner_col_table.relname"
-                                        , "pg_attribute.attnum" -- Num instead of name doesn't touch the sequence if the column's renamed,
+                                        , "owner_column.tablename"
+                                        , "owner_column.colnum" -- Num instead of name doesn't touch the sequence if the column's renamed,
                                                                 -- but touches it if the column changes positions (which is probably better)
                                         ]
                 , joins        =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_sequence pg_sequence ON seqrelid=pg_class.oid \
                           \\n JOIN pg_catalog.pg_type AS pg_seq_type ON pg_seq_type.oid=pg_sequence.seqtypid \
-                          \\n LEFT JOIN pg_catalog.pg_depend ON pg_depend.objid=pg_class.oid \
-                          \\n LEFT JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_depend.refobjid AND pg_attribute.attnum=pg_depend.refobjsubid \
-                          \\n LEFT JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid"
+                          \\n LEFT JOIN (SELECT pg_depend.objid AS sequence_oid, owner_Col_table.relname AS tablename, pg_attribute.attnum AS colnum \
+                          \\n      FROM pg_catalog.pg_depend \
+                          \\n         JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_depend.refobjid AND pg_attribute.attnum=pg_depend.refobjsubid \
+                          \\n         JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid) owner_column \
+                          \\n            ON owner_column.sequence_oid=pg_class.oid"
                 }
     HRoutine ->
         let nonAggCols =
@@ -323,7 +325,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 , "pg_type_rettype.typname"
                 , "proargmodes"
                 , "proargnames"
-                , "proargdefaults"
+                -- , "proargdefaults" -- pg_node_tree type (avoid)
+                , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
                 , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
                 , "_codd_roles.permissions"
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
@@ -410,6 +413,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "pg_constraint.conkey"
                           , "pg_constraint.confkey"
                           , "pg_get_constraintdef(pg_constraint.oid)"
+                          -- , "conbin" -- A pg_node_tree
                           ]
         , fromTable     = "pg_catalog.pg_constraint"
         , joins         =
@@ -434,12 +438,15 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         in
             hq
                 {
-            -- TODO: Lots of columns still missing!!
+            -- TODO: Lots of columns still missing!! But pg_get_indexdef should do a good enough job for now
                   checksumCols = checksumCols hq
                                      ++ [ "indisunique"
                                         , "indisprimary"
                                         , "indisexclusion"
                                         , "indimmediate"
+                                        , "pg_get_indexdef(pg_index.indexrelid)"
+                                        -- , "indexprs" -- pg_node_tree
+                                        -- , "indpred" -- pg_node_tree
                                         ]
                 , joins        =
                     joins hq
@@ -467,7 +474,9 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "tgnargs"
                           , "tgattr"
                           , "tgargs"
-                          , "tgqual"
+                          -- , "tgqual" -- This is system dependent. Equal expression can have different pg_node_tree::text representations
+                          -- With the inclusion below, many other columns are probably unnecessary
+                          , "pg_catalog.pg_get_triggerdef(pg_trigger.oid)"
                           , "tgoldtable"
                           , "tgnewtable"
                           ]
