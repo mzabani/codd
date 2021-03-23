@@ -108,7 +108,7 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relreplident"
                       , "pg_class.relispartition"
                       , sortArrayExpr "pg_class.reloptions"
-                      , "pg_class.relpartbound"
+                      -- , "pg_class.relpartbound" -- a pg_node_tree for partition bound, but I couldn't find a function to get its definition
                       , "_codd_roles.permissions"
                       ]
     , fromTable     = "pg_catalog.pg_class"
@@ -323,7 +323,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 , "pg_type_rettype.typname"
                 , "proargmodes"
                 , "proargnames"
-                , "proargdefaults"
+                -- , "proargdefaults" -- pg_node_tree type (avoid)
+                , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
                 , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
                 , "_codd_roles.permissions"
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
@@ -410,6 +411,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "pg_constraint.conkey"
                           , "pg_constraint.confkey"
                           , "pg_get_constraintdef(pg_constraint.oid)"
+                          -- , "conbin" -- A pg_node_tree
                           ]
         , fromTable     = "pg_catalog.pg_constraint"
         , joins         =
@@ -434,12 +436,15 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         in
             hq
                 {
-            -- TODO: Lots of columns still missing!!
+            -- TODO: Lots of columns still missing!! But pg_get_indexdef should do a good enough job for now
                   checksumCols = checksumCols hq
                                      ++ [ "indisunique"
                                         , "indisprimary"
                                         , "indisexclusion"
                                         , "indimmediate"
+                                        , "pg_get_indexdef(pg_index.indexrelid)"
+                                        -- , "indexprs" -- pg_node_tree
+                                        -- , "indpred" -- pg_node_tree
                                         ]
                 , joins        =
                     joins hq
@@ -467,7 +472,9 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "tgnargs"
                           , "tgattr"
                           , "tgargs"
-                          , "tgqual"
+                          -- , "tgqual" -- This is system dependent. Equal expression can have different pg_node_tree::text representations
+                          -- With the inclusion below, many other columns are probably unnecessary
+                          , "pg_catalog.pg_get_triggerdef(pg_trigger.oid)"
                           , "tgoldtable"
                           , "tgnewtable"
                           ]
