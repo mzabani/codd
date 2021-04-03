@@ -15,8 +15,7 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 * [Configuring Codd](#ConfiguringCodd)
 * [Starting out](#Startingout)
 * [Adding a SQL Migration](#AddingaSQLMigration)
-	* [More about SQL Migrations](#MoreaboutSQLMigrations)
-	* [Important notes](#Importantnotes)
+	* [no-txn migrations and more](#no-txnmigrationsandmore)
 * [Start using Codd in an existing Database](#StartusingCoddinanexistingDatabase)
 * [Safety considerations](#Safetyconsiderations)
 
@@ -125,11 +124,9 @@ CREATE TABLE employee (
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
 
-### <a name='MoreaboutSQLMigrations'></a>More about SQL Migrations
+### <a name='no-txnmigrationsandmore'></a>no-txn migrations and more
 
-_Codd_ will — when possible — run every pending migration in a single transaction. Even if there's more than one pending migration, such as what typically happens when deploying and running migrations in Production, they will all run in the same transaction.
-
-However, not all SQL can run inside a transaction. One example is altering `enum` types and using the newly created `enum` values.
+Not all SQL can run inside a transaction. One example is altering `enum` types and using the newly created `enum` values.
 Because of that, you can tell *codd* not to run a migration in a transaction, as is exemplified below:
 
 ````sql
@@ -138,11 +135,9 @@ ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
 UPDATE employee SET employee_experience='intern';
 ````
 
-_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction. There are caveats when doing this, so keep on reading to know more.
+_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction.  
 
-### <a name='Importantnotes'></a>Important notes
-
-Using `no-txn` migrations adds great risk by allowing your database to b left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you want to learn more.
+Using `no-txn` migrations adds great risk by allowing your database to b left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
 ## <a name='StartusingCoddinanexistingDatabase'></a>Start using Codd in an existing Database
 

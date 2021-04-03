@@ -13,7 +13,7 @@
 <!-- /vscode-markdown-toc -->
 
 ## <a name='Whatdoescoddchecksum'></a>What does codd checksum?
- For a more thorough - but a bit drafty and _not necessarily up to date_ - description of what is checksummed, see [SCHEMA-MAPPINGS.md](docs/SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, **but be aware** that not all pertinent attributes are necessarily included:
+ For a more thorough - but a bit drafty and _not necessarily up to date_ - description of what is checksummed, see [SCHEMA-MAPPINGS.md](SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, **but be aware** that not all pertinent attributes are necessarily included:
 
 - Tables, columns, CHECK constraints, FKs, indexes and other constraints
 - Indexes
