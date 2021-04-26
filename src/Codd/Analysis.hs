@@ -27,13 +27,16 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( query
                                                 , unsafeQuery1
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow(..) )
+import           Codd.Types                     ( DeploymentWorkflow(..)
+                                                , singleTryPolicy
+                                                )
 import           Control.Monad                  ( void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLogger )
 import           Data.List.NonEmpty             ( NonEmpty )
 import qualified Data.Map.Strict               as Map
+import           Data.Maybe                     ( isNothing )
 import           Data.Text                      ( Text )
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
@@ -65,24 +68,15 @@ migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (Destru
         then
             [ "Non-destructive section is destructive but not properly annotated. Add the option 'force' if you really want this."
             ]
-        else
-            []
-                ++ if (  nonDestSectionEndsTransaction
-                      && nonDestructiveInTxn sqlMig
-                      )
-                   then
-                       [ "Non-destructive section ends Transactions when run, and that is not allowed."
-                       ]
-                   else
-                       []
-                           ++ if (  destSectionEndsTransaction
-                                 && destructiveInTxn sqlMig
-                                 )
-                              then
-                                  [ "Destructive section ends Transactions when run, and that is not allowed."
-                                  ]
-                              else
-                                  []
+        else if nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig
+            then
+                [ "Non-destructive section ends Transactions when run, and that is not allowed."
+                ]
+            else if destSectionEndsTransaction && destructiveInTxn sqlMig
+                then
+                    [ "Destructive section ends Transactions when run, and that is not allowed."
+                    ]
+                else []
 
 -- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
 canRunEverythingInASingleTransaction
@@ -97,8 +91,7 @@ canRunEverythingInASingleTransaction settings mig = do
     return
         $  all blockInTxn pendingMigBlocks
         && nonDestructiveInTxn mig
-        && destructiveSql mig
-        == Nothing
+        && isNothing (destructiveSql mig)
 
 -- | Checks if there are any problems, including:
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.
@@ -110,64 +103,67 @@ checkMigration
     => CoddSettings
     -> SqlMigration
     -> m MigrationCheck
-checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
-    createEmptyDbIfNecessary dbInfoApp
+checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy } mig
+    = do
+        createEmptyDbIfNecessary dbInfoApp
 
-    -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
-    -- conflicts that aren't caught by on-disk hashes are detected by developers
+        -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
+        -- conflicts that aren't caught by on-disk hashes are detected by developers
 
-    -- Also: Everything must run in a throw-away Database, with can't use BEGIN ... ROLLBACK because
-    -- there might be deferrable constraints and triggers which run on COMMIT and which must also be tested.
-    -- TODO: Maybe we can PREPARE COMMIT when there are only in-txn migs?
-    let throwAwayDbName = dbIdentifier "codd-throwaway-db"
-        appDbName       = dbIdentifier dbName
-        throwAwayDbInfo =
-            dbInfoForExistingMigs { dbName = "codd-throwaway-db" }
+        -- Also: Everything must run in a throw-away Database, with can't use BEGIN ... ROLLBACK because
+        -- there might be deferrable constraints and triggers which run on COMMIT and which must also be tested.
+        -- TODO: Maybe we can PREPARE COMMIT when there are only in-txn migs?
+        let throwAwayDbName = dbIdentifier "codd-throwaway-db"
+            appDbName       = dbIdentifier dbName
+            throwAwayDbInfo =
+                dbInfoForExistingMigs { dbName = "codd-throwaway-db" }
 
-    numOtherConnected :: Int64 <-
-        fmap DB.fromOnly $ withConnection superUserConnString $ \conn ->
-            unsafeQuery1
-                conn
-                "select count(*) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
-                (DB.Only dbName)
-    when (numOtherConnected > 0) $ do
-        liftIO
-            $ putStrLn
-            $ "Warning: To analyze a migration, a throw-away Database will be created to avoid modifying the App's Database."
-        liftIO
-            $  putStrLn
-            $  "There are other open connections to database "
-            ++ show dbName
-            ++ ". Would you like to terminate them and proceed? [y/n]"
-        proceed <- liftIO getLine
-        case proceed of
-            "y" -> withConnection superUserConnString $ \conn ->
-                void $ query @(DB.Only Bool)
+        numOtherConnected :: Int64 <-
+            fmap DB.fromOnly $ withConnection superUserConnString $ \conn ->
+                unsafeQuery1
                     conn
-                    "select pg_terminate_backend(pid) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
+                    "select count(*) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
                     (DB.Only dbName)
-            _ -> error "Exiting without analyzing migration."
-
-    bracket_
-        (withConnection superUserConnString $ \conn -> liftIO $ do
-            void
-                $  DB.execute_ conn
-                $  "DROP DATABASE IF EXISTS "
-                <> throwAwayDbName
-            DB.execute_ conn
-                $  "CREATE DATABASE "
-                <> throwAwayDbName
-                <> " TEMPLATE "
-                <> appDbName
-        )
-        (withConnection superUserConnString $ \conn ->
+        when (numOtherConnected > 0) $ do
             liftIO
-                $  DB.execute_ conn
-                $  "DROP DATABASE IF EXISTS "
-                <> throwAwayDbName
-        )
-        (applyMigrationsInternal beginCommitTxnBracket applyMigs throwAwayDbInfo
-        )
+                $ putStrLn
+                $ "Warning: To analyze a migration, a throw-away Database will be created to avoid modifying the App's Database."
+            liftIO
+                $  putStrLn
+                $  "There are other open connections to database "
+                ++ show dbName
+                ++ ". Would you like to terminate them and proceed? [y/n]"
+            proceed <- liftIO getLine
+            case proceed of
+                "y" -> withConnection superUserConnString $ \conn ->
+                    void $ query @(DB.Only Bool)
+                        conn
+                        "select pg_terminate_backend(pid) from pg_stat_activity where datname=? and pid <> pg_backend_pid()"
+                        (DB.Only dbName)
+                _ -> error "Exiting without analyzing migration."
+
+        bracket_
+            (withConnection superUserConnString $ \conn -> liftIO $ do
+                void
+                    $  DB.execute_ conn
+                    $  "DROP DATABASE IF EXISTS "
+                    <> throwAwayDbName
+                DB.execute_ conn
+                    $  "CREATE DATABASE "
+                    <> throwAwayDbName
+                    <> " TEMPLATE "
+                    <> appDbName
+            )
+            (withConnection superUserConnString $ \conn ->
+                liftIO
+                    $  DB.execute_ conn
+                    $  "DROP DATABASE IF EXISTS "
+                    <> throwAwayDbName
+            )
+            (applyMigrationsInternal beginCommitTxnBracket
+                                     applyMigs
+                                     throwAwayDbInfo
+            )
 
   where
     thisMigrationAdded    = AddedSqlMigration mig DB.PosInfinity
@@ -185,8 +181,12 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
         -> TxnBracket m
         -> [NonEmpty MigrationToRun]
         -> m MigrationCheck
-    applyMigs conn txnBracket allMigs =
-        baseApplyMigsBlock DontCheckHashes runLast conn txnBracket allMigs
+    applyMigs conn txnBracket allMigs = baseApplyMigsBlock DontCheckHashes
+                                                           retryPolicy
+                                                           runLast
+                                                           conn
+                                                           txnBracket
+                                                           allMigs
 
     getTxId :: DB.Connection -> m Int64
     getTxId conn = DB.fromOnly <$> unsafeQuery1 conn "SELECT txid_current()" ()
@@ -199,6 +199,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
                 -- Note: if this is going to be expensive, add a --no-check to the app for Users to add migrations. It will be useful
                 -- in case of bugs too.
                 applySingleMigration conn
+                                     singleTryPolicy
                                      ApplyNonDestructiveOnly
                                      thisMigrationAdded
                 txId2 <- getTxId conn
@@ -210,6 +211,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
                     }
             else do
                 applySingleMigration conn
+                                     retryPolicy
                                      ApplyNonDestructiveOnly
                                      thisMigrationAdded
                 haft <- readHashesFromDatabaseWithSettings dbInfoApp conn
@@ -233,6 +235,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName } mig = do
                     $ do
                           txId3 <- getTxId conn
                           applySingleMigration conn
+                                               singleTryPolicy
                                                ApplyDestructiveOnly
                                                thisMigrationAdded
                           txId4 <- getTxId conn

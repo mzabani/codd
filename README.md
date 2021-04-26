@@ -71,6 +71,11 @@ CODD_SCHEMAS=public
 
 # Space separated roles other than the ones specified above that must also be considered
 CODD_EXTRA_ROLES=codd-user
+
+# Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
+# when migrations fail, but you can control it with this variable.
+# Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
+CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
 
 ## <a name='Startingout'></a>Starting out

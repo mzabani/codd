@@ -15,16 +15,33 @@ import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Internal.MultiQueryStatement
+                                                ( SqlStatementException )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
+                                                , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
-import           Control.Monad                  ( void
+import           Codd.Types                     ( RetryBackoffPolicy(..)
+                                                , RetryPolicy(..)
+                                                )
+import           Control.Monad                  ( forM_
+                                                , void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Logger           ( LogStr
+                                                , LoggingT(runLoggingT)
+                                                , fromLogStr
+                                                , runStdoutLoggingT
+                                                )
+import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
-import           Data.Text                      ( unpack )
+import           Data.Text                      ( Text
+                                                , unpack
+                                                )
+import qualified Data.Text                     as Text
+import           Data.Text.Encoding             ( decodeUtf8 )
+import           Data.Time                      ( secondsToNominalDiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
@@ -34,6 +51,12 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.Hspec.Expectations
 import           Test.QuickCheck
+import           UnliftIO                       ( MonadIO )
+import           UnliftIO.Concurrent            ( MVar
+                                                , modifyMVar_
+                                                , newMVar
+                                                , readMVar
+                                                )
 
 placeHoldersMig, selectMig, copyMig :: AddedSqlMigration
 placeHoldersMig = AddedSqlMigration
@@ -69,6 +92,15 @@ copyMig = AddedSqlMigration
         , destructiveInTxn    = True
         }
     (getIncreasingTimestamp 2)
+divideBy0Mig = AddedSqlMigration
+    SqlMigration { migrationName       = "0003-divide-by-0-mig.sql"
+                 , nonDestructiveSql = Just $ mkValidSql "SELECT 2; SELECT 7/0"
+                 , nonDestructiveForce = True
+                 , nonDestructiveInTxn = True
+                 , destructiveSql      = Nothing
+                 , destructiveInTxn    = True
+                 }
+    (getIncreasingTimestamp 3)
 
 spec :: Spec
 spec = do
@@ -240,3 +272,87 @@ spec = do
                                     countTxIds `shouldBe` 4
                                     countInterns `shouldBe` 4
                                     totalRows `shouldBe` 10
+                context "Retry Policy retries and backoff work as expected" $ do
+                    let
+                        testRetries inTxn emptyTestDbInfo = do
+                            -- Kind of ugly.. we test behaviour by analyzing logs and
+                            -- trust that threadDelay is called.
+                            logsmv <- newMVar []
+                            runMVarLogger
+                                    logsmv
+                                    (applyMigrations
+                                        (emptyTestDbInfo
+                                            { sqlMigrations =
+                                                Right
+                                                    [ mapSqlMigration
+                                                          (\m -> m
+                                                              { nonDestructiveInTxn =
+                                                                  inTxn
+                                                              }
+                                                          )
+                                                          divideBy0Mig
+                                                    ]
+                                            , retryPolicy   = RetryPolicy
+                                                7
+                                                (ExponentialBackoff
+                                                    (secondsToNominalDiffTime
+                                                        0.001
+                                                    )
+                                                )
+                                            }
+                                        )
+                                        False
+                                    )
+                                `shouldThrow` (\(e :: SqlStatementException) ->
+                                                  "division by zero"
+                                                      `List.isInfixOf` show e
+
+                                                      &&
+
+                                                -- For no-txn migrations, each statement is retried individually
+                                                         (inTxn
+                                                         && "SELECT 2;"
+                                                         `List.isInfixOf` show
+                                                                              e
+                                                         || not inTxn
+                                                         && not
+                                                                ("SELECT 2;"
+                                                                `List.isInfixOf` show
+                                                                                     e
+                                                                )
+                                                         && "SELECT 7/0"
+                                                         `List.isInfixOf` show
+                                                                              e
+                                                         )
+                                              )
+                            logs <- readMVar logsmv
+                            length (filter ("Retrying" `Text.isInfixOf`) logs)
+                                `shouldBe` 7
+                            -- The last attempt isn't logged because we don't catch exceptions for it
+                            length
+                                    (filter
+                                        ("division by zero" `Text.isInfixOf`)
+                                        logs
+                                    )
+                                `shouldBe` 7
+                            forM_ [1, 2, 4, 8, 16, 32, 64] $ \delay ->
+                                length
+                                        (filter
+                                            ((  "Waiting "
+                                             <> Text.pack (show delay)
+                                             <> "ms"
+                                             ) `Text.isInfixOf`
+                                            )
+                                            logs
+                                        )
+                                    `shouldBe` 1
+                    it "For in-txn migrations" $ testRetries True
+                    it "For no-txn migrations" $ testRetries True
+
+
+runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
+runMVarLogger logsmv m = runLoggingT
+    m
+    (\_loc _source _level str ->
+        modifyMVar_ logsmv (\l -> pure $ l ++ [decodeUtf8 $ fromLogStr str])
+    )

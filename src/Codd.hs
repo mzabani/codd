@@ -33,21 +33,27 @@ applyMigrations
     => CoddSettings
     -> Bool
     -> m DbHashes
-applyMigrations dbInfo@CoddSettings { onDiskHashes } checkHashes = do
-    if checkHashes
-        then do
-            eh <- either readHashesFromDisk pure onDiskHashes
-            applyMigrationsInternal
+applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy } checkHashes =
+    do
+        if checkHashes
+            then do
+                eh <- either readHashesFromDisk pure onDiskHashes
+                applyMigrationsInternal
+                    beginCommitTxnBracket
+                    (baseApplyMigsBlock (DoCheckHashes dbInfo eh)
+                                        retryPolicy
+                                        (const $ pure ())
+                    )
+                    dbInfo
+                pure eh
+            else applyMigrationsInternal
                 beginCommitTxnBracket
-                (baseApplyMigsBlock (DoCheckHashes dbInfo eh) (const $ pure ()))
+                (baseApplyMigsBlock
+                    DontCheckHashes
+                    retryPolicy
+                    (readHashesFromDatabaseWithSettings dbInfo)
+                )
                 dbInfo
-            pure eh
-        else applyMigrationsInternal
-            beginCommitTxnBracket
-            (baseApplyMigsBlock DontCheckHashes
-                                (readHashesFromDatabaseWithSettings dbInfo)
-            )
-            dbInfo
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards. Useful for testing.

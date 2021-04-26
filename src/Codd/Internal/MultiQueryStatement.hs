@@ -1,16 +1,20 @@
 module Codd.Internal.MultiQueryStatement
   ( InTransaction(..)
+  , SqlStatementException(..)
   , multiQueryStatement_
   , runSingleStatementInternal_
   ) where
 
+import           Codd.Internal.Retry            ( retry )
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
+import           Codd.Types                     ( RetryPolicy )
 import           Control.Monad                  ( forM_
                                                 , void
                                                 , when
                                                 )
+import           Control.Monad.Logger           ( MonadLogger )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
@@ -25,6 +29,7 @@ import qualified Database.PostgreSQL.Simple.Types
 import           Prelude                 hiding ( takeWhile )
 import           UnliftIO                       ( Exception
                                                 , MonadIO
+                                                , MonadUnliftIO
                                                 , handle
                                                 , liftIO
                                                 , throwIO
@@ -64,19 +69,27 @@ singleStatement_ conn sql = do
           -- Throw to catch and re-throw.. a bit nasty, but should be ok
           PGInternal.throwResultError "singleStatement_" res status
 
-data InTransaction = InTransaction | NotInTransaction deriving stock (Eq)
+data InTransaction = InTransaction | NotInTransaction RetryPolicy deriving stock (Eq)
 
 -- | A bit like singleStatement_, but following these criteria:
 --   1. If already in a transaction, then this will only execute statements one-by-one only if there's at least one COPY FROM STDIN.. statement.
 --   2. If not in a transaction, then this will execute statements one-by-one.
+--   Also, statements are never retried if in a transaction, since exceptions force us to rollback the transaction anyway.
 multiQueryStatement_
-  :: MonadIO m => InTransaction -> DB.Connection -> ParsedSql -> m ()
-multiQueryStatement_ inTxn conn sql = case sql of
-  ParseFailSqlText t -> singleStatement_ conn t
-  WellParsedSql t stms ->
-    if not (hasCopyFromStdin stms) && inTxn == InTransaction
-      then singleStatement_ conn t
-      else forM_ stms $ \stm -> runSingleStatementInternal_ conn stm
+  :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+  => InTransaction
+  -> DB.Connection
+  -> ParsedSql
+  -> m ()
+multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
+  (ParseFailSqlText t, InTransaction) -> singleStatement_ conn t
+  (ParseFailSqlText t, NotInTransaction retryPol) ->
+    retry retryPol $ singleStatement_ conn t
+  (WellParsedSql _ stms, NotInTransaction retryPol) ->
+    forM_ stms $ \stm -> retry retryPol $ runSingleStatementInternal_ conn stm
+  (WellParsedSql t stms, InTransaction) -> if hasCopyFromStdin stms
+    then forM_ stms $ \stm -> runSingleStatementInternal_ conn stm
+    else singleStatement_ conn t
  where
   hasCopyFromStdin xs = or [ True | CopyFromStdinPiece{} <- NE.toList xs ]
 
