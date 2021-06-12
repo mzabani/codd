@@ -33,25 +33,27 @@ applyMigrations
     => CoddSettings
     -> Bool
     -> m DbHashes
-applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy } checkHashes =
-    do
+applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
+    = do
         if checkHashes
             then do
                 eh <- either readHashesFromDisk pure onDiskHashes
                 applyMigrationsInternal
-                    beginCommitTxnBracket
+                    (beginCommitTxnBracket txnIsolationLvl)
                     (baseApplyMigsBlock (DoCheckHashes dbInfo eh)
                                         retryPolicy
                                         (const $ pure ())
+                                        txnIsolationLvl
                     )
                     dbInfo
                 pure eh
             else applyMigrationsInternal
-                beginCommitTxnBracket
+                (beginCommitTxnBracket txnIsolationLvl)
                 (baseApplyMigsBlock
                     DontCheckHashes
                     retryPolicy
                     (readHashesFromDatabaseWithSettings dbInfo)
+                    txnIsolationLvl
                 )
                 dbInfo
 

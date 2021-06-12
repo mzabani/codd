@@ -21,6 +21,7 @@ import           Codd.Query                     ( execvoid_
                                                 , query
                                                 )
 import           Codd.Types                     ( RetryPolicy(..)
+                                                , TxnIsolationLvl(..)
                                                 , singleTryPolicy
                                                 )
 import           Control.Monad                  ( forM
@@ -90,20 +91,38 @@ withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
                    (either (const $ pure ()) (liftIO . DB.close))
                    (wrappedAction n)
 
+-- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
+-- the desired isolation level.
+beginStatement :: TxnIsolationLvl -> DB.Query
+beginStatement = \case
+    DbDefault       -> "BEGIN READ WRITE"
+    Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
+    RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
+    ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
+    ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
+
 beginCommitTxnBracket
-    :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
-beginCommitTxnBracket conn f = do
+    :: (MonadUnliftIO m, MonadIO m)
+    => TxnIsolationLvl
+    -> DB.Connection
+    -> m a
+    -> m a
+beginCommitTxnBracket isolLvl conn f = do
     iof <- toIO f
     liftIO $ do
-        execvoid_ conn "BEGIN TRANSACTION READ WRITE"
+        execvoid_ conn $ beginStatement isolLvl
         v <- iof `onException` DB.rollback conn
         DB.commit conn
         pure v
 
 beginRollbackTxnBracket
-    :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
-beginRollbackTxnBracket conn f = do
-    execvoid_ conn "BEGIN TRANSACTION READ WRITE"
+    :: (MonadUnliftIO m, MonadIO m)
+    => TxnIsolationLvl
+    -> DB.Connection
+    -> m a
+    -> m a
+beginRollbackTxnBracket isolLvl conn f = do
+    execvoid_ conn $ beginStatement isolLvl
     f `finally` execvoid_ conn "ROLLBACK"
 
 type TxnBracket m = forall a . DB.Connection -> m a -> m a
@@ -114,8 +133,11 @@ createEmptyDbIfNecessary
      . (MonadUnliftIO m, MonadIO m, n ~ NoLoggingT m)
     => CoddSettings
     -> m ()
-createEmptyDbIfNecessary settings = runNoLoggingT
-    $ applyMigrationsInternal beginCommitTxnBracket applyZeroMigs settings
+createEmptyDbIfNecessary settings@CoddSettings { txnIsolationLvl } =
+    runNoLoggingT $ applyMigrationsInternal
+        (beginCommitTxnBracket txnIsolationLvl)
+        applyZeroMigs
+        settings
     -- Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
     -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
   where
@@ -124,6 +146,7 @@ createEmptyDbIfNecessary settings = runNoLoggingT
     applyZeroMigs conn txnBracket _ = baseApplyMigsBlock DontCheckHashes
                                                          singleTryPolicy
                                                          (const $ pure ())
+                                                         txnIsolationLvl
                                                          conn
                                                          txnBracket
                                                          []
@@ -134,7 +157,7 @@ applyMigrationsInternal
     -> (DB.Connection -> TxnBracket m -> [BlockOfMigrations] -> m a)
     -> CoddSettings
     -> m a
-applyMigrationsInternal txnBracket txnApp coddSettings@CoddSettings { superUserConnString, dbName }
+applyMigrationsInternal txnBracket txnApp coddSettings@CoddSettings { superUserConnString, dbName, txnIsolationLvl }
     = do
         let unsafeDbName = dbIdentifier dbName
         logDebugN
@@ -158,7 +181,7 @@ applyMigrationsInternal txnBracket txnApp coddSettings@CoddSettings { superUserC
         ret <- withConnection appDbSuperUserConnString $ \conn -> do
             -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
             --       We should find a better way to do this in the future.
-            liftIO $ beginCommitTxnBracket conn $ do
+            liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ do
                 schemaAlreadyExists <- isSingleTrue <$> query
                     conn
                     "SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = ?"
@@ -194,7 +217,7 @@ collectPendingMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
     -> m [BlockOfMigrations]
-collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow }
+collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigrations, deploymentWorkflow, txnIsolationLvl }
     = do
         let appDbSuperUserConnString =
                 superUserConnString { DB.connectDatabase = Text.unpack dbName }
@@ -203,7 +226,7 @@ collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigratio
             logDebugN
                 "Checking in the Database which SQL migrations have already run to completion..."
             migsThatHaveRunSomeSection :: [(FilePath, Bool)] <-
-                liftIO $ beginCommitTxnBracket conn $ query
+                liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ query
                     conn
                     "SELECT name, dest_section_applied_at IS NOT NULL FROM codd_schema.sql_migrations"
                     ()
@@ -323,11 +346,12 @@ baseApplyMigsBlock
     => CheckHashes
     -> RetryPolicy
     -> (DB.Connection -> m a)
+    -> TxnIsolationLvl
     -> DB.Connection
     -> TxnBracket m
     -> [BlockOfMigrations]
     -> m a
-baseApplyMigsBlock checkHashes retryPol actionAfter conn txnBracket blocksOfMigs
+baseApplyMigsBlock checkHashes retryPol actionAfter isolLvl conn txnBracket blocksOfMigs
     = do
         case blocksOfMigs of
             [] -> case checkHashes of
@@ -355,7 +379,7 @@ baseApplyMigsBlock checkHashes retryPol actionAfter conn txnBracket blocksOfMigs
   where
     runMigs withRetryPolicy migs =
         forM_ migs $ \(MigrationToRun asqlmig ap) ->
-            applySingleMigration conn withRetryPolicy ap asqlmig
+            applySingleMigration conn isolLvl withRetryPolicy ap asqlmig
     runBlock :: (DB.Connection -> m b) -> BlockOfMigrations -> m b
     runBlock act migBlock = do
         if blockInTxn migBlock
@@ -405,11 +429,12 @@ blockInTxn (m1 :| _) = runInTxn m1
 applySingleMigration
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => DB.Connection
+    -> TxnIsolationLvl
     -> RetryPolicy
     -> ApplySingleMigration
     -> AddedSqlMigration
     -> m ()
-applySingleMigration conn statementRetryPol ap (AddedSqlMigration sqlMig migTimestamp)
+applySingleMigration conn isolLvl statementRetryPol ap (AddedSqlMigration sqlMig migTimestamp)
     = do
         let fn = migrationName sqlMig
         case ap of
@@ -428,13 +453,13 @@ applySingleMigration conn statementRetryPol ap (AddedSqlMigration sqlMig migTime
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn nonDestSql
-                                        -- since every migration will have both sections marked as ran sequentially.
+                                                                        -- since every migration will have both sections marked as ran sequentially.
 
-                    -- If already in a transaction, then just execute, otherwise
-                    -- start read-write txn
+                                                    -- If already in a transaction, then just execute, otherwise
+                                                    -- start read-write txn
                 let exec_ q qargs = if nonDestructiveInTxn sqlMig
                         then DB.execute conn q qargs
-                        else beginCommitTxnBracket conn
+                        else beginCommitTxnBracket isolLvl conn
                             $ DB.execute conn q qargs
                 liftIO $ void $ exec_
                     "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)"
@@ -453,7 +478,7 @@ applySingleMigration conn statementRetryPol ap (AddedSqlMigration sqlMig migTime
                 -- start read-write txn
                 let exec_ q qargs = if destructiveInTxn sqlMig
                         then DB.execute conn q qargs
-                        else beginCommitTxnBracket conn
+                        else beginCommitTxnBracket isolLvl conn
                             $ DB.execute conn q qargs
                 liftIO $ void $ exec_
                     "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?"

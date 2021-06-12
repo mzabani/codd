@@ -103,16 +103,15 @@ checkMigration
     => CoddSettings
     -> SqlMigration
     -> m MigrationCheck
-checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy } mig
+checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy, txnIsolationLvl } mig
     = do
         createEmptyDbIfNecessary dbInfoApp
 
         -- Note: we want to run every single pending destructive migration when checking new migrations to ensure
         -- conflicts that aren't caught by on-disk hashes are detected by developers
 
-        -- Also: Everything must run in a throw-away Database, with can't use BEGIN ... ROLLBACK because
+        -- Also: Everything must run in a throw-away Database, which can't use BEGIN ... ROLLBACK because
         -- there might be deferrable constraints and triggers which run on COMMIT and which must also be tested.
-        -- TODO: Maybe we can PREPARE COMMIT when there are only in-txn migs?
         let throwAwayDbName = dbIdentifier "codd-throwaway-db"
             appDbName       = dbIdentifier dbName
             throwAwayDbInfo =
@@ -160,7 +159,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
                     $  "DROP DATABASE IF EXISTS "
                     <> throwAwayDbName
             )
-            (applyMigrationsInternal beginCommitTxnBracket
+            (applyMigrationsInternal (beginCommitTxnBracket txnIsolationLvl)
                                      applyMigs
                                      throwAwayDbInfo
             )
@@ -184,6 +183,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
     applyMigs conn txnBracket allMigs = baseApplyMigsBlock DontCheckHashes
                                                            retryPolicy
                                                            runLast
+                                                           txnIsolationLvl
                                                            conn
                                                            txnBracket
                                                            allMigs
@@ -194,11 +194,12 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
     runLast conn = do
         hbef                <- readHashesFromDatabaseWithSettings dbInfoApp conn
         nonDestSectionCheck <- if nonDestructiveInTxn mig
-            then beginCommitTxnBracket conn $ do
+            then beginCommitTxnBracket txnIsolationLvl conn $ do
                 txId1 <- getTxId conn
                 -- Note: if this is going to be expensive, add a --no-check to the app for Users to add migrations. It will be useful
                 -- in case of bugs too.
                 applySingleMigration conn
+                                     txnIsolationLvl
                                      singleTryPolicy
                                      ApplyNonDestructiveOnly
                                      thisMigrationAdded
@@ -211,6 +212,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
                     }
             else do
                 applySingleMigration conn
+                                     txnIsolationLvl
                                      retryPolicy
                                      ApplyNonDestructiveOnly
                                      thisMigrationAdded
@@ -230,11 +232,12 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
             Just _ ->
                 (if not (destructiveInTxn mig)
                         then id
-                        else beginCommitTxnBracket conn
+                        else beginCommitTxnBracket txnIsolationLvl conn
                     )
                     $ do
                           txId3 <- getTxId conn
                           applySingleMigration conn
+                                               txnIsolationLvl
                                                singleTryPolicy
                                                ApplyDestructiveOnly
                                                thisMigrationAdded

@@ -11,10 +11,17 @@ import           Codd.Analysis                  ( DestructiveSectionCheck(..)
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
+import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
+                                                )
 import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
-import           Codd.Internal                  ( withConnection )
+import           Codd.Internal                  ( CheckHashes(DontCheckHashes)
+                                                , applyMigrationsInternal
+                                                , baseApplyMigsBlock
+                                                , beginCommitTxnBracket
+                                                , withConnection
+                                                )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
@@ -24,6 +31,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
+                                                , TxnIsolationLvl(..)
                                                 )
 import           Control.Monad                  ( forM_
                                                 , void
@@ -51,7 +59,9 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.Hspec.Expectations
 import           Test.QuickCheck
-import           UnliftIO                       ( MonadIO )
+import           UnliftIO                       ( MonadIO
+                                                , liftIO
+                                                )
 import           UnliftIO.Concurrent            ( MVar
                                                 , modifyMVar_
                                                 , newMVar
@@ -74,7 +84,7 @@ selectMig = AddedSqlMigration
     SqlMigration { migrationName       = "0001-select-mig.sql"
                  , nonDestructiveSql   = Just $ mkValidSql "SELECT 1, 3"
                  , nonDestructiveForce = True
-                 , nonDestructiveInTxn = False
+                 , nonDestructiveInTxn = True
                  , destructiveSql      = Nothing
                  , destructiveInTxn    = True
                  }
@@ -145,6 +155,68 @@ spec = do
                     void @IO $ runStdoutLoggingT $ applyMigrations
                         (emptyTestDbInfo { sqlMigrations = Right [copyMig] })
                         False
+
+                forM_
+                        [ DbDefault
+                        , Serializable
+                        , RepeatableRead
+                        , ReadCommitted
+                        , ReadUncommitted
+                        ]
+                    $ \isolLvl ->
+                          it
+                                  ("Transaction Isolation Level is properly applied - "
+                                  <> show isolLvl
+                                  )
+                              $ \emptyTestDbInfo -> do
+                                    let
+                                        modifiedSettings = emptyTestDbInfo
+                                            { txnIsolationLvl = isolLvl
+                                            , sqlMigrations = Right [selectMig] -- One in-txn migrations is exactly what we need to make the last action
+                                                                                -- run in the same transaction as it
+                                            }
+                                    -- This pretty much copies Codd.hs's applyMigrations, but it allows
+                                    -- us to run an after-migrations action that queries the transaction isolation level
+                                    (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
+                                            String) <-
+                                        runStdoutLoggingT @IO
+                                            $ applyMigrationsInternal
+                                                  (beginCommitTxnBracket isolLvl
+                                                  )
+                                                  (baseApplyMigsBlock
+                                                      DontCheckHashes
+                                                      (retryPolicy
+                                                          modifiedSettings
+                                                      )
+                                                      (\conn ->
+                                                          (,)
+                                                              <$> unsafeQuery1
+                                                                      conn
+                                                                      "SHOW transaction_isolation"
+                                                                      ()
+                                                              <*> unsafeQuery1
+                                                                      conn
+                                                                      "SHOW transaction_read_only"
+                                                                      ()
+                                                      )
+                                                      isolLvl
+                                                  )
+                                                  modifiedSettings
+
+                                    DB.fromOnly actualTxnReadOnly
+                                        `shouldBe` "off"
+                                    DB.fromOnly actualTxnIsol
+                                        `shouldBe` case isolLvl of
+                                                       DbDefault ->
+                                                           "read committed"
+                                                       Serializable ->
+                                                           "serializable"
+                                                       RepeatableRead ->
+                                                           "repeatable read"
+                                                       ReadCommitted ->
+                                                           "read committed"
+                                                       ReadUncommitted ->
+                                                           "read uncommitted"
 
                 it "Bogus on-disk hashes makes applying migrations fail"
                     $ \emptyTestDbInfo -> do
