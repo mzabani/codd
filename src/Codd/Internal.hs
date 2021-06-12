@@ -64,6 +64,7 @@ import           UnliftIO.Directory             ( listDirectory )
 import           UnliftIO.Exception             ( bracket
                                                 , catchAny
                                                 , finally
+                                                , onException
                                                 , throwIO
                                                 , tryAny
                                                 )
@@ -93,12 +94,17 @@ beginCommitTxnBracket
     :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
 beginCommitTxnBracket conn f = do
     iof <- toIO f
-    liftIO $ DB.withTransaction conn iof
+    liftIO $ do
+        execvoid_ conn "BEGIN TRANSACTION READ WRITE"
+        v <- iof `onException` DB.rollback conn
+        DB.commit conn
+        pure v
 
 beginRollbackTxnBracket
     :: (MonadUnliftIO m, MonadIO m) => DB.Connection -> m a -> m a
-beginRollbackTxnBracket conn f =
-    (execvoid_ conn "BEGIN" >> f) `finally` execvoid_ conn "ROLLBACK"
+beginRollbackTxnBracket conn f = do
+    execvoid_ conn "BEGIN TRANSACTION READ WRITE"
+    f `finally` execvoid_ conn "ROLLBACK"
 
 type TxnBracket m = forall a . DB.Connection -> m a -> m a
 
@@ -152,7 +158,7 @@ applyMigrationsInternal txnBracket txnApp coddSettings@CoddSettings { superUserC
         ret <- withConnection appDbSuperUserConnString $ \conn -> do
             -- TODO: Do we assume a failed transaction below means some other app is creating the table and won the race?
             --       We should find a better way to do this in the future.
-            liftIO $ DB.withTransaction conn $ do
+            liftIO $ beginCommitTxnBracket conn $ do
                 schemaAlreadyExists <- isSingleTrue <$> query
                     conn
                     "SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = ?"
@@ -197,7 +203,7 @@ collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigratio
             logDebugN
                 "Checking in the Database which SQL migrations have already run to completion..."
             migsThatHaveRunSomeSection :: [(FilePath, Bool)] <-
-                liftIO $ DB.withTransaction conn $ query
+                liftIO $ beginCommitTxnBracket conn $ query
                     conn
                     "SELECT name, dest_section_applied_at IS NOT NULL FROM codd_schema.sql_migrations"
                     ()
@@ -422,9 +428,15 @@ applySingleMigration conn statementRetryPol ap (AddedSqlMigration sqlMig migTime
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn nonDestSql
-                    -- since every migration will have both sections marked as ran sequentially.
-                liftIO $ void $ DB.execute
-                    conn
+                                        -- since every migration will have both sections marked as ran sequentially.
+
+                    -- If already in a transaction, then just execute, otherwise
+                    -- start read-write txn
+                let exec_ q qargs = if nonDestructiveInTxn sqlMig
+                        then DB.execute conn q qargs
+                        else beginCommitTxnBracket conn
+                            $ DB.execute conn q qargs
+                liftIO $ void $ exec_
                     "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) VALUES (?, ?, now(), CASE WHEN ? THEN now() END)"
                     (migTimestamp, fn, isNothing (destructiveSql sqlMig))
             ApplyDestructiveOnly -> do
@@ -436,8 +448,14 @@ applySingleMigration conn statementRetryPol ap (AddedSqlMigration sqlMig migTime
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn destSql
-                liftIO $ void $ DB.execute
-                    conn
+
+                -- If already in a transaction, then just execute, otherwise
+                -- start read-write txn
+                let exec_ q qargs = if destructiveInTxn sqlMig
+                        then DB.execute conn q qargs
+                        else beginCommitTxnBracket conn
+                            $ DB.execute conn q qargs
+                liftIO $ void $ exec_
                     "UPDATE codd_schema.sql_migrations SET dest_section_applied_at = now() WHERE name=?"
                     (DB.Only fn)
             -- TODO: Assert 1 row was updated

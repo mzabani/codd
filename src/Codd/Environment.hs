@@ -17,6 +17,7 @@ import           Codd.Types                     ( DeploymentWorkflow(..)
                                                 , RetryPolicy(..)
                                                 , SqlRole(..)
                                                 , SqlSchema(..)
+                                                , TxnIsolationLvl(..)
                                                 , defaultRetryPolicy
                                                 )
 import           Control.Applicative            ( (<|>) )
@@ -61,6 +62,8 @@ data CoddSettings = CoddSettings
     -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from superUserConnString is always included in hashing automatically and needs not be added here.
     , retryPolicy         :: RetryPolicy
     -- ^ The Retry Policy to be used when applying failing migrations.
+    , txnIsolationLvl     :: TxnIsolationLvl
+    -- ^ Transaction isolation level to be used when applying migrations.
     }
 
 -- | Parses a value using backslash as an escape char for any char that matches
@@ -143,6 +146,19 @@ retryPolicyParser = do
             .   (/ 1000)
             <$> (Parsec.rational <* string "ms")
 
+txnIsolationLvlParser :: Parser TxnIsolationLvl
+txnIsolationLvlParser =
+    string "db-default"
+        *>  pure DbDefault
+        <|> string "serializable"
+        *>  pure Serializable
+        <|> string "repeatable-read"
+        *>  pure RepeatableRead
+        <|> string "read-committed"
+        *>  pure ReadCommitted
+        <|> string "read-uncommitted"
+        *>  pure ReadUncommitted
+
 readEnv :: MonadIO m => String -> m Text
 readEnv var =
     maybe (error $ "Could not find environment variable '" ++ var ++ "'")
@@ -200,6 +216,9 @@ getCoddSettings = do
     retryPolicy <- parseEnv defaultRetryPolicy
                             (parseVar retryPolicyParser)
                             "CODD_RETRY_POLICY"
+    txnIsolationLvl <- parseEnv DbDefault
+                                (parseVar txnIsolationLvlParser)
+                                "CODD_TXN_ISOLATION"
     pure CoddSettings { dbName              = appDbName
                       , superUserConnString = adminConnInfo
                       , sqlMigrations       = Left sqlMigrationPaths
@@ -208,6 +227,7 @@ getCoddSettings = do
                       , schemasToHash       = schemasToHash
                       , extraRolesToHash    = extraRolesToHash
                       , retryPolicy         = retryPolicy
+                      , txnIsolationLvl     = txnIsolationLvl
                       }
 
   where
