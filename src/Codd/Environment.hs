@@ -152,11 +152,11 @@ txnIsolationLvlParser =
         *>  pure DbDefault
         <|> string "serializable"
         *>  pure Serializable
-        <|> string "repeatable-read"
+        <|> string "repeatable read"
         *>  pure RepeatableRead
-        <|> string "read-committed"
+        <|> string "read committed"
         *>  pure ReadCommitted
-        <|> string "read-uncommitted"
+        <|> string "read uncommitted"
         *>  pure ReadUncommitted
 
 readEnv :: MonadIO m => String -> m Text

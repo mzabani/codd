@@ -74,7 +74,7 @@ CODD_EXTRA_ROLES=codd-user
 
 # Codd uses the default isolation level in READ WRITE mode, but you can override
 # that with the (optional) environment below.
-# Choose "db-default|serializable|repeatable-read|read-committed|read-uncommitted"
+# Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
 CODD_TXN_ISOLATION=db-default
 
 # Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
