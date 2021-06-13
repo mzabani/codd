@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 48f755fee81b0702ebfe65d61fc348c48a2a727bd00dabb3aec9d34157b63382
+-- hash: 89d4630a96d769d0290ffaa8940de03bb75776121d643171054ced3a114f118a
 
 name:           codd
 version:        0.1.0.0
@@ -57,7 +57,7 @@ library
   hs-source-dirs:
       src
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
-  ghc-options: -Wall -Wincomplete-uni-patterns -Wpartial-fields
+  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields
   build-depends:
       aeson
     , attoparsec
@@ -84,7 +84,7 @@ executable codd
   hs-source-dirs:
       app
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields
   build-depends:
       aeson
     , base >=4.7 && <5
@@ -122,7 +122,7 @@ test-suite codd-test
   hs-source-dirs:
       test
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck
     , aeson
