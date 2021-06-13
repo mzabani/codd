@@ -71,6 +71,16 @@ CODD_SCHEMAS=public
 
 # Space separated roles other than the ones specified above that must also be considered
 CODD_EXTRA_ROLES=codd-user
+
+# Codd uses the default isolation level in READ WRITE mode, but you can override
+# that with the (optional) environment below.
+# Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
+CODD_TXN_ISOLATION=db-default
+
+# Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
+# when migrations fail, but you can control that with this variable.
+# Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
+CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
 
 ## <a name='Startingout'></a>Starting out
@@ -137,7 +147,7 @@ UPDATE employee SET employee_experience='intern';
 
 _Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction.  
 
-Using `no-txn` migrations adds great risk by allowing your database to b left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
+Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
 ## <a name='StartusingCoddinanexistingDatabase'></a>Start using Codd in an existing Database
 
@@ -145,11 +155,13 @@ If you already have a Database and would like to start using _Codd_, here's a su
 
 1. Configure your `.env` file as explained in this guide.
 2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
-3. Run `pg_dump -N codd_schema your_database > bootstrap-migration.sql`
-4. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
-5. Run `dropdb your_database; codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
-6. You should now have your Database back and managed through _Codd_.
-7. Make sure your Production `.env` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
+3. Run `dropdb your_database` to drop your DB; it will be recreated so make any dumps now if necessary.
+4. Add `CREATE USER`-like migrations for the users you need (`pg_dumpall --roles-only` can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`
+5. Run `pg_dump your_database > bootstrap-migration.sql`
+6. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
+7. Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
+8. You should now have your Database back and managed through _Codd_.
+9. Make sure your Production `.env` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
 
 ## <a name='Safetyconsiderations'></a>Safety considerations
 

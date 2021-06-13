@@ -4,6 +4,7 @@ module Codd.Parsing
   , SqlPiece(..)
   , ParsedSql(..)
   , ParsingOptions(..)
+  , mapSqlMigration
   , nothingIfEmptyQuery
   , piecesToText
   , sqlPieceText
@@ -78,6 +79,11 @@ data AddedSqlMigration = AddedSqlMigration
   , addedSqlTimestamp :: DB.UTCTimestamp
   }
   deriving stock Show
+
+mapSqlMigration
+  :: (SqlMigration -> SqlMigration) -> AddedSqlMigration -> AddedSqlMigration
+mapSqlMigration f (AddedSqlMigration sqlMig tst) =
+  AddedSqlMigration (f sqlMig) tst
 
 data SectionOption = OptForce Bool | OptInTxn Bool | OptDest Bool deriving stock (Ord, Eq, Show)
 

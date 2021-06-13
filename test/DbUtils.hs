@@ -15,6 +15,8 @@ import           Codd.Query                     ( execvoid_
                                                 )
 import           Codd.Types                     ( DeploymentWorkflow(..)
                                                 , Include(..)
+                                                , TxnIsolationLvl(..)
+                                                , singleTryPolicy
                                                 )
 import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
@@ -89,6 +91,8 @@ testCoddSettings migs = do
         , deploymentWorkflow  = SimpleDeployment
         , schemasToHash       = Include ["public", "codd-extra-mapped-schema"]
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
+        , retryPolicy         = singleTryPolicy
+        , txnIsolationLvl     = DbDefault
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.

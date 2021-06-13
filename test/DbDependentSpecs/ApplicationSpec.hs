@@ -11,20 +11,45 @@ import           Codd.Analysis                  ( DestructiveSectionCheck(..)
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
+import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
+                                                )
 import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
-import           Codd.Internal                  ( withConnection )
+import           Codd.Internal                  ( CheckHashes(DontCheckHashes)
+                                                , applyMigrationsInternal
+                                                , baseApplyMigsBlock
+                                                , beginCommitTxnBracket
+                                                , withConnection
+                                                )
+import           Codd.Internal.MultiQueryStatement
+                                                ( SqlStatementException )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
+                                                , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
-import           Control.Monad                  ( void
+import           Codd.Types                     ( RetryBackoffPolicy(..)
+                                                , RetryPolicy(..)
+                                                , TxnIsolationLvl(..)
+                                                )
+import           Control.Monad                  ( forM_
+                                                , void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Logger           ( LogStr
+                                                , LoggingT(runLoggingT)
+                                                , fromLogStr
+                                                , runStdoutLoggingT
+                                                )
+import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
-import           Data.Text                      ( unpack )
+import           Data.Text                      ( Text
+                                                , unpack
+                                                )
+import qualified Data.Text                     as Text
+import           Data.Text.Encoding             ( decodeUtf8 )
+import           Data.Time                      ( secondsToNominalDiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
@@ -34,6 +59,14 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.Hspec.Expectations
 import           Test.QuickCheck
+import           UnliftIO                       ( MonadIO
+                                                , liftIO
+                                                )
+import           UnliftIO.Concurrent            ( MVar
+                                                , modifyMVar_
+                                                , newMVar
+                                                , readMVar
+                                                )
 
 placeHoldersMig, selectMig, copyMig :: AddedSqlMigration
 placeHoldersMig = AddedSqlMigration
@@ -51,7 +84,7 @@ selectMig = AddedSqlMigration
     SqlMigration { migrationName       = "0001-select-mig.sql"
                  , nonDestructiveSql   = Just $ mkValidSql "SELECT 1, 3"
                  , nonDestructiveForce = True
-                 , nonDestructiveInTxn = False
+                 , nonDestructiveInTxn = True
                  , destructiveSql      = Nothing
                  , destructiveInTxn    = True
                  }
@@ -69,6 +102,15 @@ copyMig = AddedSqlMigration
         , destructiveInTxn    = True
         }
     (getIncreasingTimestamp 2)
+divideBy0Mig = AddedSqlMigration
+    SqlMigration { migrationName       = "0003-divide-by-0-mig.sql"
+                 , nonDestructiveSql = Just $ mkValidSql "SELECT 2; SELECT 7/0"
+                 , nonDestructiveForce = True
+                 , nonDestructiveInTxn = True
+                 , destructiveSql      = Nothing
+                 , destructiveInTxn    = True
+                 }
+    (getIncreasingTimestamp 3)
 
 spec :: Spec
 spec = do
@@ -113,6 +155,66 @@ spec = do
                     void @IO $ runStdoutLoggingT $ applyMigrations
                         (emptyTestDbInfo { sqlMigrations = Right [copyMig] })
                         False
+
+                forM_
+                        [ DbDefault
+                        , Serializable
+                        , RepeatableRead
+                        , ReadCommitted
+                        , ReadUncommitted
+                        ]
+                    $ \isolLvl ->
+                          it
+                                  ("Transaction Isolation Level is properly applied - "
+                                  <> show isolLvl
+                                  )
+                              $ \emptyTestDbInfo -> do
+                                    let
+                                        modifiedSettings = emptyTestDbInfo
+                                            { txnIsolationLvl = isolLvl
+                                            , sqlMigrations = Right [selectMig] -- One in-txn migrations is exactly what we need to make the last action
+                                                                                -- run in the same transaction as it
+                                            }
+                                    -- This pretty much copies Codd.hs's applyMigrations, but it allows
+                                    -- us to run an after-migrations action that queries the transaction isolation level
+                                    (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
+                                            String) <-
+                                        runStdoutLoggingT @IO
+                                            $ applyMigrationsInternal
+                                                  (baseApplyMigsBlock
+                                                      DontCheckHashes
+                                                      (retryPolicy
+                                                          modifiedSettings
+                                                      )
+                                                      (\conn ->
+                                                          (,)
+                                                              <$> unsafeQuery1
+                                                                      conn
+                                                                      "SHOW transaction_isolation"
+                                                                      ()
+                                                              <*> unsafeQuery1
+                                                                      conn
+                                                                      "SHOW transaction_read_only"
+                                                                      ()
+                                                      )
+                                                      isolLvl
+                                                  )
+                                                  modifiedSettings
+
+                                    DB.fromOnly actualTxnReadOnly
+                                        `shouldBe` "off"
+                                    DB.fromOnly actualTxnIsol
+                                        `shouldBe` case isolLvl of
+                                                       DbDefault ->
+                                                           "read committed"
+                                                       Serializable ->
+                                                           "serializable"
+                                                       RepeatableRead ->
+                                                           "repeatable read"
+                                                       ReadCommitted ->
+                                                           "read committed"
+                                                       ReadUncommitted ->
+                                                           "read uncommitted"
 
                 it "Bogus on-disk hashes makes applying migrations fail"
                     $ \emptyTestDbInfo -> do
@@ -240,3 +342,87 @@ spec = do
                                     countTxIds `shouldBe` 4
                                     countInterns `shouldBe` 4
                                     totalRows `shouldBe` 10
+                context "Retry Policy retries and backoff work as expected" $ do
+                    let
+                        testRetries inTxn emptyTestDbInfo = do
+                            -- Kind of ugly.. we test behaviour by analyzing logs and
+                            -- trust that threadDelay is called.
+                            logsmv <- newMVar []
+                            runMVarLogger
+                                    logsmv
+                                    (applyMigrations
+                                        (emptyTestDbInfo
+                                            { sqlMigrations =
+                                                Right
+                                                    [ mapSqlMigration
+                                                          (\m -> m
+                                                              { nonDestructiveInTxn =
+                                                                  inTxn
+                                                              }
+                                                          )
+                                                          divideBy0Mig
+                                                    ]
+                                            , retryPolicy   = RetryPolicy
+                                                7
+                                                (ExponentialBackoff
+                                                    (secondsToNominalDiffTime
+                                                        0.001
+                                                    )
+                                                )
+                                            }
+                                        )
+                                        False
+                                    )
+                                `shouldThrow` (\(e :: SqlStatementException) ->
+                                                  "division by zero"
+                                                      `List.isInfixOf` show e
+
+                                                      &&
+
+                                                -- For no-txn migrations, each statement is retried individually
+                                                         (inTxn
+                                                         && "SELECT 2;"
+                                                         `List.isInfixOf` show
+                                                                              e
+                                                         || not inTxn
+                                                         && not
+                                                                ("SELECT 2;"
+                                                                `List.isInfixOf` show
+                                                                                     e
+                                                                )
+                                                         && "SELECT 7/0"
+                                                         `List.isInfixOf` show
+                                                                              e
+                                                         )
+                                              )
+                            logs <- readMVar logsmv
+                            length (filter ("Retrying" `Text.isInfixOf`) logs)
+                                `shouldBe` 7
+                            -- The last attempt isn't logged because we don't catch exceptions for it
+                            length
+                                    (filter
+                                        ("division by zero" `Text.isInfixOf`)
+                                        logs
+                                    )
+                                `shouldBe` 7
+                            forM_ [1, 2, 4, 8, 16, 32, 64] $ \delay ->
+                                length
+                                        (filter
+                                            ((  "Waiting "
+                                             <> Text.pack (show delay)
+                                             <> "ms"
+                                             ) `Text.isInfixOf`
+                                            )
+                                            logs
+                                        )
+                                    `shouldBe` 1
+                    it "For in-txn migrations" $ testRetries True
+                    it "For no-txn migrations" $ testRetries True
+
+
+runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
+runMVarLogger logsmv m = runLoggingT
+    m
+    (\_loc _source _level str ->
+        modifyMVar_ logsmv (\l -> pure $ l ++ [decodeUtf8 $ fromLogStr str])
+    )

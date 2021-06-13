@@ -33,6 +33,9 @@ dependencies:
 - unliftio
 - unliftio-core
 
+ghc-options:
+  - -O2
+
 default-extensions:
   - BangPatterns
   - DeriveAnyClass

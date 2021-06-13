@@ -14,7 +14,6 @@ import           Codd.Hashing                   ( DbHashes
 import           Codd.Internal                  ( CheckHashes(..)
                                                 , applyMigrationsInternal
                                                 , baseApplyMigsBlock
-                                                , beginCommitTxnBracket
                                                 , dbIdentifier
                                                 , withConnection
                                                 )
@@ -33,21 +32,27 @@ applyMigrations
     => CoddSettings
     -> Bool
     -> m DbHashes
-applyMigrations dbInfo@CoddSettings { onDiskHashes } checkHashes = do
-    if checkHashes
-        then do
-            eh <- either readHashesFromDisk pure onDiskHashes
-            applyMigrationsInternal
-                beginCommitTxnBracket
-                (baseApplyMigsBlock (DoCheckHashes dbInfo eh) (const $ pure ()))
+applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
+    = do
+        if checkHashes
+            then do
+                eh <- either readHashesFromDisk pure onDiskHashes
+                applyMigrationsInternal
+                    (baseApplyMigsBlock (DoCheckHashes dbInfo eh)
+                                        retryPolicy
+                                        (const $ pure ())
+                                        txnIsolationLvl
+                    )
+                    dbInfo
+                pure eh
+            else applyMigrationsInternal
+                (baseApplyMigsBlock
+                    DontCheckHashes
+                    retryPolicy
+                    (readHashesFromDatabaseWithSettings dbInfo)
+                    txnIsolationLvl
+                )
                 dbInfo
-            pure eh
-        else applyMigrationsInternal
-            beginCommitTxnBracket
-            (baseApplyMigsBlock DontCheckHashes
-                                (readHashesFromDatabaseWithSettings dbInfo)
-            )
-            dbInfo
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards. Useful for testing.
