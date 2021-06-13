@@ -181,8 +181,6 @@ spec = do
                                             String) <-
                                         runStdoutLoggingT @IO
                                             $ applyMigrationsInternal
-                                                  (beginCommitTxnBracket isolLvl
-                                                  )
                                                   (baseApplyMigsBlock
                                                       DontCheckHashes
                                                       (retryPolicy

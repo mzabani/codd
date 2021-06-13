@@ -159,10 +159,7 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
                     $  "DROP DATABASE IF EXISTS "
                     <> throwAwayDbName
             )
-            (applyMigrationsInternal (beginCommitTxnBracket txnIsolationLvl)
-                                     applyMigs
-                                     throwAwayDbInfo
-            )
+            (applyMigrationsInternal applyMigs throwAwayDbInfo)
 
   where
     thisMigrationAdded    = AddedSqlMigration mig DB.PosInfinity
@@ -175,18 +172,13 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
                                            DB.PosInfinity
         }
 
-    applyMigs
-        :: DB.Connection
-        -> TxnBracket m
-        -> [NonEmpty MigrationToRun]
-        -> m MigrationCheck
-    applyMigs conn txnBracket allMigs = baseApplyMigsBlock DontCheckHashes
-                                                           retryPolicy
-                                                           runLast
-                                                           txnIsolationLvl
-                                                           conn
-                                                           txnBracket
-                                                           allMigs
+    applyMigs :: DB.Connection -> [NonEmpty MigrationToRun] -> m MigrationCheck
+    applyMigs conn allMigs = baseApplyMigsBlock DontCheckHashes
+                                                retryPolicy
+                                                runLast
+                                                txnIsolationLvl
+                                                conn
+                                                allMigs
 
     getTxId :: DB.Connection -> m Int64
     getTxId conn = DB.fromOnly <$> unsafeQuery1 conn "SELECT txid_current()" ()

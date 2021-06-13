@@ -14,7 +14,6 @@ import           Codd.Hashing                   ( DbHashes
 import           Codd.Internal                  ( CheckHashes(..)
                                                 , applyMigrationsInternal
                                                 , baseApplyMigsBlock
-                                                , beginCommitTxnBracket
                                                 , dbIdentifier
                                                 , withConnection
                                                 )
@@ -39,7 +38,6 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl
             then do
                 eh <- either readHashesFromDisk pure onDiskHashes
                 applyMigrationsInternal
-                    (beginCommitTxnBracket txnIsolationLvl)
                     (baseApplyMigsBlock (DoCheckHashes dbInfo eh)
                                         retryPolicy
                                         (const $ pure ())
@@ -48,7 +46,6 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl
                     dbInfo
                 pure eh
             else applyMigrationsInternal
-                (beginCommitTxnBracket txnIsolationLvl)
                 (baseApplyMigsBlock
                     DontCheckHashes
                     retryPolicy
