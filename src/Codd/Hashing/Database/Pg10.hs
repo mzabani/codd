@@ -170,7 +170,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , checksumCols  = ["nsp_owner.rolname", "_codd_roles.permissions"]
         , fromTable     = "pg_catalog.pg_namespace"
         , joins         =
-            "JOIN pg_catalog.pg_authid AS nsp_owner ON nsp_owner.oid=pg_namespace.nspowner"
+            "JOIN pg_catalog.pg_roles AS nsp_owner ON nsp_owner.oid=pg_namespace.nspowner"
             <> "\n LEFT JOIN LATERAL "
             <> aclArrayTbl allRoles "nspacl"
             <> "_codd_roles ON TRUE"
