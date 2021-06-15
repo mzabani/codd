@@ -49,12 +49,12 @@ Let's take a look at an example `.env` file for _Codd_. These environment variab
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
-# This connection string must be for a user with the CREATE permission, the database must exist
-# and the user must have access to it
+# This connection string must be for a user with the CREATE and CONNECT permissions. The
+# database must already exist.
 CODD_ADMIN_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
 
 # The name of the Database the App uses. It does not need to exist and will be created
-# automatically by Codd if necessary
+# automatically by Codd if necessary.
 CODD_APPDB=codd-experiments
 
 # A list of directories where SQL migration files will be found/added to. Do note that you
@@ -106,13 +106,13 @@ DO
 $do$
 BEGIN
    IF NOT EXISTS (
-      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN
-      CREATE USER "codd-user";
+      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd_user') THEN
+      CREATE USER codd_user;
    END IF;
 END
 $do$;
 
-GRANT CONNECT ON DATABASE "codd-experiments" TO "codd-user";
+GRANT CONNECT ON DATABASE "codd-experiments" TO codd_user;
 
 CREATE TABLE employee (
     employee_id SERIAL PRIMARY KEY
@@ -151,17 +151,24 @@ Using `no-txn` migrations adds great risk by allowing your database to be left i
 
 ## <a name='StartusingCoddinanexistingDatabase'></a>Start using Codd in an existing Database
 
-If you already have a Database and would like to start using _Codd_, here's a suggestion on how to approach the problem:
+If you already have a Database and would like to start using _Codd_, here's a guideline to approach the problem. Remember to be very careful if/when making any changes to your Prod DB:
 
 1. Configure your `.env` file as explained in this guide.
 2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
-3. Run `dropdb your_database` to drop your DB; it will be recreated so make any dumps now if necessary.
-4. Add `CREATE USER`-like migrations for the users you need (`pg_dumpall --roles-only` can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`
-5. Run `pg_dump your_database > bootstrap-migration.sql`
-6. Edit `bootstrap-migration.sql` and add `-- codd: no-txn` as its very first line.
-7. Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
-8. You should now have your Database back and managed through _Codd_.
-9. Make sure your Production `.env` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
+3. Run `pg_dump your_database > bootstrap-migration.sql`.
+4. Run `dropdb your_database` to drop your DB.
+5. Run something like `createdb -T template0 -E UTF8 -l en_US.UTF8 your_database`, but with encoding and locale equal to your Production DB's. Database and the _public_'s Schema ownership might need some manual intervention to match in different environments.
+   - **What do we mean?** Cloud services such as Amazon's RDS will create Schemas and DBs owned by users managed by them - such as the `rdsadmin` user -, that we don't usually replicate locally. We can either replicate these locally so we don't need to touch our Prod DB or change our Prod DB so only users managed by us are ever referenced in any environment.
+   - Use _psql_'s `\l` to check DB ownership and permissions of your Prod DB.
+   - Use _psql_'s `\dn+` to check the _public_ schema's ownership and permissions in your Prod DB.
+   - **Note:** Because _codd_ runs migrations with the user in the supplied connection string, that user must already have proper permissions and must be the same across environments so newly created objects have the same ownership. It also helps a lot if that user is the DB owner because some SQL statements are only allowed for DB owners.
+6. The user that you supply in your connection string can't be created in a migration because it needs to exist before _codd_ runs. That also applies to DB ownership, locale and encoding, among a few other things, so it is helpful to keep a script that creates your DB and sets up those bits in case you want to recreate it. See [scripts/create-dev-db.sh](scripts/create-dev-db.sh) for an example, but make sure to use the `createdb` statement you came up with in step 5. After creating one such script, **run it**.
+7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
+   - 
+8. Edit `bootstrap-migration.sql` (created in step 3) and add `-- codd: no-txn` as its very first line.
+9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
+10. You should now have your Database back and managed through _Codd_.
+11. Make sure your separate Production `.env` file does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
 
 ## <a name='Safetyconsiderations'></a>Safety considerations
 
