@@ -49,7 +49,7 @@ Let's take a look at an example `.env` file for _Codd_. These environment variab
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
-# This connection string must be for an ADMIN user, the database must exist
+# This connection string must be for a user with the CREATE permission, the database must exist
 # and the user must have access to it
 CODD_ADMIN_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
 
