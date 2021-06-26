@@ -112,6 +112,24 @@ divideBy0Mig = AddedSqlMigration
                  }
     (getIncreasingTimestamp 3)
 
+createTableNewTableMig :: String -> Bool -> Int -> AddedSqlMigration
+createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
+    SqlMigration
+        { migrationName       = "000"
+                                <> show migOrder
+                                <> "-create-table-newtable-mig.sql"
+        , nonDestructiveSql   = Just
+                                $  mkValidSql
+                                $  "CREATE TABLE "
+                                <> Text.pack tableName
+                                <> "()"
+        , nonDestructiveForce = True
+        , nonDestructiveInTxn = inTxn
+        , destructiveSql      = Nothing
+        , destructiveInTxn    = True
+        }
+    (getIncreasingTimestamp (fromIntegral migOrder))
+
 spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
@@ -127,7 +145,7 @@ spec = do
                               )
                               NoCheck
 
-                it "Rows returning function work for no-txn migrations"
+                it "Rows-returning function work for no-txn migrations"
                     $ \emptyTestDbInfo -> do
                           void @IO $ runStdoutLoggingT $ applyMigrations
                               (emptyTestDbInfo
@@ -136,7 +154,7 @@ spec = do
                               )
                               NoCheck
 
-                it "Rows returning function work for in-txn migrations"
+                it "Rows-returning function work for in-txn migrations"
                     $ \emptyTestDbInfo -> do
                           let (AddedSqlMigration mig t) = selectMig
                               inTxnMig                  = AddedSqlMigration
@@ -151,7 +169,7 @@ spec = do
                               )
                               NoCheck
 
-                it "COPY works well" $ \emptyTestDbInfo -> do
+                it "COPY FROM STDIN works" $ \emptyTestDbInfo -> do
                     void @IO $ runStdoutLoggingT $ applyMigrations
                         (emptyTestDbInfo { sqlMigrations = Right [copyMig] })
                         NoCheck
@@ -215,23 +233,124 @@ spec = do
                                                        ReadUncommitted ->
                                                            "read uncommitted"
 
-                it "Bogus on-disk hashes makes applying migrations fail"
+                it
+                        "Hard checking and soft checking behaviour on mismatched checksums"
                     $ \emptyTestDbInfo -> do
                           let bogusDbHashes =
                                   DbHashes (ObjHash "") Map.empty Map.empty
-                          void @IO $ do
-                              runStdoutLoggingT
-                                      (applyMigrations
-                                          (emptyTestDbInfo
-                                              { sqlMigrations = Right
-                                                  [placeHoldersMig]
-                                              , onDiskHashes  = Right
-                                                                    bogusDbHashes
-                                              }
-                                          )
-                                          HardCheck
+                          void @IO
+                              $ withConnection
+                                    (superUserInAppDatabaseConnInfo
+                                        emptyTestDbInfo
+                                    )
+                              $ \conn -> do
+
+                                -- Hard checking will not apply the migration and therefore will not
+                                -- create "newtable"
+                                    DB.query_
+                                            conn
+                                            "SELECT 1 FROM pg_catalog.pg_tables WHERE tablename='newtable'"
+                                        `shouldReturn` ([] :: [DB.Only Int])
+                                    runStdoutLoggingT
+                                            (applyMigrations
+                                                (emptyTestDbInfo
+                                                    { sqlMigrations =
+                                                        Right
+                                                            [ createTableNewTableMig
+                                                                  "newtable"
+                                                                  True
+                                                                  1
+                                                            ]
+                                                    , onDiskHashes  = Right
+                                                        bogusDbHashes
+                                                    }
+                                                )
+                                                HardCheck
+                                            )
+                                        `shouldThrow` anyIOException
+                                    DB.query_
+                                            conn
+                                            "SELECT 1 FROM pg_catalog.pg_tables WHERE tablename='newtable'"
+                                        `shouldReturn` ([] :: [DB.Only Int])
+
+                                    -- Soft checking will apply the migration but will still throw an exception
+                                    runStdoutLoggingT
+                                            (applyMigrations
+                                                (emptyTestDbInfo
+                                                    { sqlMigrations =
+                                                        Right
+                                                            [ createTableNewTableMig
+                                                                  "newtable"
+                                                                  True
+                                                                  1
+                                                            ]
+                                                    , onDiskHashes  = Right
+                                                        bogusDbHashes
+                                                    }
+                                                )
+                                                SoftCheck
+                                            )
+                                        `shouldThrow` anyIOException
+                                    DB.query_
+                                            conn
+                                            "SELECT 1 FROM pg_catalog.pg_tables WHERE tablename='newtable'"
+                                        `shouldReturn` ([DB.Only 1] :: [ DB.Only
+                                                               Int
+                                                         ]
+                                                       )
+
+                forM_ [True, False] $ \firstInTxn ->
+                    forM_ [("newtable", "sometable"), ("sometable", "newtable")]
+                        $ \(t1, t2) ->
+                              it
+                                      ("Hard checking falls back to soft checking in the presence of no-txn migrations - "
+                                      ++ show firstInTxn
+                                      ++ " - "
+                                      ++ t1
                                       )
-                                  `shouldThrow` anyIOException
+                                  $ \emptyTestDbInfo -> do
+                                        let
+                                            bogusDbHashes = DbHashes
+                                                (ObjHash "")
+                                                Map.empty
+                                                Map.empty
+                                        void @IO
+                                            $ withConnection
+                                                  (superUserInAppDatabaseConnInfo
+                                                      emptyTestDbInfo
+                                                  )
+                                            $ \conn -> do
+                                                  runStdoutLoggingT
+                                                          (applyMigrations
+                                                              (emptyTestDbInfo
+                                                                  { sqlMigrations =
+                                                                      Right
+                                                                          [ createTableNewTableMig
+                                                                              t1
+                                                                              firstInTxn
+                                                                              1
+                                                                          , createTableNewTableMig
+                                                                              t2
+                                                                              (not
+                                                                                  firstInTxn
+                                                                              )
+                                                                              2
+                                                                          ]
+                                                                  , onDiskHashes =
+                                                                      Right
+                                                                          bogusDbHashes
+                                                                  }
+                                                              )
+                                                              HardCheck
+                                                          )
+                                                      `shouldThrow` anyIOException
+                                                  DB.query_
+                                                          conn
+                                                          "SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE tablename='newtable' OR tablename='sometable'"
+                                                      `shouldReturn` [ DB.Only
+                                                                           (2 :: Int
+                                                                           )
+                                                                     ]
 
                 it
                         "no-txn migrations and in-txn migrations run in intertwined blocks"

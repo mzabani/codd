@@ -87,14 +87,14 @@ upDeployParser =
             Codd.SoftCheck
             (  long "soft-check"
             <> help
-                 "Applies all migrations and only then compares database and expected checksums, returning an error in case they don't match."
+                 "Applies and commits all pending migrations and only then compares database and expected checksums, returning an error in case they don't match."
             )
 
         <|> flag'
               Codd.HardCheck
               (  long "hard-check"
               <> help
-                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing all migrations, and aborts the transaction if they don't match. If there's even one pending no-txn migration, reverts to soft checking automatically."
+                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match. If there's even one pending no-txn migration, automatically falls back to soft checking."
               )
         )
 
