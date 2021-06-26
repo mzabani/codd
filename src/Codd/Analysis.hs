@@ -173,17 +173,13 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
         }
 
     applyMigs :: DB.Connection -> [NonEmpty MigrationToRun] -> m MigrationCheck
-    applyMigs conn allMigs = baseApplyMigsBlock DontCheckHashes
-                                                retryPolicy
-                                                runLast
-                                                txnIsolationLvl
-                                                conn
-                                                allMigs
+    applyMigs conn allMigs =
+        baseApplyMigsBlock retryPolicy runLast txnIsolationLvl conn allMigs
 
     getTxId :: DB.Connection -> m Int64
     getTxId conn = DB.fromOnly <$> unsafeQuery1 conn "SELECT txid_current()" ()
 
-    runLast conn = do
+    runLast _migBlocks conn = do
         hbef                <- readHashesFromDatabaseWithSettings dbInfoApp conn
         nonDestSectionCheck <- if nonDestructiveInTxn mig
             then beginCommitTxnBracket txnIsolationLvl conn $ do

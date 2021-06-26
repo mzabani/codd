@@ -1,6 +1,7 @@
 module DbDependentSpecs.ApplicationSpec where
 
-import           Codd                           ( applyMigrations
+import           Codd                           ( CheckHashes(..)
+                                                , applyMigrations
                                                 , withDbAndDrop
                                                 )
 import           Codd.Analysis                  ( DestructiveSectionCheck(..)
@@ -16,8 +17,7 @@ import           Codd.Hashing                   ( readHashesFromDatabaseWithSett
 import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
-import           Codd.Internal                  ( CheckHashes(DontCheckHashes)
-                                                , applyMigrationsInternal
+import           Codd.Internal                  ( applyMigrationsInternal
                                                 , baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , withConnection
@@ -125,7 +125,7 @@ spec = do
                                   { sqlMigrations = Right [placeHoldersMig]
                                   }
                               )
-                              False
+                              NoCheck
 
                 it "Rows returning function work for no-txn migrations"
                     $ \emptyTestDbInfo -> do
@@ -134,7 +134,7 @@ spec = do
                                   { sqlMigrations = Right [selectMig]
                                   }
                               )
-                              False
+                              NoCheck
 
                 it "Rows returning function work for in-txn migrations"
                     $ \emptyTestDbInfo -> do
@@ -149,12 +149,12 @@ spec = do
                                   { sqlMigrations = Right [inTxnMig]
                                   }
                               )
-                              False
+                              NoCheck
 
                 it "COPY works well" $ \emptyTestDbInfo -> do
                     void @IO $ runStdoutLoggingT $ applyMigrations
                         (emptyTestDbInfo { sqlMigrations = Right [copyMig] })
-                        False
+                        NoCheck
 
                 forM_
                         [ DbDefault
@@ -182,11 +182,10 @@ spec = do
                                         runStdoutLoggingT @IO
                                             $ applyMigrationsInternal
                                                   (baseApplyMigsBlock
-                                                      DontCheckHashes
                                                       (retryPolicy
                                                           modifiedSettings
                                                       )
-                                                      (\conn ->
+                                                      (\_blocksOfMigs conn ->
                                                           (,)
                                                               <$> unsafeQuery1
                                                                       conn
@@ -230,7 +229,7 @@ spec = do
                                                                     bogusDbHashes
                                               }
                                           )
-                                          True
+                                          HardCheck
                                       )
                                   `shouldThrow` anyIOException
 
@@ -328,7 +327,7 @@ spec = do
 
                           void @IO $ runStdoutLoggingT $ applyMigrations
                               (emptyTestDbInfo { sqlMigrations = Right migs })
-                              False
+                              NoCheck
                           withConnection
                                   (superUserInAppDatabaseConnInfo
                                       emptyTestDbInfo
@@ -371,7 +370,7 @@ spec = do
                                                 )
                                             }
                                         )
-                                        False
+                                        NoCheck
                                     )
                                 `shouldThrow` (\(e :: SqlStatementException) ->
                                                   "division by zero"

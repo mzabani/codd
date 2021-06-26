@@ -1,6 +1,8 @@
 module DbDependentSpecs.HashingSpec where
 
-import           Codd                           ( applyMigrations )
+import           Codd                           ( CheckHashes(..)
+                                                , applyMigrations
+                                                )
 import           Codd.Analysis                  ( DestructiveSectionCheck(..)
                                                 , MigrationCheck(..)
                                                 , NonDestructiveSectionCheck(..)
@@ -569,7 +571,7 @@ spec = do
                 let newMigs = appliedMigs ++ [nextMig]
                     dbInfo  = emptyDbInfo { sqlMigrations = Right newMigs }
                 dbHashesAfterMig <- runStdoutLoggingT
-                  $ applyMigrations dbInfo False
+                  $ applyMigrations dbInfo NoCheck
                 let migText =
                       parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
                     diff = hashDifferences hashSoFar dbHashesAfterMig
