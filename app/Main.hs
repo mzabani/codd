@@ -26,7 +26,7 @@ import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Options.Applicative
 
-data Cmd = UpDeploy | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
+data Cmd = UpDeploy Codd.CheckHashes | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -41,9 +41,9 @@ cmdParser = hsubparser
   <> command
        "up-deploy"
        (info
-         (pure UpDeploy)
+         upDeployParser
          (progDesc
-           "Applies all pending migrations but does NOT update on-disk checksums. Instead, compares on-disk checksums to the DB checksums after applying migrations (and before commiting all changes when possible)."
+           "Applies all pending migrations but does NOT update on-disk checksums. Instead, compares on-disk checksums to database checksums after applying migrations to check whether they match."
          )
        )
   <> command
@@ -79,6 +79,24 @@ cmdParser = hsubparser
          )
        )
   )
+
+upDeployParser :: Parser Cmd
+upDeployParser =
+  UpDeploy
+    <$> (   flag'
+            Codd.SoftCheck
+            (  long "soft-check"
+            <> help
+                 "Applies and commits all pending migrations and only then compares database and expected checksums, returning an error in case they don't match."
+            )
+
+        <|> flag'
+              Codd.HardCheck
+              (  long "hard-check"
+              <> help
+                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match. If there's even one pending no-txn migration, automatically falls back to soft checking."
+              )
+        )
 
 analyzeParser :: Parser Cmd
 analyzeParser = Analyze <$> verbositySwitch <*> argument
@@ -174,16 +192,16 @@ doWork dbInfo UpDev = runStdoutLoggingT $ do
   -- Important, and we don't have a test for this:
   -- check hashes in the same transaction as migrations
   -- when possible, since that's what "up-deploy" does.
-  checksum        <- Codd.applyMigrations dbInfo False
+  checksum        <- Codd.applyMigrations dbInfo Codd.NoCheck
   onDiskHashesDir <- either
     pure
     (error
-      "This functionality needs a directory to write checksum to. Report this as a bug."
+      "This functionality needs a directory to write checksums to. Please report this as a bug."
     )
     (onDiskHashes dbInfo)
   Codd.persistHashesToDisk checksum onDiskHashesDir
-doWork dbInfo UpDeploy =
-  runStdoutLoggingT $ void $ Codd.applyMigrations dbInfo True
+doWork dbInfo (UpDeploy checkHashes) =
+  runStdoutLoggingT $ void $ Codd.applyMigrations dbInfo checkHashes
 doWork dbInfo (Analyze verbosity fp) =
   runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) =

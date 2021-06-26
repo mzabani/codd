@@ -169,6 +169,8 @@ If you already have a Database and would like to start using _Codd_, here's a gu
 9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
 10. You should now have your Database back and managed through _Codd_.
 11. Make sure your separate Production `.env` file does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
+12. Before deploying with _codd_, we strongly recommend you run `codd verify-checksums -v` with your environment variables connected to your Production database and make sure checksums match.
+13. In Production, we strongly recommend running `codd up-deploy --soft-check` to start with until you get acquainted enough to consider hard-checking. Make sure you read `codd up-deploy --help` to better understand your options.
 
 ## <a name='Safetyconsiderations'></a>Safety considerations
 

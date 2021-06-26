@@ -97,7 +97,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
                 -- Important, and we don't have a test for this:
                 -- check hashes in the same transaction as migrations
                 -- when possible, since that's what "up-deploy" does.
-                hashes <- Codd.applyMigrations dbInfo False
+                hashes <- Codd.applyMigrations dbInfo Codd.NoCheck
                 persistHashesToDisk hashes onDiskHashesDir
                 liftIO
                   $  putStrLn

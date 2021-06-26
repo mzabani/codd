@@ -126,9 +126,8 @@ createEmptyDbIfNecessary settings@CoddSettings { txnIsolationLvl } =
     -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
   where
     applyZeroMigs :: DB.Connection -> [NonEmpty MigrationToRun] -> n ()
-    applyZeroMigs conn _ = baseApplyMigsBlock DontCheckHashes
-                                              singleTryPolicy
-                                              (const $ pure ())
+    applyZeroMigs conn _ = baseApplyMigsBlock singleTryPolicy
+                                              (\_ _ -> pure ())
                                               txnIsolationLvl
                                               conn
                                               []
@@ -313,48 +312,26 @@ collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigratio
             -- Run all Migrations now. Group them in blocks of consecutive transactions by in-txn/no-txn.
             return $ NE.groupWith runInTxn pendingParsedMigrations
 
-data CheckHashes = DoCheckHashes CoddSettings DbHashes | DontCheckHashes
-
 -- | Applies the supplied migrations, running blocks of in-txn migrations with "txnBracket".
 -- Important notes:
--- - "actionAfter" runs in the same transaction as the last migration iff that migration is in-txn, or separately, not in an explicit transaction and after the last migration otherwise.
--- - Passing in DontCheckHashes ensures hashes are _never_ checked.
--- - Passing in CheckHashes will check hashes after "lastAction" runs. It will do so in the same transaction as the last migration iff it's in-txn.
---   Note that checking hashes will exit the App if they mismatch.
+-- - Iff there's a single in-txn block of migrations, then "actionAfter" runs in the same transaction as that block.
+--   Otherwise - and including if there are no migrations - it runs after the all migrations and not in an explicit transaction.
 baseApplyMigsBlock
     :: forall m a
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
-    => CheckHashes
-    -> RetryPolicy
-    -> (DB.Connection -> m a)
+    => RetryPolicy
+    -> ([BlockOfMigrations] -> DB.Connection -> m a)
     -> TxnIsolationLvl
     -> DB.Connection
     -> [BlockOfMigrations]
     -> m a
-baseApplyMigsBlock checkHashes retryPol actionAfter isolLvl conn blocksOfMigs =
-    do
-        case blocksOfMigs of
-            [] -> case checkHashes of
-                DontCheckHashes -> actionAfter conn
-                DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
-                    (res, cksums) <- lastActionThenGetCksums
-                        coddSettingsForDbHashes
-                        conn
-                    checkSchemasOrFail cksums expectedHashes
-                    pure res
-            (x : xs) -> do
-                let bs         = x :| xs
-                    allButLast = NE.init bs
-                    lastBlock  = NE.last bs
-                forM_ allButLast $ runBlock (const (pure ()))
-                case checkHashes of
-                    DontCheckHashes -> runBlock actionAfter lastBlock
-                    DoCheckHashes coddSettingsForDbHashes expectedHashes -> do
-                        (res, cksums) <- runBlock
-                            (lastActionThenGetCksums coddSettingsForDbHashes)
-                            lastBlock
-                        checkSchemasOrFail cksums expectedHashes
-                        pure res
+baseApplyMigsBlock retryPol actionAfter isolLvl conn blocksOfMigs = do
+    case blocksOfMigs of
+        []                 -> actionAfter blocksOfMigs conn
+        [x] | blockInTxn x -> runBlock (actionAfter blocksOfMigs) x
+        _                  -> do
+            forM_ blocksOfMigs $ runBlock (const (pure ()))
+            actionAfter blocksOfMigs conn
 
   where
     runMigs withRetryPolicy migs =
@@ -375,23 +352,30 @@ baseApplyMigsBlock checkHashes retryPol actionAfter isolLvl conn blocksOfMigs =
                 runMigs retryPol migBlock
                 act conn
 
-    lastActionThenGetCksums coddSettingsForDbHashes c = do
-        res    <- actionAfter c
-        cksums <- readHashesFromDatabaseWithSettings coddSettingsForDbHashes c
-        pure (res, cksums)
+hardCheckLastAction
+    :: (MonadUnliftIO m, MonadLogger m)
+    => CoddSettings
+    -> DbHashes
+    -> ([BlockOfMigrations] -> DB.Connection -> m ())
+hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
+    cksums <- readHashesFromDatabaseWithSettings coddSettings conn
+    unless (all blockInTxn blocksOfMigs) $ do
+        logWarnN
+            "IMPORTANT: Due to the presence of no-txn migrations, hard checking was disabled and reverted to soft checking."
+        logWarnN
+            "IMPORTANT: This means all migrations have been applied and now we'll run a schema check."
+    throwExceptionOnChecksumMismatch cksums expectedHashes
 
-    checkSchemasOrFail cksums expectedHashes = do
-        unless (all blockInTxn blocksOfMigs) $ do
-            logWarnN
-                "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been successfully applied and committed without checking schemas."
-            logWarnN
-                "IMPORTANT: Still, we'll run a schema check now for you to make sure everything's ok, and exit with an error in case it isn't."
-        when (cksums /= expectedHashes) $ do
-            logHashDifferences cksums expectedHashes
-            throwIO $ userError
-                "DB checksums check failed. Differences printed above."
+throwExceptionOnChecksumMismatch
+    :: (MonadUnliftIO m, MonadLogger m) => DbHashes -> DbHashes -> m ()
+throwExceptionOnChecksumMismatch cksums expectedHashes = do
+    when (cksums /= expectedHashes) $ do
+        logHashDifferences cksums expectedHashes
+        throwIO
+            $ userError
+                  "Database checksums differ from expected. Differences printed above."
 
-        logInfoN "Database and expected schemas match."
+    logInfoN "Database and expected schemas match."
 
 data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
 
@@ -433,10 +417,10 @@ applySingleMigration conn isolLvl statementRetryPol ap (AddedSqlMigration sqlMig
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn nonDestSql
-                                                                                        -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                        -- since every migration will have both sections marked as ran sequentially.
 
-                                                                    -- If already in a transaction, then just execute, otherwise
-                                                                    -- start read-write txn
+                                                                                                    -- If already in a transaction, then just execute, otherwise
+                                                                                                    -- start read-write txn
                 let exec_ q qargs = if nonDestructiveInTxn sqlMig
                         then DB.execute conn q qargs
                         else beginCommitTxnBracket isolLvl conn
