@@ -4,6 +4,7 @@ module Codd.Parsing
   , SqlPiece(..)
   , ParsedSql(..)
   , ParsingOptions(..)
+  , isTransactionEndingPiece
   , mapSqlMigration
   , nothingIfEmptyQuery
   , piecesToText
@@ -61,7 +62,7 @@ import qualified Database.PostgreSQL.Simple.Time
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
 
-data ParsedSql = ParseFailSqlText Text | WellParsedSql Text (NonEmpty SqlPiece)
+data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
   deriving stock (Eq, Show)
 
 data SqlMigration = SqlMigration
@@ -85,9 +86,9 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-data SectionOption = OptForce Bool | OptInTxn Bool | OptDest Bool deriving stock (Ord, Eq, Show)
+data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Ord, Eq, Show)
 
-data SqlPiece = CommentPiece Text | WhiteSpacePiece Text | CopyFromStdinPiece Text Text Text | OtherSqlPiece Text
+data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
 parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
@@ -98,9 +99,12 @@ parsedSqlText (ParseFailSqlText t) = t
 parsedSqlText (WellParsedSql t _ ) = t
 
 sqlPieceText :: SqlPiece -> Text
-sqlPieceText (CommentPiece    s          ) = s
-sqlPieceText (WhiteSpacePiece s          ) = s
-sqlPieceText (OtherSqlPiece   s          ) = s
+sqlPieceText (CommentPiece        s      ) = s
+sqlPieceText (WhiteSpacePiece     s      ) = s
+sqlPieceText (BeginTransaction    s      ) = s
+sqlPieceText (RollbackTransaction s      ) = s
+sqlPieceText (CommitTransaction   s      ) = s
+sqlPieceText (OtherSqlPiece       s      ) = s
 sqlPieceText (CopyFromStdinPiece s1 s2 s3) = s1 <> s2 <> s3
 
 sqlPiecesParser :: Parser (NonEmpty SqlPiece)
@@ -115,10 +119,27 @@ sqlPiecesParser = do
       <$> commentParser
       <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace)
       <|> copyFromStdinParser
+      <|> BeginTransaction
+      <$> beginTransactionParser
+      <|> RollbackTransaction
+      <$> rollbackTransactionParser
+      <|> CommitTransaction
+      <$> commitTransactionParser
       <|> (OtherSqlPiece <$> anySqlPieceParser)
+  beginTransactionParser =
+    spaceSeparatedTokensToParser [CITextToken "BEGIN", AllUntilEndOfStatement]
+      <|> spaceSeparatedTokensToParser
+            [ CITextToken "START"
+            , CITextToken "TRANSACTION"
+            , AllUntilEndOfStatement
+            ]
+  rollbackTransactionParser = spaceSeparatedTokensToParser
+    [CITextToken "ROLLBACK", AllUntilEndOfStatement]
+  commitTransactionParser =
+    spaceSeparatedTokensToParser [CITextToken "COMMIT", AllUntilEndOfStatement]
   anySqlPieceParser = spaceSeparatedTokensToParser [AllUntilEndOfStatement]
 
-data SqlToken = CITextToken Text | SqlIdentifier | CommaSeparatedIdentifiers | Optional [SqlToken] | CustomParserToken (Parser Text) | AllUntilEndOfStatement
+data SqlToken = CITextToken !Text | SqlIdentifier | CommaSeparatedIdentifiers | Optional ![SqlToken] | CustomParserToken (Parser Text) | AllUntilEndOfStatement
 
 spaceSeparatedTokensToParser :: [SqlToken] -> Parser Text
 spaceSeparatedTokensToParser allTokens = case allTokens of
@@ -226,7 +247,7 @@ commentParser = do
   bRemaining <- blockInnerContentsParser commentType
   pure $ commentInit <> bRemaining
 
-data BlockType = DoubleDashComment | CStyleComment | DollarQuotedBlock Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
+data BlockType = DoubleDashComment | CStyleComment | DollarQuotedBlock !Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
 
 isPossibleStartingChar :: Char -> Bool
 isPossibleStartingChar c =
@@ -353,6 +374,11 @@ isWhiteSpacePiece _                   = False
 isCommentPiece :: SqlPiece -> Bool
 isCommentPiece (CommentPiece _) = True
 isCommentPiece _                = False
+
+isTransactionEndingPiece :: SqlPiece -> Bool
+isTransactionEndingPiece (RollbackTransaction _) = True
+isTransactionEndingPiece (CommitTransaction   _) = True
+isTransactionEndingPiece _                       = False
 
 -- | Splits SQL pieces into multiple segments separated by "-- codd: opts" comments.
 -- - The CommentPieces that contain "-- codd: opts" themselves are also included in the returned lists.

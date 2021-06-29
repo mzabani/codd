@@ -164,7 +164,6 @@ If you already have a Database and would like to start using _Codd_, here's a gu
    - **Note:** Because _codd_ runs migrations with the user in the supplied connection string, that user must already have proper permissions and must be the same across environments so newly created objects have the same ownership. It also helps a lot if that user is the DB owner because some SQL statements are only allowed for DB owners.
 6. The user that you supply in your connection string can't be created in a migration because it needs to exist before _codd_ runs. That also applies to DB ownership, locale and encoding, among a few other things, so it is helpful to keep a script that creates your DB and sets up those bits in case you want to recreate it. See [scripts/create-dev-db.sh](scripts/create-dev-db.sh) for an example, but make sure to use the `createdb` statement you came up with in step 5. After creating one such script, **run it**.
 7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
-   - 
 8. Edit `bootstrap-migration.sql` (created in step 3) and add `-- codd: no-txn` as its very first line.
 9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
 10. You should now have your Database back and managed through _Codd_.
