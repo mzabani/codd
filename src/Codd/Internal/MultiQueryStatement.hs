@@ -94,9 +94,14 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
   hasCopyFromStdin xs = or [ True | CopyFromStdinPiece{} <- NE.toList xs ]
 
 runSingleStatementInternal_ :: MonadIO m => DB.Connection -> SqlPiece -> m ()
-runSingleStatementInternal_ _    (CommentPiece    _) = pure ()
-runSingleStatementInternal_ _    (WhiteSpacePiece _) = pure ()
-runSingleStatementInternal_ conn (OtherSqlPiece   s) = singleStatement_ conn s
+runSingleStatementInternal_ _    (CommentPiece     _) = pure ()
+runSingleStatementInternal_ _    (WhiteSpacePiece  _) = pure ()
+runSingleStatementInternal_ conn (BeginTransaction s) = singleStatement_ conn s
+runSingleStatementInternal_ conn (CommitTransaction s) =
+  singleStatement_ conn s
+runSingleStatementInternal_ conn (RollbackTransaction s) =
+  singleStatement_ conn s
+runSingleStatementInternal_ conn (OtherSqlPiece s) = singleStatement_ conn s
 runSingleStatementInternal_ conn (CopyFromStdinPiece copyStm copyData _terminator)
   = liftIO $ do
     DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
