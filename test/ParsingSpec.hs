@@ -136,7 +136,15 @@ validSqlStatements =
     "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
     "Lots of data\nin\neach line"
     "\n\\.\n" -- Specifying columns
-
+  , BeginTransaction "begin;"
+  , BeginTransaction "BEGiN/*a*/;"
+  , BeginTransaction "BEgIN   ;"
+  , RollbackTransaction "ROllBaCk;"
+  , RollbackTransaction "ROllBaCk/*a*/;"
+  , RollbackTransaction "ROllBaCk   ;"
+  , CommitTransaction "COmmIT;"
+  , CommitTransaction "COMMIT/*a*/;"
+  , CommitTransaction "cOMMIT   ;"
     -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
     -- , "/* multiline comment"
     --   <> "\n  * with nesting: /* nested block comment */"

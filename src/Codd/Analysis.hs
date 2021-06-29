@@ -4,12 +4,14 @@ This Module is all about analyzing SQL Migrations, by e.g. running them and chec
 
 module Codd.Analysis
     ( MigrationCheck(..)
+    , MigrationCheckSimpleWorkflow(..)
     , NonDestructiveSectionCheck(..)
     , DestructiveSectionCheck(..)
     , checkMigration
     , canRunEverythingInASingleTransaction
     , someDestructiveChangeHasBeenApplied
     , migrationErrors
+    , checkMigrationSimpleWorkflow
     ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
@@ -22,7 +24,13 @@ import           Codd.Hashing                   ( DbHashes(..)
                                                 )
 import           Codd.Internal
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , ParsedSql
+                                                    ( ParseFailSqlText
+                                                    , WellParsedSql
+                                                    )
                                                 , SqlMigration(..)
+                                                , SqlPiece(BeginTransaction)
+                                                , isTransactionEndingPiece
                                                 )
 import           Codd.Query                     ( query
                                                 , unsafeQuery1
@@ -34,7 +42,8 @@ import           Control.Monad                  ( void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLogger )
-import           Data.List.NonEmpty             ( NonEmpty )
+import           Data.Foldable                  ( foldl' )
+import           Data.List.NonEmpty             ( NonEmpty((:|)) )
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                     ( isNothing )
 import           Data.Text                      ( Text )
@@ -47,6 +56,9 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , bracket_
                                                 )
 
+newtype MigrationCheckSimpleWorkflow = MigrationCheckSimpleWorkflow { transactionManagementProblem :: Maybe Text }
+    deriving stock Show
+
 data MigrationCheck = MigrationCheck NonDestructiveSectionCheck
                                      DestructiveSectionCheck
     deriving stock Show
@@ -57,26 +69,24 @@ data NonDestructiveSectionCheck = NonDestructiveSectionCheck
     }
     deriving stock Show
 
-data DestructiveSectionCheck = DestructiveSectionCheck
+newtype DestructiveSectionCheck = DestructiveSectionCheck
     { destSectionEndsTransaction :: Bool
     }
     deriving stock Show
 
 migrationErrors :: SqlMigration -> MigrationCheck -> [Text]
-migrationErrors sqlMig (MigrationCheck (NonDestructiveSectionCheck {..}) (DestructiveSectionCheck {..}))
-    = if (nonDestSectionIsDestructive && not (nonDestructiveForce sqlMig))
-        then
-            [ "Non-destructive section is destructive but not properly annotated. Add the option 'force' if you really want this."
-            ]
-        else if nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig
-            then
-                [ "Non-destructive section ends Transactions when run, and that is not allowed."
-                ]
-            else if destSectionEndsTransaction && destructiveInTxn sqlMig
-                then
-                    [ "Destructive section ends Transactions when run, and that is not allowed."
-                    ]
-                else []
+migrationErrors sqlMig (MigrationCheck NonDestructiveSectionCheck {..} DestructiveSectionCheck {..})
+    | nonDestSectionIsDestructive && not (nonDestructiveForce sqlMig)
+    = [ "Non-destructive section is destructive but not properly annotated. Add the option 'force' if you really want this."
+      ]
+    | nonDestSectionEndsTransaction && nonDestructiveInTxn sqlMig
+    = [ "Non-destructive section ends Transactions when run, and that is not allowed."
+      ]
+    | destSectionEndsTransaction && destructiveInTxn sqlMig
+    = [ "Destructive section ends Transactions when run, and that is not allowed."
+      ]
+    | otherwise
+    = []
 
 -- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
 canRunEverythingInASingleTransaction
@@ -92,6 +102,40 @@ canRunEverythingInASingleTransaction settings mig = do
         $  all blockInTxn pendingMigBlocks
         && nonDestructiveInTxn mig
         && isNothing (destructiveSql mig)
+
+-- | Checks for problems in a migration for the Simple Workflow mode, including:
+--   1. in-txn migration ROLLBACKs or COMMITs.
+--   2. no-txn migrations BEGIN transaction but never ROLLBACK or COMMIT it.
+checkMigrationSimpleWorkflow
+    :: SqlMigration -> Either Text MigrationCheckSimpleWorkflow
+checkMigrationSimpleWorkflow mig =
+    MigrationCheckSimpleWorkflow <$> migEndsTransaction
+
+  where
+    migEndsTransaction =
+        case (nonDestructiveSql mig, nonDestructiveInTxn mig) of
+            (Nothing, _) -> Left "Empty migration"
+            (Just (ParseFailSqlText _), _) ->
+                Left "Error parsing migration so checking is not possible"
+            (Just (WellParsedSql _ pieces), True) ->
+                Right $ if any isTransactionEndingPiece pieces
+                    then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
+                    else Nothing
+            (Just (WellParsedSql _ (p1 :| ps)), False) ->
+                let
+                    isOpenAfter wasOpen p = case p of
+                        BeginTransaction _ -> True
+                        _ -> not (isTransactionEndingPiece p) && wasOpen
+
+                    leavesTransactionOpen =
+                        foldl' isOpenAfter (isOpenAfter False p1) ps
+                in
+                    Right $ if leavesTransactionOpen
+                        then
+                            Just
+                                "no-txn migration BEGINs but does not COMMIT or ROLLBACK transaction"
+                        else Nothing
+
 
 -- | Checks if there are any problems, including:
 --   1. in-txn migration ROLLBACKs or COMMITs inside any of its Sql sections.

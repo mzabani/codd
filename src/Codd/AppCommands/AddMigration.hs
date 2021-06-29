@@ -4,8 +4,9 @@ module Codd.AppCommands.AddMigration
   ) where
 
 import qualified Codd
-import           Codd.Analysis                  ( canRunEverythingInASingleTransaction
+import           Codd.Analysis                  ( MigrationCheckSimpleWorkflow(..)
                                                 , checkMigration
+                                                , checkMigrationSimpleWorkflow
                                                 , migrationErrors
                                                 )
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
@@ -15,12 +16,18 @@ import           Codd.Hashing                   ( persistHashesToDisk )
 import           Codd.Parsing                   ( ParsingOptions(..)
                                                 , parseSqlMigration
                                                 )
-import           Codd.Types                     ( SqlFilePath(..) )
+import           Codd.Types                     ( DeploymentWorkflow
+                                                  ( BlueGreenSafeDeploymentUpToAndIncluding
+                                                  , SimpleDeployment
+                                                  )
+                                                , SqlFilePath(..)
+                                                )
 import           Control.Monad                  ( forM_
                                                 , unless
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLoggerIO )
+import           Data.Maybe                     ( maybeToList )
 import qualified Data.Text.IO                  as Text
 import           System.Exit                    ( ExitCode(..)
                                                 , exitWith
@@ -77,18 +84,18 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
       Left err ->
         error $ "There was an error parsing this SQL Migration: " ++ show err
       Right sqlMig -> do
-        -- If the User wants to apply pending migrations and the newly added one as well,
-        -- there's a possible optimization: iff all pending migrations plus the newly added one are in-txn,
-        -- we don't need to check the migration as a separate step; we can just add and apply.
-        canRunInTxn <- canRunEverythingInASingleTransaction dbInfo sqlMig
-        let skipCheck = not dontApply && canRunInTxn
-        unless skipCheck $ do
-          migCheck <- checkMigration dbInfo sqlMig
-          let migErrors = migrationErrors sqlMig migCheck
+        migErrors <- case deploymentWorkflow of
+          SimpleDeployment ->
+            either (pure . (: []))
+                   (pure . maybeToList . transactionManagementProblem)
+              $ checkMigrationSimpleWorkflow sqlMig
+          BlueGreenSafeDeploymentUpToAndIncluding{} -> do
+            migCheck <- checkMigration dbInfo sqlMig
+            pure $ migrationErrors sqlMig migCheck
 
-          when (migErrors /= []) $ liftIO $ do
-            forM_ migErrors (Text.hPutStrLn stderr)
-            exitWith (ExitFailure 1)
+        when (migErrors /= []) $ liftIO $ do
+          forM_ migErrors (Text.hPutStrLn stderr)
+          exitWith (ExitFailure 1)
 
         bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
                        moveMigrationBack
