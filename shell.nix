@@ -23,7 +23,7 @@ in
 
         # Some you may need to get some other way.
         buildInputs = with pkgs.haskellPackages;
-            [ ghcid hpack brittany hspec-discover ];
+            [ ghcid hpack brittany hspec-discover pkgs.postgresql_13 ];
 
         # Prevents cabal from choosing alternate plans, so that
         # *all* dependencies are provided by Nix.

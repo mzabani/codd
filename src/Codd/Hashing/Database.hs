@@ -142,6 +142,8 @@ instance DataSource HaxlEnv HashReq where
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
             finalHashExpr =
               "MD5(" <> safeStringConcat (checksumCols (qp2 x)) <> ")"
+            -- TODO: Create a "Debug" mode that allows us to see what gets hashed instead of hashes
+            -- finalHashExpr = safeStringConcat (checksumCols (qp2 x))
             finalQip = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap

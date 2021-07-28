@@ -370,7 +370,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
             , sortArrayExpr "attoptions"
             , sortArrayExpr "attfdwoptions"
-            , "attnum"
+            -- , "attnum" -- We use a window function instead of attnum because the latter is affected by dropped columns!
+            , "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
             , "_codd_roles.permissions"
             ]
         , fromTable     = "pg_catalog.pg_attribute"
@@ -410,8 +411,10 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "pg_constraint.conislocal"
                           , "pg_constraint.coninhcount"
                           , "pg_constraint.connoinherit"
-                          , "pg_constraint.conkey"
-                          , "pg_constraint.confkey"
+                          -- We don't reference conkey and confkey because the constraint definition will already contain
+                          -- referenced columns' names, AND because attnum is affected by dropped columns.
+                        --   , "pg_constraint.conkey"
+                        --   , "pg_constraint.confkey"
                           , "pg_get_constraintdef(pg_constraint.oid)"
                           -- , "conbin" -- A pg_node_tree
                           ]
@@ -464,7 +467,6 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , checksumCols  = [ pronameExpr "pg_proc"
                           , "tgtype"
                           , "tgenabled"
-                          , "tgisinternal"
                           , "pg_ref_table.relname"
                           , "pg_trigger_ind.relname"
                           , constraintnameExpr "pg_trigger_constr"

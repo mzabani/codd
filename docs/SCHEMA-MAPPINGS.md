@@ -121,7 +121,6 @@ PureSqlExpression "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM
 "attoptions",  
 "attfdwoptions",  
 "attmissingval",
-"attnum"
 
 ### Ignored columns
 
@@ -136,6 +135,7 @@ PureSqlExpression "SELECT pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) FROM
 -- attstorage	char	 	Normally a copy of pg_type.typstorage of this column's type. For TOAST-able data types, this can be altered after column creation to   control storage policy.  
 -- attalign	char	 	A copy of pg_type.typalign of this column's type  
 -- attisdropped	bool	 	This column has been dropped and is no longer valid. A dropped column is still physically present in the table, but is ignored by   the parser and so cannot be accessed via SQL.  
+-- "attnum" - We don't use this column because dropped columns affect this. We instead use a RANK() window function over attnum for non-dropped and non-internal columns.
 
 ### Notes
 

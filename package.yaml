@@ -98,8 +98,8 @@ tests:
     # Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
     # include hspec-discover in build-tools for nix building of tests to work.
     # Sadly, cabal run codd-test does not work when we do this :(
-    system-build-tools:
-    - hspec-discover
+    # system-build-tools:
+    # - hspec-discover
     dependencies:
     - attoparsec
     - codd
