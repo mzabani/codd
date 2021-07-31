@@ -17,13 +17,21 @@ import           Codd.Hashing                   ( DbHashes(DbHashes)
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Internal.MultiQueryStatement
+                                                ( InTransaction
+                                                  ( NotInTransaction
+                                                  )
+                                                , multiQueryStatement_
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , parsedSqlText
                                                 , toMigrationTimestamp
                                                 )
+import           Codd.Types                     ( singleTryPolicy )
 import           Control.Monad                  ( foldM
                                                 , foldM_
+                                                , forM_
                                                 , void
                                                 , when
                                                 )
@@ -48,7 +56,9 @@ import           DbUtils                        ( aroundFreshDatabase
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 )
+import           Debug.Trace                    ( traceShowId )
 import           Test.Hspec
+import           UnliftIO                       ( liftIO )
 import           UnliftIO.Concurrent            ( threadDelay )
 
 data DbChange = ChangeEq [(FilePath, DiffType)] | SomeChange
@@ -123,7 +133,7 @@ migrationsAndHashChange = zipWith
           , ("schemas/public/tables/employee/objhash"              , OnlyRight)
           ]
     addMig_ "ALTER TABLE employee ALTER COLUMN employee_name SET NOT NULL"
-            "ALTER TABLE employee ALTER COLUMN DROP NOT NULL"
+            "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
       $ ChangeEq
           [ ( "schemas/public/tables/employee/cols/employee_name"
             , BothButDifferent
@@ -182,7 +192,7 @@ migrationsAndHashChange = zipWith
     addMig_
         "ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;"
 
-        "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT); \
+        "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT NOT NULL); \
              \ ALTER TABLE employee ADD COLUMN deathday DATE DEFAULT '2100-02-04'; ALTER TABLE employee ADD COLUMN birthday TIMESTAMP;"
 
       $ ChangeEq
@@ -211,7 +221,7 @@ migrationsAndHashChange = zipWith
 
       -- MINVALUE and MAXVALUE that fit other types so we are sure changing just the seq. type has an effect
     addMig_ "ALTER SEQUENCE some_seq AS smallint"
-            "ALTER SEQUENCE some_seq AS integer"
+            "ALTER SEQUENCE some_seq AS bigint"
       $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
     addMig_ "ALTER SEQUENCE some_seq AS integer"
             "ALTER SEQUENCE some_seq AS smallint"
@@ -428,18 +438,19 @@ migrationsAndHashChange = zipWith
       "DROP FUNCTION employee_name_rename_set_new()"
       SomeChange
 
-    addMig_
-        "CREATE TRIGGER employee_old_app_update_column_name\
+    (createTrigger1, dropTrigger) <-
+      addMig
+          "CREATE TRIGGER employee_old_app_update_column_name\
         \ \n BEFORE UPDATE ON employee\
         \ \n FOR EACH ROW\
         \ \n WHEN (OLD.employee_name IS DISTINCT FROM NEW.employee_name)\
         \ \n EXECUTE PROCEDURE employee_name_rename_set_new()"
-        "DROP TRIGGER employee_old_app_update_column_name ON employee"
-      $ ChangeEq
-          [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
-            , OnlyRight
-            )
-          ]
+          "DROP TRIGGER employee_old_app_update_column_name ON employee;"
+        $ ChangeEq
+            [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
+              , OnlyRight
+              )
+            ]
 
 
     -- No WHEN in the recreated trigger
@@ -448,11 +459,7 @@ migrationsAndHashChange = zipWith
         \ \n BEFORE UPDATE ON employee\
         \ \n FOR EACH ROW\
         \ \n EXECUTE PROCEDURE employee_name_rename_set_new()"
-        "CREATE TRIGGER employee_old_app_update_column_name\
-        \ \n BEFORE UPDATE ON employee\
-        \ \n FOR EACH ROW\
-        \ \n WHEN (OLD.employee_name IS DISTINCT FROM NEW.employee_name)\
-        \ \n EXECUTE PROCEDURE employee_name_rename_set_new()"
+        (dropTrigger <> createTrigger1)
       $ ChangeEq
           [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
             , BothButDifferent
@@ -461,7 +468,7 @@ migrationsAndHashChange = zipWith
 
     addMig_
         "DROP TRIGGER employee_old_app_update_column_name ON employee"
-        "DROP TRIGGER employee_old_app_update_column_name ON employee; CREATE TRIGGER employee_old_app_update_column_name\
+        "CREATE TRIGGER employee_old_app_update_column_name\
         \ \n BEFORE UPDATE ON employee\
         \ \n FOR EACH ROW\
         \ \n EXECUTE PROCEDURE employee_name_rename_set_new()"
@@ -471,9 +478,20 @@ migrationsAndHashChange = zipWith
             )
           ]
 
-    addMig_ "ALTER TABLE employee DROP COLUMN employee_name"
-            "ERRORRRR"
-            SomeChange
+    addMig_
+      "ALTER TABLE employee DROP COLUMN employee_name"
+      -- Undoing this statement requires recreating a lot of dependent objects..
+      "ALTER SEQUENCE some_seq OWNED BY NONE; \
+    \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN employee_id CASCADE,\
+                          \ ADD COLUMN employee_name TEXT NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
+                          \ ADD COLUMN birthday TIMESTAMP, ADD COLUMN employee_id SERIAL PRIMARY KEY, \
+                          \ ADD COLUMN name TEXT;\
+    \\nALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY');\
+    \\nALTER TABLE employee ADD CONSTRAINT employee_unique_name UNIQUE(employee_name);\
+    \\nCREATE UNIQUE INDEX unique_employee_idx ON employee (employee_name);\
+    \\nALTER TABLE employee_car ADD CONSTRAINT employee_car_employee_fk FOREIGN KEY (employee_id) REFERENCES employee(employee_id);\
+    \\nALTER SEQUENCE some_seq OWNED BY employee.employee_id;"
+      SomeChange
 
     addMig_ "ALTER TABLE employee RENAME COLUMN name TO employee_name"
             "ALTER TABLE employee RENAME COLUMN employee_name TO name"
@@ -547,7 +565,7 @@ migrationsAndHashChange = zipWith
     (dropCreatePolicy4, _) <-
       addMig
           "DROP POLICY some_policy ON employee; CREATE POLICY some_policy ON employee FOR UPDATE USING (employee_name <> 'Some Other Name') WITH CHECK (TRUE);"
-          (dropCreatePolicy3)
+          dropCreatePolicy3
         $ ChangeEq
             [ ( "schemas/public/tables/employee/policies/some_policy"
               , BothButDifferent
@@ -625,14 +643,21 @@ migrationsAndHashChange = zipWith
 
       -- PERMISSIONS
       -- For tables
-    (grantAll, revokeAll) <-
-      addMig "GRANT ALL ON TABLE employee TO \"codd-test-user\""
-             "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
+      -- IMPORTANT note:
+      -- For some reason, revoking privileges from a table
+      -- seems to have the effect of GRANTing permissions to the revoker, but
+      -- only the first time it's revoked.
+      -- So be careful making sure REVOKE does what you expect!
+    (grantAll, _) <-
+      addMig
+          "GRANT ALL ON TABLE employee TO \"codd-test-user\""
+              -- Read the note above to understand REVOKE from postgres
+          "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; REVOKE ALL ON TABLE employee FROM postgres;"
         $ ChangeEq
             [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
-    addMig_ revokeAll grantAll $ ChangeEq
-      [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    addMig_ "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"" grantAll
+      $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
     addMig_ "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
             "REVOKE SELECT ON TABLE employee FROM \"codd-test-user\""
@@ -647,18 +672,14 @@ migrationsAndHashChange = zipWith
       $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
       -- For sequences
-    addMig_
-        "REVOKE ALL ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\""
-        "GRANT ALL ON SEQUENCE employee_employee_id_seq TO \"codd-test-user\""
-      $ ChangeEq
-          [ ( "schemas/public/sequences/employee_employee_id_seq"
-            , BothButDifferent
-            )
-          ]
-
+      -- IMPORTANT note:
+      -- For some reason, revoking privileges from a sequence owned by a table column
+      -- seems to have the effect of GRANTing permissions to the revoker.
+      -- So be careful making sure REVOKE does what you expect!
     addMig_
         "GRANT SELECT ON SEQUENCE employee_employee_id_seq TO \"codd-test-user\""
-        "REVOKE SELECT ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\""
+        -- Read the note above to understand REVOKE from postgres
+        "REVOKE SELECT ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\"; REVOKE ALL ON SEQUENCE employee_employee_id_seq FROM postgres"
       $ ChangeEq
           [ ( "schemas/public/sequences/employee_employee_id_seq"
             , BothButDifferent
@@ -666,51 +687,54 @@ migrationsAndHashChange = zipWith
           ]
 
 
-      -- Order of granting does not matter, nor do grantors
-    addMig_ "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
-            "GRANT ALL ON TABLE employee TO \"codd-test-user\""
+    -- At this point codd-test-user has S+I+D permissions on the employee table
+    -- Order of granting does not matter, nor do grantors
+    addMig_
+        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
+        "GRANT SELECT,INSERT,DELETE ON TABLE employee TO \"codd-test-user\""
       $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
-    addMig_
-        "GRANT INSERT ON TABLE employee TO \"codd-test-user\"; GRANT DELETE ON TABLE employee TO \"codd-test-user\""
-        "REVOKE INSERT ON TABLE employee FROM \"codd-test-user\"; REVOKE DELETE ON TABLE employee FROM \"codd-test-user\""
+    addMig_ "GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\";"
+            "REVOKE INSERT, DELETE ON TABLE employee FROM \"codd-test-user\";"
       $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
+    -- At this point codd-test-user has I+D permissions on the employee table
     addMig_
-        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT  DELETE ON TABLE employee TO \"codd-test-user\";   GRANT  INSERT ON TABLE employee TO \"codd-test-user\""
-        "GRANT  ALL ON TABLE employee TO   \"codd-test-user\"; REVOKE DELETE ON TABLE employee FROM \"codd-test-user\"; REVOKE INSERT ON TABLE employee FROM \"codd-test-user\""
+        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\";"
+        "GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\";"
       $ ChangeEq []
 
-    addMig_ "GRANT ALL ON TABLE employee TO \"codd-test-user\""
-            "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
+    -- At this point codd-test-user has I+D permissions on the employee table
+    addMig_
+        "GRANT ALL ON TABLE employee TO \"codd-test-user\""
+        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\""
       $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
-    addMig_
-        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\""
-        "ERROR"
+    addMig_ "GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
+            "REVOKE ALL ON TABLE employee FROM \"extra-codd-test-user\""
       $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
-    addMig_
-        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
-        "ERROR"
-      $ ChangeEq []
+    addMigNoChanges_
+      "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
 
-    addMig_ "GRANT ALL ON TABLE employee TO PUBLIC" "ERROR" $ ChangeEq
-      [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    addMig_
+        "GRANT ALL ON TABLE employee TO PUBLIC"
+        "REVOKE ALL ON TABLE employee FROM PUBLIC; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\";"
+      $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
 
       -- Permissions of unmapped role don't affect hashing
       -- For some reason, GRANTing to unmapped_role1 for a VIEW also adds permissions to the VIEW owner. This doesn't seem to happen for tables or sequences..
     addMig_ "GRANT ALL ON all_employee_names TO \"codd-test-user\""
-            "ERROR"
+            "REVOKE ALL ON all_employee_names FROM \"codd-test-user\""
             SomeChange
-    addMig_
-        "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; GRANT ALL ON all_employee_names TO unmapped_role1"
-        "ERROR"
-      $ ChangeEq []
+    (createUnmappedRoleAndGrant, dropUnmappedRole) <-
+      addMig
+          "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; GRANT ALL ON all_employee_names TO unmapped_role1"
+          "DROP OWNED BY unmapped_role1; DROP ROLE unmapped_role1"
+        $ ChangeEq []
 
-    addMig_ "DROP OWNED BY unmapped_role1; DROP ROLE unmapped_role1" "ERROR"
-      $ ChangeEq []
+    addMig_ dropUnmappedRole createUnmappedRoleAndGrant $ ChangeEq []
 
       -- CREATING UNMAPPED AND MAPPED SCHEMAS
     addMig_ "CREATE SCHEMA unmappedschema" "DROP SCHEMA unmappedschema"
@@ -738,61 +762,99 @@ migrationsAndHashChange = zipWith
             "DELETE FROM employee WHERE employee_name='Marcelo'"
       $ ChangeEq []
 
+-- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
 newtype AccumChanges = AccumChanges [((AddedSqlMigration, DbChange), DbHashes)]
 
 spec :: Spec
 spec = do
-  let mkDbInfo baseDbInfo migs = baseDbInfo { sqlMigrations = Right migs }
   describe "DbDependentSpecs" $ do
     describe "Hashing tests" $ do
-      aroundFreshDatabase $ it "Checksumming schema changes" $ \emptyDbInfo ->
+      aroundFreshDatabase $ it "Checksumming schema changes" $ \emptyDbInfo2 ->
         do
-          let connInfo = superUserInAppDatabaseConnInfo emptyDbInfo
+          let
+              -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
+              -- Use the above definition of emptyDbInfo if it helps debugging
+              emptyDbInfo = emptyDbInfo2
+              connInfo    = superUserInAppDatabaseConnInfo emptyDbInfo
               getHashes sett = runStdoutLoggingT $ withConnection
                 connInfo
                 (readHashesFromDatabaseWithSettings sett)
           hashBeforeEverything <- getHashes emptyDbInfo
-          (_, applyHistory)    <- foldM
-            (\(hashSoFar, AccumChanges appliedMigsAndCksums) (MU nextMig _undoSql, expectedChanges) ->
-              do
-                let appliedMigs = map (fst . fst) appliedMigsAndCksums
-                    newMigs     = appliedMigs ++ [nextMig]
-                    dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
-                dbHashesAfterMig <- runStdoutLoggingT
-                  $ applyMigrations dbInfo NoCheck
-                let migText =
-                      parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
-                    diff = hashDifferences hashSoFar dbHashesAfterMig
-                case expectedChanges of
-                  ChangeEq c -> do
-                    (migText, diff) `shouldBe` (migText, Map.fromList c)
-                    -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
-                    if null c
-                      then hashSoFar `shouldBe` dbHashesAfterMig
-                      else hashSoFar `shouldNotBe` dbHashesAfterMig
-                  SomeChange -> do
-                    (migText, diff) `shouldNotBe` (migText, Map.empty)
-                    -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
-                    hashSoFar `shouldNotBe` dbHashesAfterMig
-
-                return
-                  ( dbHashesAfterMig
-                  , AccumChanges
-                  $  appliedMigsAndCksums
-                  ++ [((nextMig, expectedChanges), dbHashesAfterMig)]
-                  )
-            )
-            (hashBeforeEverything, AccumChanges [])
-            migrationsAndHashChange
+          (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
+              , Maybe Text
+              )
+            ]                                                           ) <-
+            forwardApplyMigs hashBeforeEverything emptyDbInfo
 
           -- Let's make sure we're actually applying the migrations by fetching some data..
-          withConnection
-              connInfo
-              (\conn -> DB.query
-                conn
-                "SELECT employee_id, employee_name FROM employee WHERE employee_name='Marcelo'"
-                ()
-              )
-            `shouldReturn` [(1 :: Int, "Marcelo" :: String)]
+          ensureMarceloExists connInfo
 
-          -- Now undo everything and check that checksums match each step of the way in reverse!
+          -- Now undo each SQL migration and check that checksums match each step of the way in reverse!
+          liftIO $ putStrLn "Undoing migrations in reverse"
+          forM_ (reverse hashesAndUndo)
+            $ \(expectedHashesAfterUndo, mUndoSql) -> case mUndoSql of
+                Nothing      -> pure ()
+                Just undoSql -> do
+                  runStdoutLoggingT $ withConnection connInfo $ \conn ->
+                    multiQueryStatement_ (NotInTransaction singleTryPolicy) conn
+                      $ mkValidSql undoSql
+                  hashesAfterUndo <- getHashes emptyDbInfo
+                  let diff = hashDifferences hashesAfterUndo
+                                             expectedHashesAfterUndo
+                  (undoSql, diff) `shouldBe` (undoSql, Map.empty)
+                  -- What follows is just a sanity check
+                  (undoSql, hashesAfterUndo)
+                    `shouldBe` (undoSql, expectedHashesAfterUndo)
+
+          -- Reapply every migration.
+          -- This may look unnecessary, but if a created object (e.g. a column) is not dropped
+          -- on the way forward, we might not get a change to the effects of readding it.
+          -- For columns, for example, only by readding some other column to the same table
+          -- that we would catch internally dropped columns in pg_attribute.
+          liftIO $ putStrLn "Re-applying migrations"
+          void $ withConnection
+            connInfo
+            (`DB.execute_` "DELETE FROM codd_schema.sql_migrations")
+          void $ forwardApplyMigs hashBeforeEverything emptyDbInfo
+          ensureMarceloExists connInfo
+ where
+  forwardApplyMigs hashBeforeEverything emptyDbInfo = foldM
+    (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->
+      do
+        let appliedMigs = map (fst . fst) appliedMigsAndCksums
+            newMigs     = appliedMigs ++ [nextMig]
+            dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
+        dbHashesAfterMig <- runStdoutLoggingT $ applyMigrations dbInfo NoCheck
+        let migText = parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
+            diff    = hashDifferences hashSoFar dbHashesAfterMig
+        case expectedChanges of
+          ChangeEq c -> do
+            (migText, diff) `shouldBe` (migText, Map.fromList c)
+            -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+            if null c
+              then hashSoFar `shouldBe` dbHashesAfterMig
+              else hashSoFar `shouldNotBe` dbHashesAfterMig
+          SomeChange -> do
+            (migText, diff) `shouldNotBe` (migText, Map.empty)
+            -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+            hashSoFar `shouldNotBe` dbHashesAfterMig
+
+        return
+          ( dbHashesAfterMig
+          , AccumChanges
+          $  appliedMigsAndCksums
+          ++ [((nextMig, expectedChanges), dbHashesAfterMig)]
+          , hundo ++ [(hashSoFar, undoSql)]
+          )
+    )
+    (hashBeforeEverything, AccumChanges [], [])
+    migrationsAndHashChange
+  ensureMarceloExists connInfo =
+    withConnection
+        connInfo
+        (\conn -> DB.query
+          conn
+          "SELECT employee_id, employee_name FROM employee WHERE employee_name='Marcelo'"
+          ()
+        )
+      `shouldReturn` [(1 :: Int, "Marcelo" :: String)]

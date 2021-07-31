@@ -70,7 +70,8 @@ instance StateKey HashReq where
 instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
-type HaxlEnv = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole)
+type HaxlEnv
+  = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole, Bool)
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
@@ -82,8 +83,8 @@ data SameQueryFormatFetch = SameQueryFormatFetch
   }
 
 instance DataSource HaxlEnv HashReq where
-  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles) = SyncFetch
-    combineQueriesWithWhere
+  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, hashedChecksums) =
+    SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
 
@@ -140,10 +141,9 @@ instance DataSource HaxlEnv HashReq where
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
           let
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
-            finalHashExpr =
-              "MD5(" <> safeStringConcat (checksumCols (qp2 x)) <> ")"
-            -- TODO: Create a "Debug" mode that allows us to see what gets hashed instead of hashes
-            -- finalHashExpr = safeStringConcat (checksumCols (qp2 x))
+            finalHashExpr = if hashedChecksums
+              then "MD5(" <> safeStringConcat (checksumCols (qp2 x)) <> ")"
+              else safeStringConcat (checksumCols (qp2 x))
             finalQip = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap
@@ -226,7 +226,7 @@ readHashesFromDatabaseWithSettings
   => CoddSettings
   -> DB.Connection
   -> m DbHashes
-readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash } conn
+readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash, hashedChecksums } conn
   = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
@@ -244,19 +244,23 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       hashedChecksums
           11 -> readHashesFromDatabase Pg11.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       hashedChecksums
           12 -> readHashesFromDatabase Pg12.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       hashedChecksums
           -- Postgres 13 doesn't seem to have any hashable new features compared to 12
           13 -> readHashesFromDatabase Pg12.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       hashedChecksums
           v
             | v <= 13 -> error
             $  "Unsupported PostgreSQL version "
@@ -270,6 +274,7 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
                                      conn
                                      schemasToHash
                                      rolesToHash
+                                     hashedChecksums
 
 readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
@@ -277,10 +282,12 @@ readHashesFromDatabase
   -> DB.Connection
   -> Include SqlSchema
   -> Include SqlRole
+  -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn allSchemas allRoles = do
+readHashesFromDatabase pgVer conn allSchemas allRoles hashedChecksums = do
   let stateStore = stateSet UserState{} stateEmpty
-  env0 <- liftIO $ initEnv stateStore (pgVer, conn, allSchemas, allRoles)
+  env0 <- liftIO
+    $ initEnv stateStore (pgVer, conn, allSchemas, allRoles, hashedChecksums)
   liftIO $ runHaxl env0 $ do
     allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
     roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing

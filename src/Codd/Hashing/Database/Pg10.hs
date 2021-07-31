@@ -297,18 +297,21 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                         , "seqcache"
                                         , "seqcycle"
                                         , "owner_column.tablename"
-                                        , "owner_column.colnum" -- Num instead of name doesn't touch the sequence if the column's renamed,
-                                                                -- but touches it if the column changes positions (which is probably better)
+                                        , "owner_col_order.colorder" -- Num instead of name doesn't touch the sequence if the column's renamed,
+                                                                     -- but touches it if the column changes positions (which is probably better)
                                         ]
                 , joins        =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_sequence pg_sequence ON seqrelid=pg_class.oid \
                           \\n JOIN pg_catalog.pg_type AS pg_seq_type ON pg_seq_type.oid=pg_sequence.seqtypid \
-                          \\n LEFT JOIN (SELECT pg_depend.objid AS sequence_oid, owner_Col_table.relname AS tablename, pg_attribute.attnum AS colnum \
+                          \\n LEFT JOIN (SELECT pg_depend.objid AS sequence_oid, owner_col_table.oid AS tableid, pg_attribute.attnum, owner_col_table.relname AS tablename, pg_attribute.attnum AS colnum \
                           \\n      FROM pg_catalog.pg_depend \
                           \\n         JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_depend.refobjid AND pg_attribute.attnum=pg_depend.refobjsubid \
                           \\n         JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid) owner_column \
-                          \\n            ON owner_column.sequence_oid=pg_class.oid"
+                          \\n            ON owner_column.sequence_oid=pg_class.oid \
+                          \\n LEFT JOIN (SELECT attrelid as tableid, attnum, RANK() OVER (PARTITION BY attrelid ORDER BY attnum) AS colorder \
+                          \\n      FROM pg_catalog.pg_attribute \
+                          \\n      WHERE NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')) owner_col_order USING (tableid, attnum)"
                 }
     HRoutine ->
         let nonAggCols =
@@ -368,8 +371,9 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attinhcount"
             , "pg_collation.collname"
             , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-            , sortArrayExpr "attoptions"
-            , sortArrayExpr "attfdwoptions"
+            -- We're not sure yet what attoptions and attfdwoptions represent, so we're not including them yet
+            -- , sortArrayExpr "attoptions" 
+            -- , sortArrayExpr "attfdwoptions"
             -- , "attnum" -- We use a window function instead of attnum because the latter is affected by dropped columns!
             , "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
             , "_codd_roles.permissions"

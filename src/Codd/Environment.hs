@@ -64,6 +64,9 @@ data CoddSettings = CoddSettings
     -- ^ The Retry Policy to be used when applying failing migrations.
     , txnIsolationLvl     :: TxnIsolationLvl
     -- ^ Transaction isolation level to be used when applying migrations.
+    , hashedChecksums     :: Bool
+    -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
+    -- by setting this to False.
     }
 
 -- | Parses a value using backslash as an escape char for any char that matches
@@ -228,6 +231,7 @@ getCoddSettings = do
                       , extraRolesToHash    = extraRolesToHash
                       , retryPolicy         = retryPolicy
                       , txnIsolationLvl     = txnIsolationLvl
+                      , hashedChecksums     = True
                       }
 
   where
