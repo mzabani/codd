@@ -33,8 +33,11 @@ hashQueryFor allRoles allSchemas schemaName tableName hobj =
             HRoutine -> hq { checksumCols = checksumCols hq ++ ["prokind"]
                            , groupByCols  = groupByCols hq ++ ["prokind"]
                            }
-            HColumn -> hq
-                { checksumCols = checksumCols hq
-                                     ++ ["atthasmissing", "attmissingval"]
-                }
+            HColumn ->
+                -- Careful! Do not include atthasmissing or attmissingval here.
+                -- They seem to hold values that change depending on whether
+                -- a DEFAULT was added in ALTER TABLE or whether it was added from the start
+                -- with CREATE TABLE.
+                -- Read their descriptions at https://www.postgresql.org/docs/current/catalog-pg-attribute.html
+                hq
             _ -> hq

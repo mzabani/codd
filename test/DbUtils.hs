@@ -93,6 +93,7 @@ testCoddSettings migs = do
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
         , retryPolicy         = singleTryPolicy
         , txnIsolationLvl     = DbDefault
+        , hashedChecksums     = True
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
