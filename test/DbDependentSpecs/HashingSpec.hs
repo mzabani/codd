@@ -481,9 +481,11 @@ migrationsAndHashChange = zipWith
     addMig_
       "ALTER TABLE employee DROP COLUMN employee_name"
       -- Undoing this statement requires recreating a lot of dependent objects..
+      -- Also, on Pg <= 12, dropping and readding employee_id in the same ALTER TABLE statement
+      -- makes Pg create a new sequence with a different name instead of doing what you might expect
       "ALTER SEQUENCE some_seq OWNED BY NONE; \
-    \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN employee_id CASCADE,\
-                          \ ADD COLUMN employee_name TEXT NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
+    \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN employee_id CASCADE;\
+    \\nALTER TABLE employee ADD COLUMN employee_name TEXT NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
                           \ ADD COLUMN birthday TIMESTAMP, ADD COLUMN employee_id SERIAL PRIMARY KEY, \
                           \ ADD COLUMN name TEXT;\
     \\nALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY');\
