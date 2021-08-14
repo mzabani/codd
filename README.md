@@ -18,6 +18,7 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 	* [no-txn migrations and more](#no-txnmigrationsandmore)
 * [Start using Codd in an existing Database](#StartusingCoddinanexistingDatabase)
 * [Safety considerations](#Safetyconsiderations)
+* [Frequently Asked Questions](#FrequentlyAskedQuestions)
 
 <!-- vscode-markdown-toc-config
 	numbering=false
@@ -155,7 +156,7 @@ If you already have a Database and would like to start using _Codd_, here's a gu
 
 1. Configure your `.env` file as explained in this guide.
 2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
-3. Run `pg_dump your_database > bootstrap-migration.sql`.
+3. Run `pg_dump your_database > bootstrap-migration.sql`. Do not use `pg_dumpall` because it includes _psql_'s meta-commands that _codd_ doesn't support.
 4. Run `dropdb your_database` to drop your DB.
 5. Run something like `createdb -T template0 -E UTF8 -l en_US.UTF8 your_database`, but with encoding and locale equal to your Production DB's. Database and the _public_'s Schema ownership might need some manual intervention to match in different environments.
    - **What do we mean?** Cloud services such as Amazon's RDS will create Schemas and DBs owned by users managed by them - such as the `rdsadmin` user -, that we don't usually replicate locally. We can either replicate these locally so we don't need to touch our Prod DB or change our Prod DB so only users managed by us are ever referenced in any environment.
@@ -163,8 +164,7 @@ If you already have a Database and would like to start using _Codd_, here's a gu
    - Use _psql_'s `\dn+` to check the _public_ schema's ownership and permissions in your Prod DB.
    - **Note:** Because _codd_ runs migrations with the user in the supplied connection string, that user must already have proper permissions and must be the same across environments so newly created objects have the same ownership. It also helps a lot if that user is the DB owner because some SQL statements are only allowed for DB owners.
 6. The user that you supply in your connection string can't be created in a migration because it needs to exist before _codd_ runs. That also applies to DB ownership, locale and encoding, among a few other things, so it is helpful to keep a script that creates your DB and sets up those bits in case you want to recreate it. See [scripts/create-dev-db.sh](scripts/create-dev-db.sh) for an example, but make sure to use the `createdb` statement you came up with in step 5. After creating one such script, **run it**.
-7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
-   - 
+7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` before step 4 can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
 8. Edit `bootstrap-migration.sql` (created in step 3) and add `-- codd: no-txn` as its very first line.
 9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
 10. You should now have your Database back and managed through _Codd_.
@@ -181,3 +181,8 @@ We recommend following these instructions closely to avoid several problems. Eve
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up-deploy` on CI because that's what will be used in your Production environments.
 - After running `codd up-deploy` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up-deploy` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+
+## <a name='FrequentlyAskedQuestions'></a>Frequently Asked Questions
+
+1. ### Why does taking and restoring a database dump affect my checksums?
+   Neither `pg_dump` nor `pg_dumpall` seem to dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role CONNECT permissions, the database's default transaction isolation level and deferredness. So check that it isn't the case that you get different schemas when that happens. If you've checked and they are the same please report a bug.
