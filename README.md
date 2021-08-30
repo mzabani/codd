@@ -185,4 +185,4 @@ We recommend following these instructions closely to avoid several problems. Eve
 ## <a name='FrequentlyAskedQuestions'></a>Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my checksums?
-   Neither `pg_dump` nor `pg_dumpall` seem to dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role CONNECT permissions, the database's default transaction isolation level and deferredness. So check that it isn't the case that you get different schemas when that happens. If you've checked and they are the same please report a bug.
+   `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve If you've checked and they are the same please report a bug.
