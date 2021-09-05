@@ -4,8 +4,6 @@ import qualified Codd
 import           Codd.AppCommands.AddMigration  ( AddMigrationOptions(..)
                                                 , addMigration
                                                 )
-import           Codd.AppCommands.CheckMigration
-                                                ( checkMigrationFile )
 import           Codd.AppCommands.VerifyChecksums
                                                 ( verifyChecksums )
 import           Codd.AppCommands.WriteChecksums
@@ -26,7 +24,7 @@ import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Options.Applicative
 
-data Cmd = UpDeploy Codd.CheckHashes | UpDev | Analyze Verbosity SqlFilePath | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
+data Cmd = UpDeploy Codd.CheckHashes | UpDev | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -44,14 +42,6 @@ cmdParser = hsubparser
          upDeployParser
          (progDesc
            "Applies all pending migrations but does NOT update on-disk checksums. Instead, compares on-disk checksums to database checksums after applying migrations to check whether they match."
-         )
-       )
-  <> command
-       "check"
-       (info
-         analyzeParser
-         (progDesc
-           "Checks that a SQL migration doesn't fail and checks some of its attributes such as destructiveness, amongst others."
          )
        )
   <> command
@@ -97,13 +87,6 @@ upDeployParser =
                    "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match. If there's even one pending no-txn migration, automatically falls back to soft checking."
               )
         )
-
-analyzeParser :: Parser Cmd
-analyzeParser = Analyze <$> verbositySwitch <*> argument
-  sqlFilePathReader
-  (  metavar "SQL-MIGRATION-PATH"
-  <> help "The complete path of the .sql file to be analyzed"
-  )
 
 addParser :: Parser Cmd
 addParser =
@@ -202,8 +185,6 @@ doWork dbInfo UpDev = runStdoutLoggingT $ do
   Codd.persistHashesToDisk checksum onDiskHashesDir
 doWork dbInfo (UpDeploy checkHashes) =
   runStdoutLoggingT $ void $ Codd.applyMigrations dbInfo checkHashes
-doWork dbInfo (Analyze verbosity fp) =
-  runVerbosityLogger verbosity $ checkMigrationFile dbInfo fp
 doWork dbInfo (Add dontApply destFolder verbosity fp) =
   runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
 doWork dbInfo (VerifyChecksum verbosity fromStdin) =
