@@ -105,9 +105,9 @@ canRunEverythingInASingleTransaction settings mig = do
 
 -- | Checks for problems in a migration for the Simple Workflow mode, including:
 --   1. in-txn migration ROLLBACKs or COMMITs.
---   2. no-txn migrations BEGIN transaction but never ROLLBACK or COMMIT it.
+--   2. no-txn migrations BEGIN transaction but never ROLLBACKs or COMMITs it.
 checkMigrationSimpleWorkflow
-    :: Bool -> NE.NonEmpty SqlPiece -> MigrationCheckSimpleWorkflow
+    :: SqlMigration -> Either Text MigrationCheckSimpleWorkflow
 checkMigrationSimpleWorkflow mig =
     MigrationCheckSimpleWorkflow <$> migEndsTransaction
 
