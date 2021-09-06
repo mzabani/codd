@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: abcbb0b655fed71c0a4198c34fba34ffd6bbd283d1db8b5ace08fd9630f50019
+-- hash: 666e26d0254071572cb71f6cd82876a39e283bc5f783c8b5579f4ee3f9237e0e
 
 name:           codd
 version:        0.1.0.0
@@ -31,7 +31,6 @@ library
       Codd.Analysis
       Codd.AppCommands
       Codd.AppCommands.AddMigration
-      Codd.AppCommands.CheckMigration
       Codd.AppCommands.VerifyChecksums
       Codd.AppCommands.WriteChecksums
       Codd.Environment
