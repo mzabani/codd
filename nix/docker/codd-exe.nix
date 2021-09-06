@@ -1,6 +1,8 @@
 let
-  pkgs = import ../nixpkgsMusl.nix;
-  codd-exe = import ../codd-exe-musl.nix;
+  pkgs = import ../nixpkgs.nix;
+
+  # postgresql-lib does not build with musl yet
+  codd-exe = (import ../codd-exe-musl.nix).codd-glibc;
 
   useradd = "${pkgs.shadow}/bin/useradd";
   groupadd = "${pkgs.shadow}/bin/groupadd";
