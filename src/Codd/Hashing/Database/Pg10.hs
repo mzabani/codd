@@ -478,8 +478,10 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                           , "tgdeferrable"
                           , "tginitdeferred"
                           , "tgnargs"
-                          , "tgattr"
-                          , "tgargs"
+                        -- Neither of the columns below seem to be useful, and one of them references column attrnums,
+                        -- which we don't want
+                        --   , "tgattr"
+                        --   , "tgargs"
                           -- , "tgqual" -- This is system dependent. Equal expression can have different pg_node_tree::text representations
                           -- With the inclusion below, many other columns are probably unnecessary
                           , "pg_catalog.pg_get_triggerdef(pg_trigger.oid)"
