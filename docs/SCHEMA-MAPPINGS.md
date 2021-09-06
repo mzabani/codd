@@ -260,9 +260,6 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 "tgdeferrable",  
 "tginitdeferred",  
 "tgnargs",  
-"tgattr",  
-"tgargs",  
-"tgqual",  
 "tgoldtable",  
 "tgnewtable"  
 
@@ -271,6 +268,9 @@ This comes from https://www.postgresql.org/docs/12/catalog-pg-trigger.html
 - oid  
 - tgname  
 - tgrelid: The table this trigger is on  
+- "tgattr": references columns' `attnum`
+- "tgargs: not sure what this is
+- "tgqual": system dependent
 
 ## Roles and role settings
 
