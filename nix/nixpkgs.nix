@@ -13,6 +13,12 @@ let
     # haskell.nix provides some arguments to be passed to nixpkgs, including some
     # patches and also the haskell.nix functionality itself as an overlay.
     nixpkgsArgs = haskellNix.nixpkgsArgs;
+
+    # Fix musl64 building of haskell packages that depend on postgresql
+    libpqfixOverlay = import ./pkgs/libpq.nix;
+    customArgs = nixpkgsArgs // {
+        overlays = [ libpqfixOverlay ] ++ nixpkgsArgs.overlays; # ++ [ libpqfixOverlay ];
+    };
 in
     # import nixpkgs with overlays
-    import nixpkgsSrc nixpkgsArgs
+    import nixpkgsSrc customArgs
