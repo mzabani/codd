@@ -14,11 +14,9 @@ let
     # patches and also the haskell.nix functionality itself as an overlay.
     nixpkgsArgs = haskellNix.nixpkgsArgs;
 
-    # Fix musl64 building of haskell packages that depend on postgresql
-    libpqfixOverlay = import ./pkgs/libpq.nix;
+    noKvmOverlay = import ./docker/no-kvm-overlay.nix;
     customArgs = nixpkgsArgs // {
-        overlays = [ libpqfixOverlay ] ++ nixpkgsArgs.overlays; # ++ [ libpqfixOverlay ];
+        overlays = nixpkgsArgs.overlays ++ [ noKvmOverlay ];
     };
 in
-    # import nixpkgs with overlays
     import nixpkgsSrc customArgs
