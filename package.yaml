@@ -66,6 +66,7 @@ library:
     - -Wall
     - -Wincomplete-uni-patterns
     - -Wpartial-fields
+    - -Werror
   dependencies:
     - attoparsec
     - hashable
@@ -83,6 +84,7 @@ executables:
     - -Wall
     - -Wincomplete-uni-patterns
     - -Wpartial-fields
+    - -Werror
     dependencies:
     - codd
     - optparse-applicative
