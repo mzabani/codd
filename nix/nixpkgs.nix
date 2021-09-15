@@ -13,6 +13,10 @@ let
     # haskell.nix provides some arguments to be passed to nixpkgs, including some
     # patches and also the haskell.nix functionality itself as an overlay.
     nixpkgsArgs = haskellNix.nixpkgsArgs;
+
+    noKvmOverlay = import ./docker/no-kvm-overlay.nix;
+    customArgs = nixpkgsArgs // {
+        overlays = nixpkgsArgs.overlays ++ [ noKvmOverlay ];
+    };
 in
-    # import nixpkgs with overlays
-    import nixpkgsSrc nixpkgsArgs
+    import nixpkgsSrc customArgs

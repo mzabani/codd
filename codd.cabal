@@ -4,7 +4,7 @@ cabal-version: 2.0
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 666e26d0254071572cb71f6cd82876a39e283bc5f783c8b5579f4ee3f9237e0e
+-- hash: a70d980371886e9809c5c49c25ee544b766f1310ff9a40c389a6dff56c7855eb
 
 name:           codd
 version:        0.1.0.0
@@ -56,7 +56,7 @@ library
   hs-source-dirs:
       src
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields
+  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
       aeson
     , attoparsec
@@ -83,7 +83,7 @@ executable codd
   hs-source-dirs:
       app
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
       aeson
     , base >=4.7 && <5
