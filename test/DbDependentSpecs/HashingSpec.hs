@@ -28,9 +28,11 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , parsedSqlText
                                                 , toMigrationTimestamp
                                                 )
+import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( singleTryPolicy )
 import           Control.Monad                  ( foldM
                                                 , foldM_
+                                                , forM
                                                 , forM_
                                                 , void
                                                 , when
@@ -43,6 +45,7 @@ import           Control.Monad.State            ( MonadState(put)
 import           Control.Monad.State.Class      ( get )
 import           Data.List                      ( nubBy )
 import qualified Data.Map                      as Map
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text
                                                 , unpack
                                                 )
@@ -58,6 +61,13 @@ import           DbUtils                        ( aroundFreshDatabase
                                                 )
 import           Debug.Trace                    ( traceShowId )
 import           Test.Hspec
+import           Test.Hspec.QuickCheck          ( modifyMaxSuccess )
+import           Test.QuickCheck                ( Arbitrary
+                                                , chooseBoundedIntegral
+                                                , property
+                                                , suchThat
+                                                )
+import           Test.QuickCheck.Arbitrary      ( Arbitrary(arbitrary) )
 import           UnliftIO                       ( liftIO )
 import           UnliftIO.Concurrent            ( threadDelay )
 
@@ -104,7 +114,7 @@ migrationsAndHashChange = zipWith
  where
   migs = flip execState [] $ do
       -- MISSING:
-      -- COLUMNS WITH GENERATED AS
+      -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
       -- EXCLUSION CONSTRAINTS
       -- COLLATIONS
       -- EXTENSIONS
@@ -764,6 +774,16 @@ migrationsAndHashChange = zipWith
             "DELETE FROM employee WHERE employee_name='Marcelo'"
       $ ChangeEq []
 
+lastMaybe :: [a] -> Maybe a
+lastMaybe []       = Nothing
+lastMaybe [x     ] = Just x
+lastMaybe (_ : xs) = lastMaybe xs
+
+newtype NumMigsToReverse = NumMigsToReverse Int deriving stock (Show)
+instance Arbitrary NumMigsToReverse where
+  arbitrary = NumMigsToReverse
+    <$> chooseBoundedIntegral (5, length migrationsAndHashChange - 1)
+
 -- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
 newtype AccumChanges = AccumChanges [((AddedSqlMigration, DbChange), DbHashes)]
 
@@ -771,92 +791,116 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Hashing tests" $ do
-      aroundFreshDatabase $ it "Checksumming schema changes" $ \emptyDbInfo2 ->
-        do
-          let
-              -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
-              -- Use the above definition of emptyDbInfo if it helps debugging
-              emptyDbInfo = emptyDbInfo2
-              connInfo    = superUserInAppDatabaseConnInfo emptyDbInfo
-              getHashes sett = runStdoutLoggingT $ withConnection
-                connInfo
-                (readHashesFromDatabaseWithSettings sett)
-          hashBeforeEverything <- getHashes emptyDbInfo
-          (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
-              , Maybe Text
+      modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
+        $ aroundFreshDatabase
+        $ it "Checksumming schema changes"
+        $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
+            let
+                -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
+                -- Use the above definition of emptyDbInfo if it helps debugging
+                emptyDbInfo = emptyDbInfo2
+                connInfo    = superUserInAppDatabaseConnInfo emptyDbInfo
+                getHashes sett = runStdoutLoggingT $ withConnection
+                  connInfo
+                  (readHashesFromDatabaseWithSettings sett)
+            hashBeforeEverything <- getHashes emptyDbInfo
+            (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
+                , Maybe Text
+                )
+              ]                                                           ) <-
+              forwardApplyMigs 0 hashBeforeEverything emptyDbInfo
+            let hashAfterAllMigs =
+                  maybe hashBeforeEverything snd (lastMaybe applyHistory)
+
+            -- 1. After applying all migrations, let's make sure we're actually applying
+            -- them by fetching some data..
+            ensureMarceloExists connInfo
+
+            -- 2. Now undo part or all of the SQL migrations and check that
+            -- checksums match each step of the way in reverse!
+            liftIO
+              $  putStrLn
+              $  "Undoing migrations in reverse. Num = "
+              <> show num
+            hashesAfterEachUndo <-
+              forM (take num $ reverse hashesAndUndo)
+                $ \(expectedHashesAfterUndo, mUndoSql) -> case mUndoSql of
+                    Nothing      -> pure expectedHashesAfterUndo
+                    Just undoSql -> do
+                      runStdoutLoggingT $ withConnection connInfo $ \conn ->
+                        multiQueryStatement_
+                            (NotInTransaction singleTryPolicy)
+                            conn
+                          $ mkValidSql undoSql
+                      hashesAfterUndo <- getHashes emptyDbInfo
+                      let
+                        diff = hashDifferences hashesAfterUndo
+                                               expectedHashesAfterUndo
+                      (undoSql, diff) `shouldBe` (undoSql, Map.empty)
+                      -- What follows is just a sanity check
+                      (undoSql, hashesAfterUndo)
+                        `shouldBe` (undoSql, expectedHashesAfterUndo)
+                      pure hashesAfterUndo
+            void $ withConnection
+              connInfo
+              (\conn -> DB.execute
+                conn
+                "WITH reversedMigs (name) AS (SELECT name FROM codd_schema.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd_schema.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
+                (DB.Only num)
               )
-            ]                                                           ) <-
-            forwardApplyMigs hashBeforeEverything emptyDbInfo
 
-          -- Let's make sure we're actually applying the migrations by fetching some data..
-          ensureMarceloExists connInfo
+            let hashesAfterUndo =
+                  fromMaybe hashAfterAllMigs (lastMaybe hashesAfterEachUndo)
 
-          -- Now undo each SQL migration and check that checksums match each step of the way in reverse!
-          liftIO $ putStrLn "Undoing migrations in reverse"
-          forM_ (reverse hashesAndUndo)
-            $ \(expectedHashesAfterUndo, mUndoSql) -> case mUndoSql of
-                Nothing      -> pure ()
-                Just undoSql -> do
-                  runStdoutLoggingT $ withConnection connInfo $ \conn ->
-                    multiQueryStatement_ (NotInTransaction singleTryPolicy) conn
-                      $ mkValidSql undoSql
-                  hashesAfterUndo <- getHashes emptyDbInfo
-                  let diff = hashDifferences hashesAfterUndo
-                                             expectedHashesAfterUndo
-                  (undoSql, diff) `shouldBe` (undoSql, Map.empty)
-                  -- What follows is just a sanity check
-                  (undoSql, hashesAfterUndo)
-                    `shouldBe` (undoSql, expectedHashesAfterUndo)
-
-          -- Reapply every migration.
-          -- This may look unnecessary, but if a created object (e.g. a column) is not dropped
-          -- on the way forward, we might not get a change to the effects of readding it.
-          -- For columns, for example, only by readding some other column to the same table
-          -- that we would catch internally dropped columns in pg_attribute.
-          liftIO $ putStrLn "Re-applying migrations"
-          void $ withConnection
-            connInfo
-            (`DB.execute_` "DELETE FROM codd_schema.sql_migrations")
-          void $ forwardApplyMigs hashBeforeEverything emptyDbInfo
-          ensureMarceloExists connInfo
+            -- 3. Finally, reapply every migration that was reversed.
+            -- This may look unnecessary, but if a created object (e.g. a column) is not dropped
+            -- on the way forward, we might not get a change to the effects of re-adding it,
+            -- which manifests as a dead but unusable `attnum` in pg_attribute.
+            liftIO $ putStrLn "Re-applying migrations"
+            void $ forwardApplyMigs (length migrationsAndHashChange - num)
+                                    hashesAfterUndo
+                                    emptyDbInfo
+            ensureMarceloExists connInfo
  where
-  forwardApplyMigs hashBeforeEverything emptyDbInfo = foldM
-    (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->
-      do
-        let appliedMigs = map (fst . fst) appliedMigsAndCksums
-            newMigs     = appliedMigs ++ [nextMig]
-            dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
-        dbHashesAfterMig <- runStdoutLoggingT $ applyMigrations dbInfo NoCheck
-        let migText = parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
-            diff    = hashDifferences hashSoFar dbHashesAfterMig
-        case expectedChanges of
-          ChangeEq c -> do
-            (migText, diff) `shouldBe` (migText, Map.fromList c)
-            -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
-            if null c
-              then hashSoFar `shouldBe` dbHashesAfterMig
-              else hashSoFar `shouldNotBe` dbHashesAfterMig
-          SomeChange -> do
-            (migText, diff) `shouldNotBe` (migText, Map.empty)
-            -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
-            hashSoFar `shouldNotBe` dbHashesAfterMig
+  forwardApplyMigs numMigsAlreadyApplied hashBeforeEverything emptyDbInfo =
+    foldM
+      (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->
+        do
+          let appliedMigs = map (fst . fst) appliedMigsAndCksums
+              newMigs     = appliedMigs ++ [nextMig]
+              dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
+          dbHashesAfterMig <- runStdoutLoggingT $ applyMigrations dbInfo NoCheck
+          let migText =
+                parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
+              diff = hashDifferences hashSoFar dbHashesAfterMig
+          case expectedChanges of
+            ChangeEq c -> do
+              (migText, diff) `shouldBe` (migText, Map.fromList c)
+              -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+              if null c
+                then hashSoFar `shouldBe` dbHashesAfterMig
+                else hashSoFar `shouldNotBe` dbHashesAfterMig
+            SomeChange -> do
+              (migText, diff) `shouldNotBe` (migText, Map.empty)
+              -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+              hashSoFar `shouldNotBe` dbHashesAfterMig
 
-        return
-          ( dbHashesAfterMig
-          , AccumChanges
-          $  appliedMigsAndCksums
-          ++ [((nextMig, expectedChanges), dbHashesAfterMig)]
-          , hundo ++ [(hashSoFar, undoSql)]
-          )
-    )
-    (hashBeforeEverything, AccumChanges [], [])
-    migrationsAndHashChange
+          return
+            ( dbHashesAfterMig
+            , AccumChanges
+            $  appliedMigsAndCksums
+            ++ [((nextMig, expectedChanges), dbHashesAfterMig)]
+            , hundo ++ [(hashSoFar, undoSql)]
+            )
+      )
+      (hashBeforeEverything, AccumChanges [], [])
+      (drop numMigsAlreadyApplied migrationsAndHashChange)
   ensureMarceloExists connInfo =
     withConnection
         connInfo
-        (\conn -> DB.query
+        (\conn -> unsafeQuery1
           conn
-          "SELECT employee_id, employee_name FROM employee WHERE employee_name='Marcelo'"
+          "SELECT COUNT(*) employee_name FROM employee WHERE employee_name='Marcelo'"
           ()
         )
-      `shouldReturn` [(1 :: Int, "Marcelo" :: String)]
+      `shouldReturn` DB.Only (1 :: Int)
