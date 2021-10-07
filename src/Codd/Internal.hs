@@ -361,8 +361,7 @@ hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
     unless (all blockInTxn blocksOfMigs) $ do
         logWarnN
-            "IMPORTANT: Due to the presence of no-txn migrations, hard checking was disabled and reverted to soft checking.\n\
-            \This means all migrations have been applied and now we'll run a schema check."
+            "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been applied. We'll run a schema check."
     throwExceptionOnChecksumMismatch cksums expectedHashes
 
 throwExceptionOnChecksumMismatch
@@ -416,10 +415,10 @@ applySingleMigration conn isolLvl statementRetryPol ap (AddedSqlMigration sqlMig
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn nonDestSql
-                                                                                                                        -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                                -- since every migration will have both sections marked as ran sequentially.
 
-                                                                                                    -- If already in a transaction, then just execute, otherwise
-                                                                                                    -- start read-write txn
+                                                                                                            -- If already in a transaction, then just execute, otherwise
+                                                                                                            -- start read-write txn
                 let exec_ q qargs = if nonDestructiveInTxn sqlMig
                         then DB.execute conn q qargs
                         else beginCommitTxnBracket isolLvl conn

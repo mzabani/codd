@@ -2,6 +2,7 @@ module DbDependentSpecs.ApplicationSpec where
 
 import           Codd                           ( CheckHashes(..)
                                                 , applyMigrations
+                                                , applyMigrationsNoCheck
                                                 , withDbAndDrop
                                                 )
 import           Codd.Analysis                  ( DestructiveSectionCheck(..)
@@ -138,21 +139,21 @@ spec = do
                 it
                         "SQL containing characters typical to placeholders does not throw"
                     $ \emptyTestDbInfo -> do
-                          void @IO $ runStdoutLoggingT $ applyMigrations
+                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                               (emptyTestDbInfo
                                   { sqlMigrations = Right [placeHoldersMig]
                                   }
                               )
-                              NoCheck
+                              (const $ pure ())
 
                 it "Rows-returning function work for no-txn migrations"
                     $ \emptyTestDbInfo -> do
-                          void @IO $ runStdoutLoggingT $ applyMigrations
+                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                               (emptyTestDbInfo
                                   { sqlMigrations = Right [selectMig]
                                   }
                               )
-                              NoCheck
+                              (const $ pure ())
 
                 it "Rows-returning function work for in-txn migrations"
                     $ \emptyTestDbInfo -> do
@@ -162,17 +163,17 @@ spec = do
                                       , nonDestructiveInTxn = True
                                       }
                                   t
-                          void @IO $ runStdoutLoggingT $ applyMigrations
+                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                               (emptyTestDbInfo
                                   { sqlMigrations = Right [inTxnMig]
                                   }
                               )
-                              NoCheck
+                              (const $ pure ())
 
                 it "COPY FROM STDIN works" $ \emptyTestDbInfo -> do
-                    void @IO $ runStdoutLoggingT $ applyMigrations
+                    void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                         (emptyTestDbInfo { sqlMigrations = Right [copyMig] })
-                        NoCheck
+                        (const $ pure ())
 
                 forM_
                         [ DbDefault
@@ -273,24 +274,23 @@ spec = do
                                             "SELECT 1 FROM pg_catalog.pg_tables WHERE tablename='newtable'"
                                         `shouldReturn` ([] :: [DB.Only Int])
 
-                                    -- Soft checking will apply the migration but will still throw an exception
+                                    -- Soft checking will apply the migration and will not throw an exception
                                     runStdoutLoggingT
-                                            (applyMigrations
-                                                (emptyTestDbInfo
-                                                    { sqlMigrations =
-                                                        Right
-                                                            [ createTableNewTableMig
-                                                                  "newtable"
-                                                                  True
-                                                                  1
-                                                            ]
-                                                    , onDiskHashes  = Right
-                                                        bogusDbHashes
-                                                    }
-                                                )
-                                                SoftCheck
+                                        (applyMigrations
+                                            (emptyTestDbInfo
+                                                { sqlMigrations =
+                                                    Right
+                                                        [ createTableNewTableMig
+                                                              "newtable"
+                                                              True
+                                                              1
+                                                        ]
+                                                , onDiskHashes  = Right
+                                                    bogusDbHashes
+                                                }
                                             )
-                                        `shouldThrow` anyIOException
+                                            SoftCheck
+                                        )
                                     DB.query_
                                             conn
                                             "SELECT 1 FROM pg_catalog.pg_tables WHERE tablename='newtable'"
@@ -444,9 +444,9 @@ spec = do
                                       (getIncreasingTimestamp 4)
                                   ]
 
-                          void @IO $ runStdoutLoggingT $ applyMigrations
+                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                               (emptyTestDbInfo { sqlMigrations = Right migs })
-                              NoCheck
+                              (const $ pure ())
                           withConnection
                                   (superUserInAppDatabaseConnInfo
                                       emptyTestDbInfo
@@ -468,7 +468,7 @@ spec = do
                             logsmv <- newMVar []
                             runMVarLogger
                                     logsmv
-                                    (applyMigrations
+                                    (applyMigrationsNoCheck
                                         (emptyTestDbInfo
                                             { sqlMigrations =
                                                 Right
@@ -489,7 +489,7 @@ spec = do
                                                 )
                                             }
                                         )
-                                        NoCheck
+                                        (const $ pure ())
                                     )
                                 `shouldThrow` (\(e :: SqlStatementException) ->
                                                   "division by zero"

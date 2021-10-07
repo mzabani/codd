@@ -12,7 +12,6 @@ import           Codd.AppCommands.WriteChecksums
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
-import qualified Codd.Hashing                  as Codd
 import           Codd.Logging                   ( Verbosity(..)
                                                 , runVerbosityLogger
                                                 )
@@ -24,26 +23,18 @@ import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Options.Applicative
 
-data Cmd = UpDeploy Codd.CheckHashes | UpDev | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
+data Cmd = Up (Maybe Codd.CheckHashes) | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
   (  command
-      "up-dev"
+      "up"
       (info
-        (pure UpDev)
+        upParser
         (progDesc
-          "Applies all pending migrations and updates the on-disk checksum. Useful when developing."
+          "Applies all pending migrations and possibly compares on-disk checksums to database checksums afterwards to check whether they match."
         )
       )
-  <> command
-       "up-deploy"
-       (info
-         upDeployParser
-         (progDesc
-           "Applies all pending migrations but does NOT update on-disk checksums. Instead, compares on-disk checksums to database checksums after applying migrations to check whether they match."
-         )
-       )
   <> command
        "add"
        (info
@@ -70,21 +61,28 @@ cmdParser = hsubparser
        )
   )
 
-upDeployParser :: Parser Cmd
-upDeployParser =
-  UpDeploy
+upParser :: Parser Cmd
+upParser =
+  Up
     <$> (   flag'
-            Codd.SoftCheck
+            (Just Codd.SoftCheck)
             (  long "soft-check"
             <> help
-                 "Applies and commits all pending migrations and only then compares database and expected checksums, returning an error in case they don't match."
+                 "The default mode of operation. Applies and commits all pending migrations and only then compares database and expected checksums, logging mismatches but returning a success status unless a migration fails."
             )
 
         <|> flag'
-              Codd.HardCheck
+              (Just Codd.HardCheck)
               (  long "hard-check"
               <> help
-                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match. If there's even one pending no-txn migration, automatically falls back to soft checking."
+                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match.\
+                 \\nIf there's even one pending no-txn migration, this mode _will_ commit all migrations and verify checksums after that, exiting with an error code if they don't match."
+              )
+        <|> flag'
+              Nothing
+              (  long "no-check"
+              <> help
+                   "Applies and commits all pending migrations and does not compare checksums. Returns a success status unless a migration fails."
               )
         )
 
@@ -171,20 +169,9 @@ main = do
   where opts = info (cmdParser <**> helper) fullDesc
 
 doWork :: CoddSettings -> Cmd -> IO ()
-doWork dbInfo UpDev = runStdoutLoggingT $ do
-  -- Important, and we don't have a test for this:
-  -- check hashes in the same transaction as migrations
-  -- when possible, since that's what "up-deploy" does.
-  checksum        <- Codd.applyMigrations dbInfo Codd.NoCheck
-  onDiskHashesDir <- either
-    pure
-    (error
-      "This functionality needs a directory to write checksums to. Please report this as a bug."
-    )
-    (onDiskHashes dbInfo)
-  Codd.persistHashesToDisk checksum onDiskHashesDir
-doWork dbInfo (UpDeploy checkHashes) =
-  runStdoutLoggingT $ void $ Codd.applyMigrations dbInfo checkHashes
+doWork dbInfo (Up mCheckHashes) = runStdoutLoggingT $ case mCheckHashes of
+  Nothing          -> Codd.applyMigrationsNoCheck dbInfo (const $ pure ())
+  Just checkHashes -> void $ Codd.applyMigrations dbInfo checkHashes
 doWork dbInfo (Add dontApply destFolder verbosity fp) =
   runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
 doWork dbInfo (VerifyChecksum verbosity fromStdin) =

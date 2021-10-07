@@ -1,7 +1,10 @@
 module DbDependentSpecs.HashingSpec where
 
-import           Codd                           ( CheckHashes(..)
+import           Codd                           ( ApplyResult(..)
+                                                , CheckHashes(..)
+                                                , ChecksumsPair(..)
                                                 , applyMigrations
+                                                , applyMigrationsNoCheck
                                                 )
 import           Codd.Analysis                  ( DestructiveSectionCheck(..)
                                                 , MigrationCheck(..)
@@ -11,7 +14,7 @@ import           Codd.Analysis                  ( DestructiveSectionCheck(..)
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
-import           Codd.Hashing                   ( DbHashes(DbHashes)
+import           Codd.Hashing                   ( DbHashes(..)
                                                 , DiffType(..)
                                                 , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
@@ -59,7 +62,6 @@ import           DbUtils                        ( aroundFreshDatabase
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 )
-import           Debug.Trace                    ( traceShowId )
 import           Test.Hspec
 import           Test.Hspec.QuickCheck          ( modifyMaxSuccess )
 import           Test.QuickCheck                ( Arbitrary
@@ -862,6 +864,10 @@ spec = do
                                     emptyDbInfo
             ensureMarceloExists connInfo
  where
+  extractDbCksums = \case
+    ChecksumsNotVerified -> error "checksumsNotVerified internal error in test"
+    ChecksumsDiffer ChecksumsPair { databaseChecksums } -> databaseChecksums
+    ChecksumsMatch cksums -> cksums
   forwardApplyMigs numMigsAlreadyApplied hashBeforeEverything emptyDbInfo =
     foldM
       (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->
@@ -869,7 +875,9 @@ spec = do
           let appliedMigs = map (fst . fst) appliedMigsAndCksums
               newMigs     = appliedMigs ++ [nextMig]
               dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
-          dbHashesAfterMig <- runStdoutLoggingT $ applyMigrations dbInfo NoCheck
+          dbHashesAfterMig <- runStdoutLoggingT $ applyMigrationsNoCheck
+            dbInfo
+            (readHashesFromDatabaseWithSettings dbInfo)
           let migText =
                 parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
               diff = hashDifferences hashSoFar dbHashesAfterMig
