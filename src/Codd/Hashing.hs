@@ -2,7 +2,7 @@ module Codd.Hashing
     ( module Codd.Hashing.Database
     , module Codd.Hashing.Types
     , module Codd.Hashing.Disk
-    , logHashDifferences
+    , logChecksumsComparison
     , hashDifferences
     , matchOrd
     ) where
@@ -23,9 +23,9 @@ import           Codd.Hashing.Database          ( HashReq(..)
 import           Codd.Hashing.Disk
 import           Codd.Hashing.Types
 
-import           Control.Monad                  ( when )
 import           Control.Monad.Logger           ( MonadLogger
                                                 , logErrorN
+                                                , logInfoN
                                                 )
 import           Data.Aeson                     ( encode )
 import           Data.ByteString.Lazy           ( toStrict )
@@ -35,24 +35,26 @@ import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text.Encoding             ( decodeUtf8 )
 
--- | Takes the DB and the expected hashes and logErrorN's the differences, if any.
-logHashDifferences
+-- | Takes the DB and the expected hashes and logErrorN's the differences, if any,
+-- or logInfoN that they match otherwise.
+logChecksumsComparison
     :: MonadLogger m
     => DbHashes
     -- ^ Database hashes
     -> DbHashes
  -- ^ Expected hashes
     -> m ()
-logHashDifferences dbHashes expectedChecksums =
-    when (dbHashes /= expectedChecksums) $ do
-    -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
-        logErrorN $ decodeUtf8 $ toStrict $ encode $ hashDifferences
-            dbHashes
-            expectedChecksums
-        logErrorN
-            "DB and expected checksums do not match. Differences right above this message. Left is Database, Right is expected."
-        logErrorN
-            "Do note some names will not be strictly the names of Database objects, because codd may add extra characters and strings due to DB name overloading."
+logChecksumsComparison dbHashes expectedChecksums =
+    if dbHashes /= expectedChecksums
+        then
+        -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
+            logErrorN
+            $ "DB and expected checksums do not match. Differences are (Left is Database, Right is expected): "
+            <> decodeUtf8
+                   (toStrict $ encode $ hashDifferences dbHashes
+                                                        expectedChecksums
+                   )
+        else logInfoN "Database and expected schemas match."
 
 hashDifferences :: DbHashes -> DbHashes -> Map FilePath DiffType
 hashDifferences l r =

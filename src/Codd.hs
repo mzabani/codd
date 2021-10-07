@@ -12,14 +12,13 @@ import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
 import           Codd.Hashing                   ( DbHashes
-                                                , logHashDifferences
-                                                , readHashesFromDatabaseWithSettings
                                                 , readHashesFromDisk
                                                 )
 import           Codd.Internal                  ( applyMigrationsInternal
                                                 , baseApplyMigsBlock
                                                 , dbIdentifier
                                                 , hardCheckLastAction
+                                                , softCheckLastAction
                                                 , withConnection
                                                 )
 import           Control.Monad                  ( void )
@@ -59,22 +58,17 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl
         SoftCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
             dbCksums <- applyMigrationsInternal
-                (baseApplyMigsBlock
-                    retryPolicy
-                    (\_migBlocks conn ->
-                        readHashesFromDatabaseWithSettings dbInfo conn
-                    )
-                    txnIsolationLvl
+                (baseApplyMigsBlock retryPolicy
+                                    (softCheckLastAction dbInfo eh)
+                                    txnIsolationLvl
                 )
                 dbInfo
 
             if dbCksums /= eh
-                then do
-                    logHashDifferences dbCksums eh
-                    pure $ ChecksumsDiffer $ ChecksumsPair
-                        { expectedChecksums = eh
-                        , databaseChecksums = dbCksums
-                        }
+                then pure $ ChecksumsDiffer $ ChecksumsPair
+                    { expectedChecksums = eh
+                    , databaseChecksums = dbCksums
+                    }
                 else pure $ ChecksumsMatch eh
 
 -- | Creates the new Database if it doesn't yet exist and applies every single migration.

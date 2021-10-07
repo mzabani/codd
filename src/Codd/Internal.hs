@@ -4,7 +4,7 @@ import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes
-                                                , logHashDifferences
+                                                , logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal.MultiQueryStatement
@@ -34,7 +34,6 @@ import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Logger           ( MonadLogger
                                                 , NoLoggingT
                                                 , logDebugN
-                                                , logInfoN
                                                 , logWarnN
                                                 , runNoLoggingT
                                                 )
@@ -352,6 +351,9 @@ baseApplyMigsBlock retryPol actionAfter isolLvl conn blocksOfMigs = do
                 runMigs retryPol migBlock
                 act conn
 
+-- | This can be used as a last-action when applying migrations to
+-- hard-check checksums, logging differences, success and throwing
+-- an exception if they mismatch.
 hardCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
@@ -362,18 +364,22 @@ hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
     unless (all blockInTxn blocksOfMigs) $ do
         logWarnN
             "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been applied. We'll run a schema check."
-    throwExceptionOnChecksumMismatch cksums expectedHashes
+    logChecksumsComparison cksums expectedHashes
+    when (cksums /= expectedHashes) $ throwIO $ userError
+        "Exiting. Database checksums differ from expected."
 
-throwExceptionOnChecksumMismatch
-    :: (MonadUnliftIO m, MonadLogger m) => DbHashes -> DbHashes -> m ()
-throwExceptionOnChecksumMismatch cksums expectedHashes = do
-    when (cksums /= expectedHashes) $ do
-        logHashDifferences cksums expectedHashes
-        throwIO
-            $ userError
-                  "Database checksums differ from expected. Differences printed above."
-
-    logInfoN "Database and expected schemas match."
+-- | This can be used as a last-action when applying migrations to
+-- soft-check checksums, logging differences or success, but
+-- _never_ throwing exceptions and returning database checksums.
+softCheckLastAction
+    :: (MonadUnliftIO m, MonadLogger m)
+    => CoddSettings
+    -> DbHashes
+    -> ([BlockOfMigrations] -> DB.Connection -> m DbHashes)
+softCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
+    cksums <- readHashesFromDatabaseWithSettings coddSettings conn
+    logChecksumsComparison cksums expectedHashes
+    pure cksums
 
 data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
 
@@ -415,10 +421,10 @@ applySingleMigration conn isolLvl statementRetryPol ap (AddedSqlMigration sqlMig
                                 then InTransaction
                                 else NotInTransaction statementRetryPol
                         in  multiQueryStatement_ inTxn conn nonDestSql
-                                                                                                                                -- since every migration will have both sections marked as ran sequentially.
+                                                                                                                                                    -- since every migration will have both sections marked as ran sequentially.
 
-                                                                                                            -- If already in a transaction, then just execute, otherwise
-                                                                                                            -- start read-write txn
+                                                                                                                                -- If already in a transaction, then just execute, otherwise
+                                                                                                                                -- start read-write txn
                 let exec_ q qargs = if nonDestructiveInTxn sqlMig
                         then DB.execute conn q qargs
                         else beginCommitTxnBracket isolLvl conn

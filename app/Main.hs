@@ -32,7 +32,7 @@ cmdParser = hsubparser
       (info
         upParser
         (progDesc
-          "Applies all pending migrations and possibly compares on-disk checksums to database checksums afterwards to check whether they match."
+          "Applies all pending migrations and possibly compares on-disk checksums to database checksums afterwards to check whether they match. The default mode of operation when none are provided is soft-check."
         )
       )
   <> command
@@ -63,35 +63,40 @@ cmdParser = hsubparser
 
 upParser :: Parser Cmd
 upParser =
-  Up
-    <$> (   flag'
-            (Just Codd.SoftCheck)
-            (  long "soft-check"
+  fmap
+      Up
+      (   flag'
+          (Just Codd.SoftCheck)
+          (  long "soft-check"
+          <> short 's'
+          <> help
+               "Applies and commits all pending migrations and only then compares database and expected checksums, logging mismatches but returning a success status unless a migration fails."
+          )
+      <|> flag'
+            (Just Codd.HardCheck)
+            (  long "hard-check"
+            <> short 'h'
             <> help
-                 "The default mode of operation. Applies and commits all pending migrations and only then compares database and expected checksums, logging mismatches but returning a success status unless a migration fails."
-            )
-
-        <|> flag'
-              (Just Codd.HardCheck)
-              (  long "hard-check"
-              <> help
-                   "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match.\
+                 "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match.\
                  \\nIf there's even one pending no-txn migration, this mode _will_ commit all migrations and verify checksums after that, exiting with an error code if they don't match."
-              )
-        <|> flag'
-              Nothing
-              (  long "no-check"
-              <> help
-                   "Applies and commits all pending migrations and does not compare checksums. Returns a success status unless a migration fails."
-              )
-        )
+            )
+      <|> flag'
+            Nothing
+            (  long "no-check"
+            <> short 'n'
+            <> help
+                 "Applies and commits all pending migrations and does not compare checksums. Returns a success status unless a migration fails."
+            )
+      )
+
+    <|> pure (Up $ Just Codd.SoftCheck)
 
 addParser :: Parser Cmd
 addParser =
   Add
     <$> (   AddMigrationOptions
         <$> switch
-              (  long "dont-apply"
+              (  long "no-apply"
               <> help
                    "Do not apply any pending migrations, including the one being added."
               )
