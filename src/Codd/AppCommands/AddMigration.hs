@@ -12,14 +12,13 @@ import           Codd.Analysis                  ( MigrationCheckSimpleWorkflow(.
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( persistHashesToDisk )
+import           Codd.Hashing                   ( persistHashesToDisk
+                                                , readHashesFromDatabaseWithSettings
+                                                )
 import           Codd.Parsing                   ( ParsingOptions(..)
                                                 , parseSqlMigration
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow
-                                                  ( BlueGreenSafeDeploymentUpToAndIncluding
-                                                  , SimpleDeployment
-                                                  )
+import           Codd.Types                     ( DeploymentWorkflow(..)
                                                 , SqlFilePath(..)
                                                 )
 import           Control.Monad                  ( forM_
@@ -102,10 +101,13 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
           $ \finalMigFile -> do
               unless dontApply $ do
                 -- Important, and we don't have a test for this:
-                -- check hashes in the same transaction as migrations
-                -- when possible, since that's what "up-deploy" does.
-                hashes <- Codd.applyMigrations dbInfo Codd.NoCheck
-                persistHashesToDisk hashes onDiskHashesDir
+                -- fetch hashes in the same transaction as migrations
+                -- when possible, since that's what "up" does.
+                databaseChecksums <- Codd.applyMigrationsNoCheck
+                  dbInfo
+                  (readHashesFromDatabaseWithSettings dbInfo)
+                persistHashesToDisk databaseChecksums onDiskHashesDir
+
                 liftIO
                   $  putStrLn
                   $  "Migration applied and added to "

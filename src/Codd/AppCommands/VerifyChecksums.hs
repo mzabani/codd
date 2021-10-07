@@ -5,7 +5,7 @@ module Codd.AppCommands.VerifyChecksums
 import           Codd.Environment               ( CoddSettings(..)
                                                 , superUserInAppDatabaseConnInfo
                                                 )
-import           Codd.Hashing                   ( logHashDifferences
+import           Codd.Hashing                   ( logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 , readHashesFromDisk
                                                 )
@@ -47,6 +47,6 @@ verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes } fromStdin = do
     adminConnInfo
     (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
   when (dbHashes /= expectedChecksums) $ do
-    logHashDifferences dbHashes expectedChecksums
+    logChecksumsComparison dbHashes expectedChecksums
     liftIO $ exitWith (ExitFailure 1)
   logInfoN "Database and expected checksums match."

@@ -16,7 +16,7 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 * [Starting out](#Startingout)
 * [Adding a SQL Migration](#AddingaSQLMigration)
 	* [no-txn migrations and more](#no-txnmigrationsandmore)
-* [Start using Codd in an existing Database](#StartusingCoddinanexistingDatabase)
+* [Start using Codd in an existing database](#StartusingCoddinanexistingdatabase)
 * [Safety considerations](#Safetyconsiderations)
 * [Frequently Asked Questions](#FrequentlyAskedQuestions)
 
@@ -90,10 +90,10 @@ After having configured your .env file and making sure Postgres is reachable run
 
 ````bash
 # With docker
-$ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up-dev
+$ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up
 
 # .. or with Nix
-$ codd up-dev
+$ codd up
 ````
 
 After this, you should be able to connect to your newly created Database, "codd-experiments".
@@ -150,7 +150,7 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 
 Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
-## <a name='StartusingCoddinanexistingDatabase'></a>Start using Codd in an existing Database
+## <a name='StartusingCoddinanexistingdatabase'></a>Start using Codd in an existing database
 
 If you already have a Database and would like to start using _Codd_, here's a guideline to approach the problem. Remember to be very careful if/when making any changes to your Prod DB:
 
@@ -158,7 +158,7 @@ If you already have a Database and would like to start using _Codd_, here's a gu
 2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
 3. Run `pg_dump your_database > bootstrap-migration.sql`. Do not use `pg_dumpall` because it includes _psql_'s meta-commands that _codd_ doesn't support.
 4. Run `dropdb your_database` to drop your DB.
-5. Run something like `createdb -T template0 -E UTF8 -l en_US.UTF8 your_database`, but with encoding and locale equal to your Production DB's. Database and the _public_'s Schema ownership might need some manual intervention to match in different environments.
+5. Run something like `createdb -T template0 -E UTF8 -l en_US.UTF8 your_database`, but with encoding and locale equal to your Production DB's. The database's and the _public_'s Schema ownership might need some manual intervention to match in different environments.
    - **What do we mean?** Cloud services such as Amazon's RDS will create Schemas and DBs owned by users managed by them - such as the `rdsadmin` user -, that we don't usually replicate locally. We can either replicate these locally so we don't need to touch our Prod DB or change our Prod DB so only users managed by us are ever referenced in any environment.
    - Use _psql_'s `\l` to check DB ownership and permissions of your Prod DB.
    - Use _psql_'s `\dn+` to check the _public_ schema's ownership and permissions in your Prod DB.
@@ -167,10 +167,10 @@ If you already have a Database and would like to start using _Codd_, here's a gu
 7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` before step 4 can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
 8. Edit `bootstrap-migration.sql` (created in step 3) and add `-- codd: no-txn` as its very first line.
 9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
-10. You should now have your Database back and managed through _Codd_.
+10. You should now have your database back and managed through _Codd_.
 11. Make sure your separate Production `.env` file does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
 12. Before deploying with _codd_, we strongly recommend you run `codd verify-checksums -v` with your environment variables connected to your Production database and make sure checksums match.
-13. In Production, we strongly recommend running `codd up-deploy --soft-check` to start with until you get acquainted enough to consider hard-checking. Make sure you read `codd up-deploy --help` to better understand your options.
+13. In Production, we strongly recommend running `codd up --soft-check` to start with until you get acquainted enough to consider hard-checking. Make sure you read `codd up --help` to better understand your options.
 
 ## <a name='Safetyconsiderations'></a>Safety considerations
 
@@ -179,8 +179,8 @@ We recommend following these instructions closely to avoid several problems. Eve
 - Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).  
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
-- Always run `codd up-deploy` on CI because that's what will be used in your Production environments.
-- After running `codd up-deploy` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up-deploy` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- Always run `codd up --hard-check` on CI because it's a good place to be strict.
+- After running `codd up --hard-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --hard-check` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 
 ## <a name='FrequentlyAskedQuestions'></a>Frequently Asked Questions
 
