@@ -15,9 +15,9 @@
 ## <a name='Whatdoescoddchecksum'></a>What does codd checksum?
  For a more thorough - but a bit drafty and _not necessarily up to date_ - description of what is checksummed, see [SCHEMA-MAPPINGS.md](SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, **but be aware** that not all pertinent attributes are necessarily included:
 
-- Tables, columns, CHECK constraints, FKs, indexes and other constraints
+- Tables, columns, CHECK constraints, FKs, indexes, and other constraints
 - Indexes
-- Sequences (although their _RESTART_ value are not currently checked)
+- Sequences (although their _RESTART_ value is not currently checked)
 - Functions, operators and VIEWs
 - Triggers
 - Row Level Security
@@ -27,6 +27,7 @@
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
 - Collations
+- Types
 - Extensions
 - Partitioning
 - Foreign Servers
@@ -48,4 +49,4 @@ ALTER DATABASE my_database SET default_transaction_isolation TO 'serializable';
 
 _Codd_ will fail when this is added (TODO: only after https://github.com/mzabani/codd/issues/40 is fixed).
 
-Database settings are not visible anywhere in `pg_catalog` (as far as the author of _codd_ knows) in the same connection that changed them. Because of this, _codd_ has no way to checksum the new value for things like *default_transaction_isolation* before `COMMIT`. In cases like this we recommend adding `SET default_transaction_isolation TO 'serializable';` to the migration, which do have an immediate effect.
+Database settings are not visible anywhere in `pg_catalog` (as far as the author of _codd_ knows) in the same connection that changed them. Because of this, _codd_ has no way to checksum the new value for things like *default_transaction_isolation* before `COMMIT`. In cases like this, we recommend adding `SET default_transaction_isolation TO 'serializable';` to the migration, which does have an immediate effect.
