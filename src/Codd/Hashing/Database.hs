@@ -310,16 +310,18 @@ getSchemaHash schemas =
     collations  <- dataFetch $ GetHashesReq HCollation (Just schemaName) Nothing
 
     tableHashes <- getTablesHashes schemaName tables
-    let allObjs =
-          listToMap
-            $  tableHashes
-            ++ map (uncurry ViewHash)      views
-            ++ map (uncurry RoutineHash)   routines
-            ++ map (uncurry SequenceHash)  sequences
-            ++ map (uncurry CollationHash) collations
-    return (schemaName, SchemaHash schemaName schemaHash allObjs)
+    pure
+      ( schemaName
+      , SchemaHash schemaName
+                   schemaHash
+                   (listToMap tableHashes)
+                   (listToMap $ map (uncurry ViewHash) views)
+                   (listToMap $ map (uncurry RoutineHash) routines)
+                   (listToMap $ map (uncurry SequenceHash) sequences)
+                   (listToMap $ map (uncurry CollationHash) collations)
+      )
 
-getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [SchemaObjectHash]
+getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [TableHash]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
   columns <- dataFetch $ GetHashesReq HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch
