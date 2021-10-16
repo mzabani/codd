@@ -1,4 +1,3 @@
-
 module Codd.Hashing.Database where
 
 import           Codd.Environment               ( CoddSettings(..) )
@@ -308,14 +307,16 @@ getSchemaHash schemas =
     views       <- dataFetch $ GetHashesReq HView (Just schemaName) Nothing
     routines    <- dataFetch $ GetHashesReq HRoutine (Just schemaName) Nothing
     sequences   <- dataFetch $ GetHashesReq HSequence (Just schemaName) Nothing
+    collations  <- dataFetch $ GetHashesReq HCollation (Just schemaName) Nothing
 
     tableHashes <- getTablesHashes schemaName tables
     let allObjs =
           listToMap
             $  tableHashes
-            ++ map (uncurry ViewHash)     views
-            ++ map (uncurry RoutineHash)  routines
-            ++ map (uncurry SequenceHash) sequences
+            ++ map (uncurry ViewHash)      views
+            ++ map (uncurry RoutineHash)   routines
+            ++ map (uncurry SequenceHash)  sequences
+            ++ map (uncurry CollationHash) collations
     return (schemaName, SchemaHash schemaName schemaHash allObjs)
 
 getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [SchemaObjectHash]

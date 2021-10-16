@@ -770,6 +770,41 @@ migrationsAndHashChange = zipWith
         "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation; RESET default_transaction_isolation;"
       $ ChangeEq [("db-settings", BothButDifferent)]
 
+    -- COLLATIONS
+    (createCutf8Coll, dropColl) <-
+      addMig "CREATE COLLATION new_collation (locale = 'C.utf8');"
+             "DROP COLLATION new_collation;"
+        $ ChangeEq [("schemas/public/collations/new_collation", OnlyRight)]
+    (dropCreatePtBRColl, _) <-
+      addMig
+          (  dropColl
+          <> " CREATE COLLATION new_collation (locale = 'pt_BR.utf8');"
+          )
+          (dropColl <> createCutf8Coll)
+        $ ChangeEq
+            [("schemas/public/collations/new_collation", BothButDifferent)]
+    addMig_
+        (dropColl
+        <> " CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
+        )
+        dropCreatePtBRColl
+      $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent)]
+
+    addMig_ "ALTER TABLE employee ADD COLUMN employee_surname TEXT;"
+            "ALTER TABLE employee DROP COLUMN employee_surname;"
+            SomeChange
+
+    addMig_
+        "ALTER TABLE employee ALTER COLUMN employee_surname TYPE TEXT COLLATE \"new_collation\";"
+        "ALTER TABLE employee ALTER COLUMN employee_surname TYPE TEXT COLLATE \"default\";"
+      $ ChangeEq
+          [ ( "schemas/public/tables/employee/cols/employee_surname"
+            , BothButDifferent
+            )
+          ]
+
+    -- Deterministic collations were introduced in Pg 12..
+    -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent )]
 
       -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"

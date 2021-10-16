@@ -36,6 +36,7 @@ instance Arbitrary DbHashesGen where
             , ViewHash <$> genObjName <*> genObjHash
             , RoutineHash <$> genObjName <*> genObjHash
             , SequenceHash <$> genObjName <*> genObjHash
+            , CollationHash <$> genObjName <*> genObjHash
             ]
         colGen        = TableColumn <$> genObjName <*> genObjHash
         constraintGen = TableConstraint <$> genObjName <*> genObjHash

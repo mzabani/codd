@@ -18,7 +18,7 @@ import           Database.PostgreSQL.Simple.ToField
 import           GHC.Generics                   ( Generic )
 import           System.FilePath                ( (</>) )
 
-data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy
+data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
@@ -30,8 +30,8 @@ data DbHashes = DbHashes ObjHash
 data SchemaHash = SchemaHash ObjName ObjHash (Map ObjName SchemaObjectHash)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
--- TODO: schema search path, collations, Full Text dictionaries, operators, permissions per table, per column... What else?
-data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) (Map ObjName TablePolicy) (Map ObjName TableIndex) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash
+
+data SchemaObjectHash = TableHash ObjName ObjHash (Map ObjName TableColumn) (Map ObjName TableConstraint) (Map ObjName TableTrigger) (Map ObjName TablePolicy) (Map ObjName TableIndex) | ViewHash ObjName ObjHash | RoutineHash ObjName ObjHash | SequenceHash ObjName ObjHash | CollationHash ObjName ObjHash
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 data TableColumn = TableColumn ObjName ObjHash
@@ -75,19 +75,22 @@ instance IsDbObject RoleHash where
 instance IsDbObject SchemaObjectHash where
     objName = \case
         TableHash n _ _ _ _ _ _ -> n
-        ViewHash     n _        -> n
-        RoutineHash  n _        -> n
-        SequenceHash n _        -> n
+        ViewHash      n _       -> n
+        RoutineHash   n _       -> n
+        SequenceHash  n _       -> n
+        CollationHash n _       -> n
     objHash = \case
         TableHash _ h _ _ _ _ _ -> h
-        ViewHash     _ h        -> h
-        RoutineHash  _ h        -> h
-        SequenceHash _ h        -> h
+        ViewHash      _ h       -> h
+        RoutineHash   _ h       -> h
+        SequenceHash  _ h       -> h
+        CollationHash _ h       -> h
     hashFileRelativeToParent = \case
         TableHash n _ _ _ _ _ _ -> "tables" </> mkPathFrag n </> "objhash"
-        ViewHash     n _        -> "views" </> mkPathFrag n
-        RoutineHash  n _        -> "routines" </> mkPathFrag n
-        SequenceHash n _        -> "sequences" </> mkPathFrag n
+        ViewHash      n _       -> "views" </> mkPathFrag n
+        RoutineHash   n _       -> "routines" </> mkPathFrag n
+        SequenceHash  n _       -> "sequences" </> mkPathFrag n
+        CollationHash n _       -> "collations" </> mkPathFrag n
     childrenObjs = \case
         TableHash _ _ cols cks triggers pols idxs ->
             map DbObject (Map.elems cols)
@@ -98,7 +101,7 @@ instance IsDbObject SchemaObjectHash where
         ViewHash    _ _ -> []
         RoutineHash _ _ -> []
         SequenceHash{}  -> []
-
+        CollationHash{} -> []
 instance IsDbObject TableColumn where
     objName (TableColumn n _) = n
     objHash (TableColumn _ h) = h

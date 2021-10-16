@@ -55,13 +55,14 @@ readSchemaHash dir =
     SchemaHash (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
         <*> concatReaders
-                [ readMultiple (dir </> "tables")    readTable
-                , readMultiple (dir </> "views")     readView
-                , readMultiple (dir </> "routines")  readRoutine
-                , readMultiple (dir </> "sequences") readSequence
+                [ readMultiple (dir </> "tables")     readTable
+                , readMultiple (dir </> "views")      readView
+                , readMultiple (dir </> "routines")   readRoutine
+                , readMultiple (dir </> "sequences")  readSequence
+                , readMultiple (dir </> "collations") readCollation
                 ]
 
-readTable, readView, readRoutine, readSequence
+readTable, readView, readRoutine, readSequence, readCollation
     :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaObjectHash
 readTable dir =
     TableHash (readObjName dir)
@@ -77,6 +78,7 @@ readTable dir =
 readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash
+readCollation = simpleObjHashFileRead CollationHash
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
@@ -123,7 +125,7 @@ toFiles (DbHashes dbSettingsHash (Map.elems -> schemas) (Map.elems -> roles)) =
     objToFiles obj =
         let dir = takeDirectory $ hashFileRelativeToParent obj
         in  (hashFileRelativeToParent obj, objHash obj) : concatMap
-                (\childObj -> map (prepend dir) $ objToFiles childObj)
+                (map (prepend dir) . objToFiles)
                 (childrenObjs obj)
     prepend folderName (file, c) = (folderName </> file, c)
 

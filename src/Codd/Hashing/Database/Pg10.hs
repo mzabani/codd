@@ -509,3 +509,28 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                  (DB.Only <$> tableName)
         , groupByCols   = []
         }
+
+    HCollation -> HashQuery
+        { objNameCol    = "collname"
+        , checksumCols  =
+            [ "collprovider"
+            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+            , "collcollate"
+            , "collctype"
+            , "coll_owner_role.rolname"
+
+                          -- Read more about collation versions in DATABASE-EQUALITY.md
+            , "collversion"
+            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+            ]
+        , fromTable     = "pg_catalog.pg_collation"
+        , joins         =
+            "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \
+         \\n LEFT JOIN pg_catalog.pg_namespace ON collnamespace=pg_namespace.oid"
+        , nonIdentWhere = Nothing
+        , identWhere    = Just $ "TRUE" <> maybe
+                              ""
+                              (QueryFrag "\nAND pg_namespace.nspname = ?")
+                              (DB.Only <$> schemaName)
+        , groupByCols   = []
+        }
