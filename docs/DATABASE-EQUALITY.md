@@ -78,9 +78,9 @@ SELECT 'abc' < 'abd' COLLATE "chr-x-icu";
 
 The collation might exist in the development database but might not in the production server, which can make checksums match but queries fail in one server and work in another.
 
-One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a superset of production's collations, _codd_ only does equality checks at the moment.
+One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a subset of production's collations, _codd_ only does equality checks at the moment.
 
-Our current recommendation is to create any collations you rely on in a your app's schema.
+Our current recommendation is to create any collations you rely on in your app's schema.
 
 ### System libraries and collations
 
