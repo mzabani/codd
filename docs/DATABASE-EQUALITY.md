@@ -80,6 +80,8 @@ The collation might exist in the development database but might not in the produ
 
 One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a superset of production's collations, _codd_ only does equality checks at the moment.
 
+Our current recommendation is to create any collations you rely on in a your app's schema.
+
 ### System libraries and collations
 
 This section is more of the informative kind. This is handled by _codd_ in a way that is likely what you expect.

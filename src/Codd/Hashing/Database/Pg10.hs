@@ -370,7 +370,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attislocal"
             , "attinhcount"
             , "pg_collation.collname"
-            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+            , "collation_namespace.nspname"
             -- We're not sure yet what attoptions and attfdwoptions represent, so we're not including them yet
             -- , sortArrayExpr "attoptions" 
             -- , sortArrayExpr "attfdwoptions"
@@ -385,6 +385,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             <> "\nLEFT JOIN pg_catalog.pg_type ON pg_type.oid=atttypid"
             <> "\nLEFT JOIN pg_catalog.pg_attrdef ON pg_attrdef.adrelid=pg_class.oid AND pg_attrdef.adnum=pg_attribute.attnum"
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
+            <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"
             <> "\n LEFT JOIN LATERAL "
             <> aclArrayTbl allRoles "attacl"
             <> "_codd_roles ON TRUE"
