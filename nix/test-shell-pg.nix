@@ -5,7 +5,7 @@
         postgres-service = import ./postgres-service.nix { inherit postgres; inherit pkgs; };
     in
     pkgs.mkShell {
-        buildInputs = [ postgres-service ];
+        buildInputs = [ postgres-service pkgs.glibcLocales ];
         shellHook = ''
             set -e
             trap "${postgres}/bin/pg_ctl stop" EXIT INT

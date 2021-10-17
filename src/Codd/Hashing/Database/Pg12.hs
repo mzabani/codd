@@ -24,4 +24,6 @@ hashQueryFor allRoles allSchemas schemaName tableName hobj =
     in  case hobj of
             HColumn ->
                 hq { checksumCols = checksumCols hq ++ ["attgenerated"] }
+            HCollation ->
+                hq { checksumCols = checksumCols hq ++ ["collisdeterministic"] }
             _ -> hq

@@ -370,7 +370,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "attislocal"
             , "attinhcount"
             , "pg_collation.collname"
-            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+            , "collation_namespace.nspname"
             -- We're not sure yet what attoptions and attfdwoptions represent, so we're not including them yet
             -- , sortArrayExpr "attoptions" 
             -- , sortArrayExpr "attfdwoptions"
@@ -385,6 +385,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             <> "\nLEFT JOIN pg_catalog.pg_type ON pg_type.oid=atttypid"
             <> "\nLEFT JOIN pg_catalog.pg_attrdef ON pg_attrdef.adrelid=pg_class.oid AND pg_attrdef.adnum=pg_attribute.attnum"
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
+            <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"
             <> "\n LEFT JOIN LATERAL "
             <> aclArrayTbl allRoles "attacl"
             <> "_codd_roles ON TRUE"
@@ -507,5 +508,30 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                  ""
                                  (QueryFrag "\nAND pg_trigger_table.relname = ?")
                                  (DB.Only <$> tableName)
+        , groupByCols   = []
+        }
+
+    HCollation -> HashQuery
+        { objNameCol    = "collname"
+        , checksumCols  =
+            [ "collprovider"
+            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+            , "collcollate"
+            , "collctype"
+            , "coll_owner_role.rolname"
+
+                          -- Read more about collation versions in DATABASE-EQUALITY.md
+            , "collversion"
+            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+            ]
+        , fromTable     = "pg_catalog.pg_collation"
+        , joins         =
+            "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \
+         \\n LEFT JOIN pg_catalog.pg_namespace ON collnamespace=pg_namespace.oid"
+        , nonIdentWhere = Nothing
+        , identWhere    = Just $ "TRUE" <> maybe
+                              ""
+                              (QueryFrag "\nAND pg_namespace.nspname = ?")
+                              (DB.Only <$> schemaName)
         , groupByCols   = []
         }

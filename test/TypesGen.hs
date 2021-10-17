@@ -22,21 +22,29 @@ instance Arbitrary DbHashesGen where
             SchemaHash
                 <$> genObjName
                 <*> genObjHash
-                <*> uniqueMapOf 100 schemaObjGen objName
-        roleHashGen  = RoleHash <$> genObjName <*> genObjHash
-        schemaObjGen = oneof
-            [ TableHash
-            <$> genObjName
-            <*> genObjHash
-            <*> uniqueMapOf 20 colGen        objName
-            <*> uniqueMapOf 5  constraintGen objName
-            <*> uniqueMapOf 1  triggerGen    objName
-            <*> uniqueMapOf 2  policyGen     objName
-            <*> uniqueMapOf 3  indexGen      objName
-            , ViewHash <$> genObjName <*> genObjHash
-            , RoutineHash <$> genObjName <*> genObjHash
-            , SequenceHash <$> genObjName <*> genObjHash
-            ]
+                <*> uniqueMapOf 20 tableGen     objName
+                <*> uniqueMapOf 5  viewGen      objName
+                <*> uniqueMapOf 10 routineGen   objName
+                <*> uniqueMapOf 15 sequenceGen  objName
+                <*> uniqueMapOf 2  collationGen objName
+        roleHashGen = RoleHash <$> genObjName <*> genObjHash
+
+        -- Per-schema object generators
+        tableGen =
+            TableHash
+                <$> genObjName
+                <*> genObjHash
+                <*> uniqueMapOf 20 colGen        objName
+                <*> uniqueMapOf 5  constraintGen objName
+                <*> uniqueMapOf 1  triggerGen    objName
+                <*> uniqueMapOf 2  policyGen     objName
+                <*> uniqueMapOf 3  indexGen      objName
+        viewGen       = ViewHash <$> genObjName <*> genObjHash
+        routineGen    = RoutineHash <$> genObjName <*> genObjHash
+        sequenceGen   = SequenceHash <$> genObjName <*> genObjHash
+        collationGen  = CollationHash <$> genObjName <*> genObjHash
+
+        -- Per-table object generators
         colGen        = TableColumn <$> genObjName <*> genObjHash
         constraintGen = TableConstraint <$> genObjName <*> genObjHash
         triggerGen    = TableTrigger <$> genObjName <*> genObjHash
@@ -52,8 +60,8 @@ uniqueMapOf size gen uniqBy =
     Map.fromList . map (\v -> (uniqBy v, v)) <$> resize size (listOf gen)
 
 genObjName :: Gen ObjName
--- TODO: freq > 0 genNasty
 genObjName = ObjName . Text.pack <$> frequency
+    -- TODO: freq > 0 genNasty
     [(100, genLower), (5, genMixed), (0, genNastyIdentifier)]
   where
         -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS

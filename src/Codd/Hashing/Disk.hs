@@ -54,15 +54,17 @@ readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaHash
 readSchemaHash dir =
     SchemaHash (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
-        <*> concatReaders
-                [ readMultiple (dir </> "tables")    readTable
-                , readMultiple (dir </> "views")     readView
-                , readMultiple (dir </> "routines")  readRoutine
-                , readMultiple (dir </> "sequences") readSequence
-                ]
+        <*> readMultiple (dir </> "tables")     readTable
+        <*> readMultiple (dir </> "views")      readView
+        <*> readMultiple (dir </> "routines")   readRoutine
+        <*> readMultiple (dir </> "sequences")  readSequence
+        <*> readMultiple (dir </> "collations") readCollation
 
-readTable, readView, readRoutine, readSequence
-    :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaObjectHash
+readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableHash
+readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewHash
+readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineHash
+readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceHash
+readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationHash
 readTable dir =
     TableHash (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
@@ -77,6 +79,7 @@ readTable dir =
 readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash
+readCollation = simpleObjHashFileRead CollationHash
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
@@ -107,12 +110,9 @@ readMultiple dir f = do
     if dirExists
         then do
             folders <- filter (/= "objhash") <$> listDirectory dir
-            objList <- traverse f $ map (dir </>) folders
+            objList <- traverse (f . (dir </>)) folders
             return $ listToMap objList
         else pure Map.empty
-
-concatReaders :: (MonadError Text m, MonadIO m, Monoid s) => [m s] -> m s
-concatReaders readers = mconcat <$> sequenceA readers
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
 toFiles (DbHashes dbSettingsHash (Map.elems -> schemas) (Map.elems -> roles)) =
@@ -123,7 +123,7 @@ toFiles (DbHashes dbSettingsHash (Map.elems -> schemas) (Map.elems -> roles)) =
     objToFiles obj =
         let dir = takeDirectory $ hashFileRelativeToParent obj
         in  (hashFileRelativeToParent obj, objHash obj) : concatMap
-                (\childObj -> map (prepend dir) $ objToFiles childObj)
+                (map (prepend dir) . objToFiles)
                 (childrenObjs obj)
     prepend folderName (file, c) = (folderName </> file, c)
 
