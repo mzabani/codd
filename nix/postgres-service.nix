@@ -1,4 +1,6 @@
-{ postgres, pkgs }:
+{ postgres, pkgs, wipeCluster }:
+    # wipeCluster=true ensures this is a deterministic derivation (assuming initdb/postgres cluster initialisation is pure,
+    # which actually might not be true unless in a pure shell, since e.g. locales are imported from the system)
     let
         utils = import ./utils.nix {};
         
@@ -8,7 +10,8 @@
         postgresql_conf = ../conf/postgresql.conf;
     in
         utils.writeShellScriptInBinFolder "init-postgres" ''
-            if [ "$(${ls} -A $PGDATA/*)" ]; then
+            ${if wipeCluster == true then "rm -rf $PGDATA" else ""}
+            if [ -d "$PGDATA" ] && [ "$(${ls} -A $PGDATA/*)" ]; then
                 ${echo} Postgres datadir not empty. Considering it initialized.
             else
                 ${postgres}/bin/initdb --locale=C.UTF8 -E UTF8 -U postgres $PGDATA

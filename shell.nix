@@ -2,7 +2,7 @@ let
     pkgs = import ./nix/nixpkgs.nix;
     hsPkgs = import ./default.nix { inherit pkgs; };
 
-    postgres-init = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_13; inherit pkgs; };
+    postgres-service = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_13; inherit pkgs; wipeCluster = false; };
 
 in
     hsPkgs.shellFor {
@@ -31,7 +31,7 @@ in
 
         shellHook = ''
             source scripts/source-env.sh .env
-            ${postgres-init}/bin/init-postgres
+            ${postgres-service}/bin/init-postgres
             echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
             echo You just might have to run 'codd up' first to create database '$PGDATABASE'.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
