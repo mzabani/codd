@@ -2,7 +2,7 @@
 , postgres
 , pgDataDir }:
     let
-        postgres-service = import ./postgres-service.nix { inherit postgres; inherit pkgs; };
+        postgres-service = import ./postgres-service.nix { inherit postgres; inherit pkgs; wipeCluster = true; };
     in
     pkgs.mkShell {
         buildInputs = [ postgres-service pkgs.glibcLocales ];
