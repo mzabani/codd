@@ -1,22 +1,27 @@
+{-# LANGUAGE DataKinds #-}
 module Codd.Hashing.Disk
     ( persistHashesToDisk
     , readHashesFromDisk
     , toFiles
     ) where
 
-import           Codd.Prelude
 import           Prelude                 hiding ( readFile
                                                 , writeFile
                                                 )
 
 import           Codd.Hashing.Types
-import           Control.Monad                  ( forM_
+import           Control.Monad                  ( forM
+                                                , forM_
                                                 , unless
+                                                , void
                                                 , when
                                                 )
 import           Control.Monad.Except           ( MonadError(..)
                                                 , runExceptT
                                                 )
+import           Control.Monad.Identity         ( runIdentity )
+import           Data.Bifunctor                 ( first )
+import           Data.List                      ( sortOn )
 import qualified Data.Map.Strict               as Map
 import           Data.Map.Strict                ( Map )
 import           Data.Text                      ( Text
@@ -28,13 +33,13 @@ import           Data.Text.IO                   ( readFile
                                                 )
 import           GHC.Stack                      ( HasCallStack )
 import           System.FilePath                ( (</>)
-                                                , takeDirectory
                                                 , takeFileName
                                                 )
 import           UnliftIO                       ( MonadIO(..)
                                                 , throwIO
                                                 )
 import           UnliftIO.Directory             ( copyFile
+                                                , createDirectory
                                                 , createDirectoryIfMissing
                                                 , doesDirectoryExist
                                                 , doesFileExist
@@ -42,6 +47,40 @@ import           UnliftIO.Directory             ( copyFile
                                                 , listDirectory
                                                 , removePathForcibly
                                                 )
+
+-- data OnDiskRoot = OnDiskRoot FilePath ObjHash [OnDiskSchema]
+-- data OnDiskSchema = OnDiskSchema FilePath ObjHash 
+
+-- TODO: Is this equivalent to monadic unfolding?
+class DbDiskObj a where
+    appr :: Monad m => a -> (forall b. DbDiskObj b => FilePath -> b -> m d) -> (FilePath -> ObjHash -> m d) -> m [d]
+
+instance DbDiskObj DbHashes where
+    appr (DbHashes dbSettingsHash schemas roles) frec ffile = do
+        x  <- ffile "db-settings" dbSettingsHash
+        rs <- forM (Map.elems roles) $ frec "roles"
+        ss <- forM (Map.elems schemas) $ frec "schemas"
+        pure $ x : rs ++ ss
+
+instance DbDiskObj RoleHash where
+    appr (RoleHash roleName roleHash) _ ffile =
+        (: []) <$> ffile (mkPathFrag roleName) roleHash
+
+instance DbDiskObj SchemaHash where
+    appr (SchemaHash schemaName schemaHash _tables _views _routines _seqs _colls) _frec ffile
+        = do
+            x <- ffile (mkPathFrag schemaName </> "objhash") schemaHash
+            pure [x]
+
+toFiles :: DbHashes -> [(FilePath, ObjHash)]
+toFiles = sortOn fst . frec
+  where
+    frec :: DbDiskObj a => a -> [(FilePath, ObjHash)]
+    frec sobj = concat $ runIdentity $ appr
+        sobj
+        (\parentDir obj -> pure $ prependDir parentDir $ frec obj)
+        (\fn h -> pure [(fn, h)])
+    prependDir dir = map (first (dir </>))
 
 -- TODO: A single tree-like structure that can be used both to read from disk and write to disk
 readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
@@ -114,18 +153,85 @@ readMultiple dir f = do
             return $ listToMap objList
         else pure Map.empty
 
-toFiles :: DbHashes -> [(FilePath, ObjHash)]
-toFiles (DbHashes dbSettingsHash (Map.elems -> schemas) (Map.elems -> roles)) =
-    ("db-settings", dbSettingsHash)
-        : concatMap objToFiles (map DbObject schemas ++ map DbObject roles)
+writeAllHashesNew :: DbHashes -> FilePath -> IO ()
+writeAllHashesNew dbHashes rootDir = frec rootDir dbHashes
   where
-    objToFiles :: DbObject -> [(FilePath, ObjHash)]
-    objToFiles obj =
-        let dir = takeDirectory $ hashFileRelativeToParent obj
-        in  (hashFileRelativeToParent obj, objHash obj) : concatMap
-                (map (prepend dir) . objToFiles)
-                (childrenObjs obj)
-    prepend folderName (file, c) = (folderName </> file, c)
+    frec :: DbDiskObj a => FilePath -> a -> IO ()
+    frec dir obj = void $ appr
+        obj
+        (\parentDir sobj -> do
+            createDirectoryIfMissing False (dir </> parentDir)
+            frec parentDir sobj
+        )
+        (\fn (ObjHash fh) -> writeFile (dir </> fn) fh)
+
+writeAllHashes :: DbHashes -> FilePath -> IO ()
+writeAllHashes (DbHashes dbSettings schemas roles) rootDir = do
+    createDirectoryIfMissing False rootDir
+    writeHashFile (rootDir </> "db-settings") dbSettings
+    createDirectory (rootDir </> "schemas")
+    createDirectory (rootDir </> "roles")
+    forM_ schemas $ writeSchema (rootDir </> "schemas")
+    forM_ roles $ writeRole (rootDir </> "roles")
+
+  where
+    writeSchema dir (SchemaHash sname shash tables views routines seqs colls) =
+        do
+            let schemaDir = dir </> mkPathFrag sname
+            createDirectory schemaDir
+            writeHashFile (schemaDir </> "objhash") shash
+
+            createDirectory (schemaDir </> "tables")
+            createDirectory (schemaDir </> "views")
+            createDirectory (schemaDir </> "routines")
+            createDirectory (schemaDir </> "sequences")
+            createDirectory (schemaDir </> "collations")
+            forM_ tables $ writeTable (schemaDir </> "tables")
+            forM_ views $ writeView (schemaDir </> "views")
+            forM_ routines $ writeRoutine (schemaDir </> "routines")
+            forM_ seqs $ writeSequence (schemaDir </> "sequences")
+            forM_ colls $ writeCollation (schemaDir </> "collations")
+
+    writeRole dir (RoleHash rname rhash) =
+        writeHashFile (dir </> mkPathFrag rname) rhash
+
+    writeTable tablesDir (TableHash tname thash cols constraints triggers policies indexes)
+        = do
+            let tableDir = tablesDir </> mkPathFrag tname
+            createDirectory tableDir
+            writeHashFile (tableDir </> "objhash") thash
+            createDirectory (tableDir </> "cols")
+            createDirectory (tableDir </> "constraints")
+            createDirectory (tableDir </> "triggers")
+            createDirectory (tableDir </> "policies")
+            createDirectory (tableDir </> "indexes")
+            forM_ cols $ writeColumn (tableDir </> "cols")
+            forM_ constraints $ writeConstraint (tableDir </> "constraints")
+            forM_ triggers $ writeTrigger (tableDir </> "triggers")
+            forM_ policies $ writePolicy (tableDir </> "policies")
+            forM_ indexes $ writeIndex (tableDir </> "indexes")
+
+    writeView dir (ViewHash name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeRoutine dir (RoutineHash name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeSequence dir (SequenceHash name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeCollation dir (CollationHash name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+
+    writeColumn dir (TableColumn name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeConstraint dir (TableConstraint name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeTrigger dir (TableTrigger name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writePolicy dir (TablePolicy name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+    writeIndex dir (TableIndex name hash) =
+        writeHashFile (dir </> mkPathFrag name) hash
+
+    writeHashFile file (ObjHash textHash) = writeFile file textHash
 
 -- | Wipes out completely the supplied folder and writes the hashes of the Database's structures to it again.
 persistHashesToDisk
@@ -133,11 +239,7 @@ persistHashesToDisk
 persistHashesToDisk dbHashes dir = do
     tempDir <- (</> "temp-db-dir") <$> getTemporaryDirectory
     whenM (doesDirectoryExist tempDir) $ wipeDir tempDir
-    createDirectoryIfMissing False tempDir
-    forM_ (nubOrd $ map fst $ toFiles dbHashes) $ \filepath ->
-        createDirectoryIfMissing True (tempDir </> takeDirectory filepath)
-    forM_ (toFiles dbHashes) $ \(filepath, ObjHash filecontents) ->
-        liftIO $ writeFile (tempDir </> filepath) filecontents
+    liftIO $ writeAllHashes dbHashes tempDir
 
     -- If the directory doesn't exist, we should simply ignore it
     -- Note: the folder parent to "dir" might not have permissions for us to delete things inside it,
