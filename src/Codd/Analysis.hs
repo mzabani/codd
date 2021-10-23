@@ -16,10 +16,8 @@ module Codd.Analysis
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..)
-                                                , DbObject(..)
-                                                , IsDbObject(..)
-                                                , childrenObjs
-                                                , matchOrd
+                                                , DiffType(OnlyLeft)
+                                                , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal
@@ -44,7 +42,6 @@ import           Control.Monad                  ( void
 import           Control.Monad.Logger           ( MonadLogger )
 import           Data.Foldable                  ( foldl' )
 import           Data.List.NonEmpty             ( NonEmpty((:|)) )
-import qualified Data.Map.Strict               as Map
 import           Data.Maybe                     ( isNothing )
 import           Data.Text                      ( Text )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -281,23 +278,12 @@ checkMigration dbInfoApp@CoddSettings { superUserConnString, dbName, retryPolicy
 
 -- | TODO: It'd be interesting to show which changes we detected as destructive
 someDestructiveChangeHasBeenApplied :: DbHashes -> DbHashes -> Bool
-someDestructiveChangeHasBeenApplied (DbHashes dbsh1 (Map.elems -> sbf) (Map.elems -> rbf)) (DbHashes dbsh2 (Map.elems -> saf) (Map.elems -> raf))
-    = anyDrop (map DbObject sbf) (map DbObject saf)
-        || anyDrop (map DbObject rbf) (map DbObject raf)
+someDestructiveChangeHasBeenApplied hbf@(DbHashes dbsh1 _ _) haf@(DbHashes dbsh2 _ _)
+    = any
+            (\case
+                OnlyLeft -> True
+                _        -> False
+            )
+            (hashDifferences hbf haf)
         || dbsh1
         /= dbsh2
-
-anyDrop :: [DbObject] -> [DbObject] -> Bool
-anyDrop objs1 objs2 =
-    let matched = matchOrd objName objs1 objs2
-    in 
-        -- Check: something dropped at this level and something dropped recursively for objects
-        -- that have been kept
-        any
-            (\case
-                (Just _, Nothing) -> True
-                (Just obf, Just oaf) ->
-                    anyDrop (childrenObjs obf) (childrenObjs oaf)
-                _ -> False
-            )
-            matched
