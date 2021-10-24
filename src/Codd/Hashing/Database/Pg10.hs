@@ -82,6 +82,25 @@ constraintnameExpr conTbl pgDomainTypeTbl =
         <> pgDomainTypeTbl
         <> ".typname, '')"
 
+-- | Given aliases for in-context "pg_type" and the associated typelem's "pg_type_elem" tables,
+-- returns an expression that evaluates to "basetype[]" instead of "_basetype" if this is
+-- an array type or just the type's name otherwise.
+typeNameExpr :: QueryFrag -> QueryFrag -> QueryFrag
+typeNameExpr pgTypeTbl pgTypeElemTbl =
+    "CASE WHEN "
+        <> pgTypeTbl
+        <> ".typelem <> 0 AND "
+        <> pgTypeTbl
+        <> ".typlen = -1 AND "
+        <> pgTypeTbl
+        <> ".typname LIKE '\\_%' AND "
+        <> pgTypeElemTbl
+        <> ".typname IS NOT NULL THEN "
+        <> pgTypeElemTbl
+        <> ".typname || '[]' ELSE "
+        <> pgTypeTbl
+        <> ".typname END"
+
 -- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
 -- already includes names of its operators to ensure uniqueness per namespace.
 -- We still don't use it, but it might become useful in the future.
@@ -535,3 +554,63 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                               (DB.Only <$> schemaName)
         , groupByCols   = []
         }
+
+    HType -> HashQuery
+        { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
+        , checksumCols  = [ "pg_namespace.nspname"
+                          , "pg_type_owner.rolname"
+                          , "pg_type.typtype"
+                          , "pg_type.typcategory"
+                          , "pg_type.typispreferred"
+                          , "pg_type.typdelim"
+                          , "pg_class_rel.relname"
+                          , "pg_type_elem.typname"
+                          , "pg_type.typnotnull"
+                          , "pg_type_base.typname"
+                          , "pg_type.typtypmod"
+                          , "pg_type.typndims"
+                          , "pg_collation.collname"
+                          , "pg_namespace_coll.nspname"
+                          , "pg_type.typdefault"
+                          -- MISSING:
+                          -- Procs (input/output/receive etc.)
+                          -- Type definition? From where? Only for composite and enum types?
+                          , aclArrayTbl allRoles "pg_type.typacl"
+                          ]
+        , fromTable     = "pg_catalog.pg_type"
+        , joins         =
+            "LEFT JOIN pg_catalog.pg_namespace ON typnamespace=pg_namespace.oid\
+\\nLEFT JOIN pg_catalog.pg_roles pg_type_owner ON pg_type_owner.oid=typowner\
+\\nLEFT JOIN pg_catalog.pg_class pg_class_rel ON pg_class_rel.oid=pg_type.typrelid AND pg_type.typrelid IS DISTINCT FROM 0\
+\\nLEFT JOIN pg_catalog.pg_type pg_type_elem ON pg_type_elem.oid=pg_type.typelem AND pg_type.typelem IS DISTINCT FROM 0\
+\\nLEFT JOIN pg_catalog.pg_type pg_type_base ON pg_type_base.oid=pg_type.typbasetype AND pg_type.typbasetype IS DISTINCT FROM 0\
+\\nLEFT JOIN pg_catalog.pg_class pg_class_elem ON pg_class_elem.oid=pg_type_elem.typrelid\
+\\nLEFT JOIN pg_catalog.pg_collation ON pg_collation.oid=pg_type.typcollation AND pg_type.typcollation IS DISTINCT FROM 0\
+\\nLEFT JOIN pg_catalog.pg_namespace pg_namespace_coll ON pg_namespace_coll.oid=collnamespace"
+        , nonIdentWhere =
+            Just
+                -- Postgres creates an array type for each type (I'm not sure if it's for *every one*)
+                -- and one type for each table, view, sequence and possibly others - alongside one extra array type
+                -- for each one of these as well.
+                -- A few thoughts:
+                -- 1 - If we find out every single type gets an array type in every version of postgres,
+                --     we probably don't want to include array types at all since they're redundant.
+                --     This does not seem safe to assume because typarray can be 0.
+                -- 2 - Types generated per tables, views and other relations are redundant so we don't include
+                --     either those or their array types. They can't be removed because views and tables depend on them.
+                "pg_type.typisdefined AND pg_class_elem.relkind IS NULL AND pg_class_rel.relkind IS NULL"
+        , identWhere    = Just $ QueryFrag "pg_namespace.nspname = ?"
+                                           (DB.Only schemaName)
+        , groupByCols   = []
+        }
+        -- === Do not include:
+        -- typlen and typbyval, since they're machine-dependent
+        -- typarray not necessary since it merely represents the existence of another type
+        -- typalign, typstorage
+        -- === To understand:
+        -- typrelid (what's a free-standing composite type?)
+        -- typtypmod (what's a typmod that's applied to a base type?)
+        -- typndims (is this necessary if we hash the base type by name?)
+        -- Do we need "IS DISTINCT FROM 0"?
+        -- === Filter by:
+        -- typisdefined=true (also investigate what this means)

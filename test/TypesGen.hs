@@ -27,6 +27,7 @@ instance Arbitrary DbHashesGen where
                 <*> uniqueMapOf 10 routineGen   objName
                 <*> uniqueMapOf 15 sequenceGen  objName
                 <*> uniqueMapOf 2  collationGen objName
+                <*> uniqueMapOf 5  typeGen      objName
         roleHashGen = RoleHash <$> genObjName <*> genObjHash
 
         -- Per-schema object generators
@@ -43,6 +44,7 @@ instance Arbitrary DbHashesGen where
         routineGen    = RoutineHash <$> genObjName <*> genObjHash
         sequenceGen   = SequenceHash <$> genObjName <*> genObjHash
         collationGen  = CollationHash <$> genObjName <*> genObjHash
+        typeGen       = TypeHash <$> genObjName <*> genObjHash
 
         -- Per-table object generators
         colGen        = TableColumn <$> genObjName <*> genObjHash

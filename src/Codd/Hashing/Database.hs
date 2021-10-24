@@ -308,6 +308,7 @@ getSchemaHash schemas =
     routines    <- dataFetch $ GetHashesReq HRoutine (Just schemaName) Nothing
     sequences   <- dataFetch $ GetHashesReq HSequence (Just schemaName) Nothing
     collations  <- dataFetch $ GetHashesReq HCollation (Just schemaName) Nothing
+    types       <- dataFetch $ GetHashesReq HType (Just schemaName) Nothing
 
     tableHashes <- getTablesHashes schemaName tables
     pure
@@ -319,6 +320,7 @@ getSchemaHash schemas =
                    (listToMap $ map (uncurry RoutineHash) routines)
                    (listToMap $ map (uncurry SequenceHash) sequences)
                    (listToMap $ map (uncurry CollationHash) collations)
+                   (listToMap $ map (uncurry TypeHash) types)
       )
 
 getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [TableHash]

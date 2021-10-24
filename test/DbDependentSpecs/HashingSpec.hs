@@ -118,10 +118,8 @@ migrationsAndHashChange = zipWith
       -- MISSING:
       -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
       -- EXCLUSION CONSTRAINTS
-      -- COLLATIONS
       -- EXTENSIONS
       -- PARTITIONING
-      -- TYPES
       -- LANGUAGES
       -- FOREIGN SERVERS
       -- DOMAINS
@@ -805,6 +803,14 @@ migrationsAndHashChange = zipWith
 
     -- Deterministic collations were introduced in Pg 12..
     -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent )]
+
+    -- TYPES
+    -- TODO:
+    -- Enum types
+    -- Composite types
+    -- Types with subscription that are not arrays? (is this possible)
+    -- Composite types with row types
+    -- Domains
 
       -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"

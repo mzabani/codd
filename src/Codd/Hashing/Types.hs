@@ -17,7 +17,7 @@ import           Database.PostgreSQL.Simple.ToField
                                                 ( ToField )
 import           GHC.Generics                   ( Generic )
 
-data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation
+data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
@@ -34,6 +34,7 @@ data SchemaHash = SchemaHash ObjName
                              (Map ObjName RoutineHash)
                              (Map ObjName SequenceHash)
                              (Map ObjName CollationHash)
+                             (Map ObjName TypeHash)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
@@ -77,6 +78,9 @@ data TableIndex = TableIndex ObjName ObjHash
 data RoleHash = RoleHash ObjName ObjHash
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
+data TypeHash = TypeHash ObjName ObjHash
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
 
 -- | TODO: Make sure valid DB characters are replaced by valid on-disk characters when necessary
 mkPathFrag :: ObjName -> FilePath
@@ -97,7 +101,7 @@ class HasName a where
 instance HasName RoleHash where
     objName (RoleHash n _) = n
 instance HasName SchemaHash where
-    objName (SchemaHash n _ _ _ _ _ _) = n
+    objName (SchemaHash n _ _ _ _ _ _ _) = n
 
 instance HasName TableHash where
     objName (TableHash n _ _ _ _ _ _) = n
@@ -120,6 +124,9 @@ instance HasName SequenceHash where
     objName (SequenceHash n _) = n
 instance HasName CollationHash where
     objName (CollationHash n _) = n
+
+instance HasName TypeHash where
+    objName (TypeHash n _) = n
 
 listToMap :: HasName a => [a] -> Map ObjName a
 listToMap = Map.fromList . map (\obj -> (objName obj, obj))
