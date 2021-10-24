@@ -28,6 +28,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
+                                                , parseSqlMigrationSimpleWorkflow
                                                 , parsedSqlText
                                                 , toMigrationTimestamp
                                                 )
@@ -98,13 +99,18 @@ migrationsAndHashChange = zipWith
   (\(MU doSql undoSql, c) i ->
     ( MU
       (AddedSqlMigration
-        SqlMigration { migrationName       = show i <> "-migration.sql"
-                     , nonDestructiveSql   = Just $ mkValidSql doSql
-                     , nonDestructiveForce = True
-                     , nonDestructiveInTxn = True
-                     , destructiveSql      = Nothing
-                     , destructiveInTxn    = True
-                     }
+        (let
+           mig = either
+             (error "Could not parse SQL migration")
+             id
+             (parseSqlMigrationSimpleWorkflow
+               "1900-01-01T00:00:00Z-migration.sql"
+               doSql
+             )
+         in  mig {
+                -- Override name to avoid conflicts
+                   migrationName = show i <> "-migration.sql" }
+        )
         (getIncreasingTimestamp i)
       )
       undoSql
@@ -811,6 +817,19 @@ migrationsAndHashChange = zipWith
     -- Types with subscription that are not arrays? (is this possible)
     -- Composite types with row types
     -- Domains
+    (createExp, dropExp) <-
+      addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
+             "DROP TYPE experience;"
+        $ ChangeEq
+            [ ("schemas/public/types/experience"  , OnlyRight)
+            , ("schemas/public/types/experience[]", OnlyRight)
+            ]
+
+    addMig_
+        "-- codd: no-txn\n\
+            \ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
+        (dropExp <> createExp)
+      $ ChangeEq [("schemas/public/types/experience", BothButDifferent)]
 
       -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"

@@ -557,26 +557,33 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
 
     HType -> HashQuery
         { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
-        , checksumCols  = [ "pg_namespace.nspname"
-                          , "pg_type_owner.rolname"
-                          , "pg_type.typtype"
-                          , "pg_type.typcategory"
-                          , "pg_type.typispreferred"
-                          , "pg_type.typdelim"
-                          , "pg_class_rel.relname"
-                          , "pg_type_elem.typname"
-                          , "pg_type.typnotnull"
-                          , "pg_type_base.typname"
-                          , "pg_type.typtypmod"
-                          , "pg_type.typndims"
-                          , "pg_collation.collname"
-                          , "pg_namespace_coll.nspname"
-                          , "pg_type.typdefault"
+        , checksumCols  =
+            [ "pg_namespace.nspname"
+            , "pg_type_owner.rolname"
+            , "pg_type.typtype"
+            , "pg_type.typcategory"
+            , "pg_type.typispreferred"
+            , "pg_type.typdelim"
+            , "pg_class_rel.relname"
+            , "pg_type_elem.typname"
+            , "pg_type.typnotnull"
+            , "pg_type_base.typname"
+            , "pg_type.typtypmod"
+            , "pg_type.typndims"
+            , "pg_collation.collname"
+            , "pg_namespace_coll.nspname"
+            , "pg_type.typdefault"
                           -- MISSING:
                           -- Procs (input/output/receive etc.)
                           -- Type definition? From where? Only for composite and enum types?
-                          , aclArrayTbl allRoles "pg_type.typacl"
-                          ]
+            , aclArrayTbl allRoles "pg_type.typacl"
+            , "ARRAY_TO_STRING(\
+              \\n ARRAY(\
+                  \\n SELECT e.enumlabel::TEXT\
+                  \\n FROM pg_catalog.pg_enum e\
+                  \\n WHERE e.enumtypid = pg_type.oid\
+                  \\n ORDER BY e.enumsortorder), ';')"
+            ]
         , fromTable     = "pg_catalog.pg_type"
         , joins         =
             "LEFT JOIN pg_catalog.pg_namespace ON typnamespace=pg_namespace.oid\
