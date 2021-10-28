@@ -17,6 +17,9 @@ import           Codd.Types                     ( Include
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 
+-- | Returns a one-row table of type ({ permissions: TEXT }) by exploding the ACL array
+-- and aggregating deterministically (by sorting) the associated permissions for the 
+-- supplied roles + permissions where there is no grantee role.
 aclArrayTbl :: Include SqlRole -> QueryFrag -> QueryFrag
 aclArrayTbl allRoles aclArrayIdentifier =
     let acls = "(ACLEXPLODE(" <> aclArrayIdentifier <> "))"
@@ -555,48 +558,64 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         , groupByCols   = []
         }
 
-    HType -> HashQuery
-        { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
-        , checksumCols  =
-            [ "pg_namespace.nspname"
-            , "pg_type_owner.rolname"
-            , "pg_type.typtype"
-            , "pg_type.typcategory"
-            , "pg_type.typispreferred"
-            , "pg_type.typdelim"
-            , "pg_class_rel.relname"
-            , "pg_type_elem.typname"
-            , "pg_type.typnotnull"
-            , "pg_type_base.typname"
-            , "pg_type.typtypmod"
-            , "pg_type.typndims"
-            , "pg_collation.collname"
-            , "pg_namespace_coll.nspname"
-            , "pg_type.typdefault"
-                          -- MISSING:
-                          -- Procs (input/output/receive etc.)
-                          -- Type definition? From where? Only for composite and enum types?
-            , aclArrayTbl allRoles "pg_type.typacl"
-            , "ARRAY_TO_STRING(\
-              \\n ARRAY(\
-                  \\n SELECT e.enumlabel::TEXT\
-                  \\n FROM pg_catalog.pg_enum e\
-                  \\n WHERE e.enumtypid = pg_type.oid\
-                  \\n ORDER BY e.enumsortorder), ';')"
-            ]
-        , fromTable     = "pg_catalog.pg_type"
-        , joins         =
-            "LEFT JOIN pg_catalog.pg_namespace ON typnamespace=pg_namespace.oid\
+    HType ->
+        let ckCols =
+                [ "pg_namespace.nspname"
+                , "pg_type_owner.rolname"
+                , "pg_type.typtype"
+                , "pg_type.typcategory"
+                , "pg_type.typispreferred"
+                , "pg_type.typdelim"
+                , "pg_class_rel.relname"
+                , "pg_type_elem.typname"
+                , "pg_type.typnotnull"
+                , "pg_type_base.typname"
+                , "pg_type.typtypmod"
+                , "pg_type.typndims"
+                , "pg_collation.collname"
+                , "pg_namespace_coll.nspname"
+                , "pg_type.typdefault"
+                ]
+        in
+            HashQuery
+                { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
+                , checksumCols  =
+                    ckCols
+                        ++ [ "typacl.permissions"
+                           , "ARRAY_TO_STRING(\
+              \\n ARRAY_AGG(\
+                \\n pg_attribute.attname || ';' || attribute_type.typname\
+                \   || COALESCE(attribute_coll.collname, '') || ';' || COALESCE(attribute_coll_nsp.nspname, '') ORDER BY pg_attribute.attnum\
+              \\n ), ';')"
+                           , "ARRAY_TO_STRING(\
+              \\n ARRAY_AGG(\
+                  \\n pg_enum.enumlabel::TEXT\
+                  \\n ORDER BY pg_enum.enumsortorder), ';')"
+                           ]
+                , fromTable     = "pg_catalog.pg_type"
+                , joins         =
+                    "LEFT JOIN pg_catalog.pg_namespace ON typnamespace=pg_namespace.oid\
 \\nLEFT JOIN pg_catalog.pg_roles pg_type_owner ON pg_type_owner.oid=typowner\
 \\nLEFT JOIN pg_catalog.pg_class pg_class_rel ON pg_class_rel.oid=pg_type.typrelid AND pg_type.typrelid IS DISTINCT FROM 0\
 \\nLEFT JOIN pg_catalog.pg_type pg_type_elem ON pg_type_elem.oid=pg_type.typelem AND pg_type.typelem IS DISTINCT FROM 0\
 \\nLEFT JOIN pg_catalog.pg_type pg_type_base ON pg_type_base.oid=pg_type.typbasetype AND pg_type.typbasetype IS DISTINCT FROM 0\
 \\nLEFT JOIN pg_catalog.pg_class pg_class_elem ON pg_class_elem.oid=pg_type_elem.typrelid\
 \\nLEFT JOIN pg_catalog.pg_collation ON pg_collation.oid=pg_type.typcollation AND pg_type.typcollation IS DISTINCT FROM 0\
-\\nLEFT JOIN pg_catalog.pg_namespace pg_namespace_coll ON pg_namespace_coll.oid=collnamespace"
-        , nonIdentWhere =
-            Just
-                -- Postgres creates an array type for each type (I'm not sure if it's for *every one*)
+\\nLEFT JOIN pg_catalog.pg_namespace pg_namespace_coll ON pg_namespace_coll.oid=collnamespace\
+\\n-- We can't group by typacl because the planner errors with 'Some of the datatypes only support hashing, while others only support sorting.'\
+\\nLEFT JOIN LATERAL "
+                    <> aclArrayTbl allRoles "pg_type.typacl"
+                    <> " typacl ON TRUE"
+                    <> "\n-- Joins for attributes of composite types\
+\\nLEFT JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_class_rel.oid\
+\\nLEFT JOIN pg_catalog.pg_type attribute_type ON attribute_type.oid=pg_attribute.atttypid\
+\\nLEFT JOIN pg_catalog.pg_collation attribute_coll ON attribute_coll.oid=pg_attribute.attcollation\
+\\nLEFT JOIN pg_catalog.pg_namespace attribute_coll_nsp ON attribute_coll_nsp.oid=attribute_coll.collnamespace\
+\\n-- Joins for enum types\
+\\nLEFT JOIN pg_catalog.pg_enum ON pg_enum.enumtypid=pg_type.oid"
+                , nonIdentWhere =
+                    Just
+                -- Postgres creates an array type for each type (I'm not sure if it really is for *every* type)
                 -- and one type for each table, view, sequence and possibly others - alongside one extra array type
                 -- for each one of these as well.
                 -- A few thoughts:
@@ -604,12 +623,18 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 --     we probably don't want to include array types at all since they're redundant.
                 --     This does not seem safe to assume because typarray can be 0.
                 -- 2 - Types generated per tables, views and other relations are redundant so we don't include
-                --     either those or their array types. They can't be removed because views and tables depend on them.
-                "pg_type.typisdefined AND pg_class_elem.relkind IS NULL AND pg_class_rel.relkind IS NULL"
-        , identWhere    = Just $ QueryFrag "pg_namespace.nspname = ?"
-                                           (DB.Only schemaName)
-        , groupByCols   = []
-        }
+                --     either those or their array types. They can't be removed because views and tables depend on them,
+                --     so that keeps us safe.
+                        "pg_type.typisdefined AND pg_class_elem.relkind IS NULL AND (pg_class_rel.relkind IS NULL OR pg_class_rel.relkind = 'c')"
+                , identWhere    = Just $ QueryFrag "pg_namespace.nspname = ?"
+                                                   (DB.Only schemaName)
+                , groupByCols   = ckCols
+                                      ++ [ "pg_type.typname"
+                                         , "typacl.permissions"
+                                         , "pg_type.typelem"
+                                         , "pg_type.typlen"
+                                         ]
+                }
         -- === Do not include:
         -- typlen and typbyval, since they're machine-dependent
         -- typarray not necessary since it merely represents the existence of another type
@@ -620,4 +645,4 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         -- typndims (is this necessary if we hash the base type by name?)
         -- Do we need "IS DISTINCT FROM 0"?
         -- === Filter by:
-        -- typisdefined=true (also investigate what this means)
+        -- typisdefined=true (also investigate what this means, is this related to shell types?)

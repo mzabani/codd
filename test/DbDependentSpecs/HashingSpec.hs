@@ -108,7 +108,7 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                -- Override name to avoid conflicts
+                                                                    -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -812,11 +812,13 @@ migrationsAndHashChange = zipWith
 
     -- TYPES
     -- TODO:
-    -- Enum types
-    -- Composite types
-    -- Types with subscription that are not arrays? (is this possible)
-    -- Composite types with row types
-    -- Domains
+    -- Domain types
+    -- Range types
+    -- Permission change for at least one type (one should be sufficient)
+    -- Probably not as important for now:
+    -- Base types
+    -- Shell types
+    -- Array types
     (createExp, dropExp) <-
       addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
              "DROP TYPE experience;"
@@ -830,6 +832,33 @@ migrationsAndHashChange = zipWith
             \ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
         (dropExp <> createExp)
       $ ChangeEq [("schemas/public/types/experience", BothButDifferent)]
+
+    (createComplex1, dropComplex) <-
+      addMig "CREATE TYPE complex AS (a double precision);" "DROP TYPE complex;"
+        $ ChangeEq [("schemas/public/types/complex", OnlyRight)]
+    addMig_ "ALTER TYPE complex ADD ATTRIBUTE b double precision;"
+            "ALTER TYPE complex DROP ATTRIBUTE b"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_
+        "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE text;"
+        "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE double precision;"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_
+        "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE new_collation;"
+        "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE \"default\";"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_ "ALTER TYPE complex ADD ATTRIBUTE c employee;"
+            "ALTER TYPE complex DROP ATTRIBUTE c;"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    -- We don't want the type to change when the table changes
+    -- because it'd be unnecessarily verbose.
+    addMig_ "ALTER TABLE employee ADD COLUMN anycolumn TEXT;"
+            "ALTER TABLE employee DROP COLUMN anycolumn;"
+      $ ChangeEq [("schemas/public/tables/employee/cols/anycolumn", OnlyRight)]
 
       -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
