@@ -30,12 +30,13 @@ This is not currently the case, may not be entirely possible and some decisions 
 - Row Level Security
 - Collations (with _important caveats_)
 - Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions
-- Types
+- Composite, enum and range types  
 - Database encoding and its `default_transaction_*` settings
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
 - Full-text dictionaries
+- Domain, base and shell types
 - Extensions
 - Partitioning
 - Foreign Servers

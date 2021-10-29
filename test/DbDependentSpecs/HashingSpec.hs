@@ -108,7 +108,7 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                                                                    -- Override name to avoid conflicts
+                                                                                                                    -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -813,19 +813,14 @@ migrationsAndHashChange = zipWith
     -- TYPES
     -- TODO:
     -- Domain types
-    -- Range types
     -- Permission change for at least one type (one should be sufficient)
     -- Probably not as important for now:
     -- Base types
     -- Shell types
-    -- Array types
     (createExp, dropExp) <-
       addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
              "DROP TYPE experience;"
-        $ ChangeEq
-            [ ("schemas/public/types/experience"  , OnlyRight)
-            , ("schemas/public/types/experience[]", OnlyRight)
-            ]
+        $ ChangeEq [("schemas/public/types/experience", OnlyRight)]
 
     addMig_
         "-- codd: no-txn\n\
@@ -859,6 +854,39 @@ migrationsAndHashChange = zipWith
     addMig_ "ALTER TABLE employee ADD COLUMN anycolumn TEXT;"
             "ALTER TABLE employee DROP COLUMN anycolumn;"
       $ ChangeEq [("schemas/public/tables/employee/cols/anycolumn", OnlyRight)]
+
+    (createFloatRange1, dropFloatRange) <-
+      addMig
+          "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);"
+          "DROP TYPE floatrange;"
+        $ ChangeEq
+            [ ("schemas/public/types/floatrange"                 , OnlyRight)
+        -- Two constructor functions created by PG too:
+            , ("schemas/public/routines/floatrange;float8,float8", OnlyRight)
+            , ( "schemas/public/routines/floatrange;float8,float8,text"
+              , OnlyRight
+              )
+            ]
+
+    addMig_
+      "CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
+      "DROP FUNCTION time_subtype_diff"
+      SomeChange
+
+    -- Change of subtype
+    addMig_
+        (dropFloatRange
+        <> "CREATE TYPE floatrange AS RANGE (subtype = time,subtype_diff = time_subtype_diff);"
+        )
+        (dropFloatRange <> createFloatRange1)
+      $ ChangeEq
+          [ ("schemas/public/types/floatrange", BothButDifferent)
+          -- Constructor functions:
+          , ("schemas/public/routines/floatrange;time,time"         , OnlyRight)
+          , ("schemas/public/routines/floatrange;time,time,text"    , OnlyRight)
+          , ("schemas/public/routines/floatrange;float8,float8"     , OnlyLeft)
+          , ("schemas/public/routines/floatrange;float8,float8,text", OnlyLeft)
+          ]
 
       -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
