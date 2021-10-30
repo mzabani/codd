@@ -108,7 +108,7 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                                                                                                                    -- Override name to avoid conflicts
+                                                                                                                                                                                                                -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -811,12 +811,8 @@ migrationsAndHashChange = zipWith
     -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent )]
 
     -- TYPES
-    -- TODO:
-    -- Domain types
-    -- Permission change for at least one type (one should be sufficient)
-    -- Probably not as important for now:
-    -- Base types
-    -- Shell types
+
+    -- Enum Types
     (createExp, dropExp) <-
       addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
              "DROP TYPE experience;"
@@ -828,6 +824,7 @@ migrationsAndHashChange = zipWith
         (dropExp <> createExp)
       $ ChangeEq [("schemas/public/types/experience", BothButDifferent)]
 
+    -- Composite types
     (createComplex1, dropComplex) <-
       addMig "CREATE TYPE complex AS (a double precision);" "DROP TYPE complex;"
         $ ChangeEq [("schemas/public/types/complex", OnlyRight)]
@@ -855,6 +852,7 @@ migrationsAndHashChange = zipWith
             "ALTER TABLE employee DROP COLUMN anycolumn;"
       $ ChangeEq [("schemas/public/tables/employee/cols/anycolumn", OnlyRight)]
 
+    -- Range types
     (createFloatRange1, dropFloatRange) <-
       addMig
           "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);"
@@ -888,7 +886,52 @@ migrationsAndHashChange = zipWith
           , ("schemas/public/routines/floatrange;float8,float8,text", OnlyLeft)
           ]
 
-      -- CRUD
+    -- Domain types
+    addMig_ "CREATE DOMAIN non_empty_text TEXT NOT NULL CHECK (VALUE != '');"
+            "DROP DOMAIN non_empty_text;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", OnlyRight)]
+
+    addMig_ "ALTER DOMAIN non_empty_text SET DEFAULT 'empty';"
+            "ALTER DOMAIN non_empty_text DROP DEFAULT;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text DROP NOT NULL;"
+            "ALTER DOMAIN non_empty_text SET NOT NULL;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    (addTypeCheck, dropTypeCheck) <-
+      addMig
+          "ALTER DOMAIN non_empty_text ADD CONSTRAINT new_constraint CHECK(TRIM(VALUE) != '') NOT VALID;"
+          "ALTER DOMAIN non_empty_text DROP CONSTRAINT new_constraint;"
+        $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text VALIDATE CONSTRAINT new_constraint;"
+            (dropTypeCheck <> addTypeCheck)
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_
+        "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint TO new_constraint_2;"
+        "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint_2 TO new_constraint;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- Change type permissions/ownership.
+    addMig_ "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\""
+            "ALTER DOMAIN non_empty_text OWNER TO postgres;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text OWNER TO postgres"
+            "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\";"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- Granting to one user always grants to the type owner,
+    -- and apparently to PUBLIC too.
+    -- Strangely, it only does this the first time you GRANT!
+    addMig_
+        "GRANT ALL ON DOMAIN non_empty_text TO \"codd-test-user\""
+        "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\"; REVOKE ALL ON DOMAIN non_empty_text FROM postgres; REVOKE ALL ON DOMAIN non_empty_text FROM PUBLIC;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
             "DELETE FROM employee WHERE employee_name='Marcelo'"
       $ ChangeEq []
@@ -981,10 +1024,6 @@ spec = do
                                     emptyDbInfo
             ensureMarceloExists connInfo
  where
-  extractDbCksums = \case
-    ChecksumsNotVerified -> error "checksumsNotVerified internal error in test"
-    ChecksumsDiffer ChecksumsPair { databaseChecksums } -> databaseChecksums
-    ChecksumsMatch cksums -> cksums
   forwardApplyMigs numMigsAlreadyApplied hashBeforeEverything emptyDbInfo =
     foldM
       (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->

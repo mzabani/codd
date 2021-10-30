@@ -1,6 +1,9 @@
 CREATE DOMAIN non_empty_text TEXT NOT NULL CHECK (VALUE != '');
 CREATE DOMAIN non_whitespace_text TEXT NOT NULL CHECK (TRIM(VALUE) != '');
 
+ALTER DOMAIN non_empty_text ADD CONSTRAINT new_constraint CHECK(VALUE != 'empty') NOT VALID;
+GRANT USAGE ON DOMAIN non_empty_text TO codd_low_privilege_user;
+
 CREATE TYPE complex AS (
     a       double precision,
     b       double precision

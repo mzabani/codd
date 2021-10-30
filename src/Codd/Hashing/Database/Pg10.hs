@@ -559,6 +559,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         }
 
     HType ->
+        -- TODO: Base types and shell types
         let ckCols =
                 [ "pg_namespace.nspname"
                 , "pg_type_owner.rolname"
@@ -585,20 +586,20 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 , "pg_range_opclass.opcname"
                 , "pg_range_opclass_nsp.nspname"
                 , "pg_range_opclass_am.amname"
+                , "typacl.permissions"
                 ]
         in
             HashQuery
                 { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
                 , checksumCols  =
                     ckCols
-                        ++ [ "typacl.permissions"
-                           , "ARRAY_TO_STRING(\
+                        ++ [ "ARRAY_TO_STRING(\
               \\n ARRAY_AGG(\
                 \\n pg_attribute.attname || ';' || attribute_type.typname\
                 \   || COALESCE(attribute_coll.collname, '') || ';' || COALESCE(attribute_coll_nsp.nspname, '') ORDER BY pg_attribute.attnum\
               \\n ), ';')"
-                           , "ARRAY_TO_STRING(\
-              \\n ARRAY_AGG(pg_enum.enumlabel::TEXT ORDER BY pg_enum.enumsortorder), ';')"
+                           , "ARRAY_TO_STRING(ARRAY_AGG(pg_enum.enumlabel::TEXT ORDER BY pg_enum.enumsortorder), ';')"
+                           , "ARRAY_TO_STRING(ARRAY_AGG(pg_constraint.convalidated || ';' || pg_constraint.conname || ';' || pg_get_constraintdef(pg_constraint.oid) ORDER BY pg_constraint.conname), ';')"
                            ]
                 , fromTable     = "pg_catalog.pg_type"
                 , joins         =
@@ -615,16 +616,17 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                        "\nLEFT JOIN LATERAL "
                     <> aclArrayTbl allRoles "pg_type.typacl"
                     <> " typacl ON TRUE"
-                    -- Joins for attributes of composite types (I think our support for composite types is complete)
-                    <> "\nLEFT JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_class_rel.oid\
+                    <>
+-- Joins for attributes of composite types
+                       "\nLEFT JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_class_rel.oid\
 \\nLEFT JOIN pg_catalog.pg_type attribute_type ON attribute_type.oid=pg_attribute.atttypid\
 \\nLEFT JOIN pg_catalog.pg_collation attribute_coll ON attribute_coll.oid=pg_attribute.attcollation\
 \\nLEFT JOIN pg_catalog.pg_namespace attribute_coll_nsp ON attribute_coll_nsp.oid=attribute_coll.collnamespace"
                     <>
--- Joins for enum types (I think our support for enums is complete)
+-- Joins for enum types
                        "\nLEFT JOIN pg_catalog.pg_enum ON pg_enum.enumtypid=pg_type.oid"
                     <>
--- Joins for range types.
+-- Joins for range types
                        "\nLEFT JOIN pg_catalog.pg_range ON pg_type.oid=pg_range.rngtypid\
 \\nLEFT JOIN pg_catalog.pg_type pg_range_subtype ON pg_range_subtype.oid=pg_range.rngsubtype\
 \\nLEFT JOIN pg_catalog.pg_collation pg_range_collation ON pg_range_collation.oid=pg_range.rngcollation\
@@ -636,6 +638,9 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
 \\nLEFT JOIN pg_catalog.pg_opclass pg_range_opclass ON pg_range_opclass.oid=pg_range.rngsubopc\
 \\nLEFT JOIN pg_catalog.pg_namespace pg_range_opclass_nsp ON pg_range_opclass_nsp.oid=pg_range_opclass.opcnamespace\
 \\nLEFT JOIN pg_catalog.pg_am pg_range_opclass_am ON pg_range_opclass_am.oid=pg_range_opclass.opcmethod"
+                    <>
+-- Joins for domain types
+                       "\nLEFT JOIN pg_catalog.pg_constraint ON pg_constraint.contypid=pg_type.oid"
                 , nonIdentWhere =
                     Just
                 -- Postgres creates an array type for each user-defined type and one type
@@ -654,7 +659,6 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                                                    (DB.Only schemaName)
                 , groupByCols   = ckCols
                                       ++ [ "pg_type.typname"
-                                         , "typacl.permissions"
                                          , "pg_type.typelem"
                                          , "pg_type.typlen"
                                          ]
