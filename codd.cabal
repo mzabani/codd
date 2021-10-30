@@ -1,10 +1,10 @@
-cabal-version: 2.0
+cabal-version: 1.12
 
 -- This file has been generated from package.yaml by hpack version 0.34.3.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a70d980371886e9809c5c49c25ee544b766f1310ff9a40c389a6dff56c7855eb
+-- hash: 3128b07f54768665270c1c72055f8f38c5a4dc5ec667b0ca04cc7f8e9b64151b
 
 name:           codd
 version:        0.1.0.0
@@ -122,8 +122,6 @@ test-suite codd-test
       test
   default-extensions: BangPatterns DeriveAnyClass DeriveFunctor DeriveGeneric DerivingStrategies LambdaCase FlexibleContexts FlexibleInstances GADTs GeneralizedNewtypeDeriving MultiParamTypeClasses NamedFieldPuns OverloadedStrings TypeFamilies RankNTypes RecordWildCards ScopedTypeVariables StandaloneDeriving TupleSections TypeApplications TypeFamilyDependencies ViewPatterns
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N
-  build-tools:
-      hspec-discover
   build-depends:
       QuickCheck
     , aeson
