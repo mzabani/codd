@@ -543,8 +543,8 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "coll_owner_role.rolname"
 
                           -- Read more about collation versions in DATABASE-EQUALITY.md
-            , "collversion"
-            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+            -- , "collversion"
+            -- , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
             ]
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =

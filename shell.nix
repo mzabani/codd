@@ -2,7 +2,7 @@ let
     pkgs = import ./nix/nixpkgs.nix;
     hsPkgs = import ./default.nix { inherit pkgs; };
 
-    postgres-service = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_13; inherit pkgs; wipeCluster = false; };
+    postgres-service = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_12; inherit pkgs; wipeCluster = false; };
 
 in
     hsPkgs.shellFor {
