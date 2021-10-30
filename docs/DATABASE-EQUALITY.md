@@ -30,18 +30,19 @@ This is not currently the case, may not be entirely possible and some decisions 
 - Row Level Security
 - Collations (with _important caveats_)
 - Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions
+- Composite, domain, enum and range types  
 - Database encoding and its `default_transaction_*` settings
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
-- Types
 - Full-text dictionaries
+- Base and shell types
 - Extensions
 - Partitioning
 - Foreign Servers
 - Others
 
-**The final word** on what _codd_ checksums can be found in an automated test at _HashingSpec.hs_ and the implementation in the _Pg10.hs_, _Pg11.hs_, _Pg12.hs_, _..._ files.
+**The final word** on what _codd_ checksums can be found in an automated test at _HashingSpec.hs_ and in the implementation in the _Pg10.hs_, _Pg11.hs_, _Pg12.hs_, _..._ files.
 
 Checksumming every possible object is a top priority of _codd_, so if something's missing or not behaving as intended, please file a bug report.  
 

@@ -28,6 +28,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
+                                                , parseSqlMigrationSimpleWorkflow
                                                 , parsedSqlText
                                                 , toMigrationTimestamp
                                                 )
@@ -98,13 +99,18 @@ migrationsAndHashChange = zipWith
   (\(MU doSql undoSql, c) i ->
     ( MU
       (AddedSqlMigration
-        SqlMigration { migrationName       = show i <> "-migration.sql"
-                     , nonDestructiveSql   = Just $ mkValidSql doSql
-                     , nonDestructiveForce = True
-                     , nonDestructiveInTxn = True
-                     , destructiveSql      = Nothing
-                     , destructiveInTxn    = True
-                     }
+        (let
+           mig = either
+             (error "Could not parse SQL migration")
+             id
+             (parseSqlMigrationSimpleWorkflow
+               "1900-01-01T00:00:00Z-migration.sql"
+               doSql
+             )
+         in  mig {
+                                                                                                                                                                                                                -- Override name to avoid conflicts
+                   migrationName = show i <> "-migration.sql" }
+        )
         (getIncreasingTimestamp i)
       )
       undoSql
@@ -118,10 +124,8 @@ migrationsAndHashChange = zipWith
       -- MISSING:
       -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
       -- EXCLUSION CONSTRAINTS
-      -- COLLATIONS
       -- EXTENSIONS
       -- PARTITIONING
-      -- TYPES
       -- LANGUAGES
       -- FOREIGN SERVERS
       -- DOMAINS
@@ -806,7 +810,128 @@ migrationsAndHashChange = zipWith
     -- Deterministic collations were introduced in Pg 12..
     -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent )]
 
-      -- CRUD
+    -- TYPES
+
+    -- Enum Types
+    (createExp, dropExp) <-
+      addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
+             "DROP TYPE experience;"
+        $ ChangeEq [("schemas/public/types/experience", OnlyRight)]
+
+    addMig_
+        "-- codd: no-txn\n\
+            \ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
+        (dropExp <> createExp)
+      $ ChangeEq [("schemas/public/types/experience", BothButDifferent)]
+
+    -- Composite types
+    (createComplex1, dropComplex) <-
+      addMig "CREATE TYPE complex AS (a double precision);" "DROP TYPE complex;"
+        $ ChangeEq [("schemas/public/types/complex", OnlyRight)]
+    addMig_ "ALTER TYPE complex ADD ATTRIBUTE b double precision;"
+            "ALTER TYPE complex DROP ATTRIBUTE b"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_
+        "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE text;"
+        "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE double precision;"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_
+        "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE new_collation;"
+        "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE \"default\";"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    addMig_ "ALTER TYPE complex ADD ATTRIBUTE c employee;"
+            "ALTER TYPE complex DROP ATTRIBUTE c;"
+      $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+
+    -- We don't want the type to change when the table changes
+    -- because it'd be unnecessarily verbose.
+    addMig_ "ALTER TABLE employee ADD COLUMN anycolumn TEXT;"
+            "ALTER TABLE employee DROP COLUMN anycolumn;"
+      $ ChangeEq [("schemas/public/tables/employee/cols/anycolumn", OnlyRight)]
+
+    -- Range types
+    (createFloatRange1, dropFloatRange) <-
+      addMig
+          "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);"
+          "DROP TYPE floatrange;"
+        $ ChangeEq
+            [ ("schemas/public/types/floatrange"                 , OnlyRight)
+        -- Two constructor functions created by PG too:
+            , ("schemas/public/routines/floatrange;float8,float8", OnlyRight)
+            , ( "schemas/public/routines/floatrange;float8,float8,text"
+              , OnlyRight
+              )
+            ]
+
+    addMig_
+      "CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
+      "DROP FUNCTION time_subtype_diff"
+      SomeChange
+
+    -- Change of subtype
+    addMig_
+        (dropFloatRange
+        <> "CREATE TYPE floatrange AS RANGE (subtype = time,subtype_diff = time_subtype_diff);"
+        )
+        (dropFloatRange <> createFloatRange1)
+      $ ChangeEq
+          [ ("schemas/public/types/floatrange", BothButDifferent)
+          -- Constructor functions:
+          , ("schemas/public/routines/floatrange;time,time"         , OnlyRight)
+          , ("schemas/public/routines/floatrange;time,time,text"    , OnlyRight)
+          , ("schemas/public/routines/floatrange;float8,float8"     , OnlyLeft)
+          , ("schemas/public/routines/floatrange;float8,float8,text", OnlyLeft)
+          ]
+
+    -- Domain types
+    addMig_ "CREATE DOMAIN non_empty_text TEXT NOT NULL CHECK (VALUE != '');"
+            "DROP DOMAIN non_empty_text;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", OnlyRight)]
+
+    addMig_ "ALTER DOMAIN non_empty_text SET DEFAULT 'empty';"
+            "ALTER DOMAIN non_empty_text DROP DEFAULT;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text DROP NOT NULL;"
+            "ALTER DOMAIN non_empty_text SET NOT NULL;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    (addTypeCheck, dropTypeCheck) <-
+      addMig
+          "ALTER DOMAIN non_empty_text ADD CONSTRAINT new_constraint CHECK(TRIM(VALUE) != '') NOT VALID;"
+          "ALTER DOMAIN non_empty_text DROP CONSTRAINT new_constraint;"
+        $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text VALIDATE CONSTRAINT new_constraint;"
+            (dropTypeCheck <> addTypeCheck)
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_
+        "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint TO new_constraint_2;"
+        "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint_2 TO new_constraint;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- Change type permissions/ownership.
+    addMig_ "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\""
+            "ALTER DOMAIN non_empty_text OWNER TO postgres;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    addMig_ "ALTER DOMAIN non_empty_text OWNER TO postgres"
+            "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\";"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- Granting to one user always grants to the type owner,
+    -- and apparently to PUBLIC too.
+    -- Strangely, it only does this the first time you GRANT!
+    addMig_
+        "GRANT ALL ON DOMAIN non_empty_text TO \"codd-test-user\""
+        "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\"; REVOKE ALL ON DOMAIN non_empty_text FROM postgres; REVOKE ALL ON DOMAIN non_empty_text FROM PUBLIC;"
+      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+
+    -- CRUD
     addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
             "DELETE FROM employee WHERE employee_name='Marcelo'"
       $ ChangeEq []
@@ -899,10 +1024,6 @@ spec = do
                                     emptyDbInfo
             ensureMarceloExists connInfo
  where
-  extractDbCksums = \case
-    ChecksumsNotVerified -> error "checksumsNotVerified internal error in test"
-    ChecksumsDiffer ChecksumsPair { databaseChecksums } -> databaseChecksums
-    ChecksumsMatch cksums -> cksums
   forwardApplyMigs numMigsAlreadyApplied hashBeforeEverything emptyDbInfo =
     foldM
       (\(hashSoFar, AccumChanges appliedMigsAndCksums, hundo) (MU nextMig undoSql, expectedChanges) ->

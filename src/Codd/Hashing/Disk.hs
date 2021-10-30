@@ -86,17 +86,17 @@ instance DbDiskObj DbHashes where
 instance DbDiskObj RoleHash where
     appr (RoleHash roleName roleHash) _ = simpleDbDiskObj roleName roleHash
 instance DbDiskObj SchemaHash where
-    appr (SchemaHash _schemaName schemaHash tables views routines seqs colls) frec ffile
+    appr (SchemaHash _schemaName schemaHash tables views routines seqs colls types) frec ffile
         = do
-            let mkpath p = p
-            x    <- ffile (mkpath "objhash") schemaHash
+            x    <- ffile "objhash" schemaHash
             tbls <- forM (Map.toList tables) $ \(tableName, table) ->
                 frec ("tables" </> mkPathFrag tableName) table
-            vs <- forM (Map.elems views) $ frec (mkpath "views")
-            rs <- forM (Map.elems routines) $ frec (mkpath "routines")
-            ss <- forM (Map.elems seqs) $ frec (mkpath "sequences")
-            cs <- forM (Map.elems colls) $ frec (mkpath "collations")
-            pure $ x : tbls ++ vs ++ rs ++ ss ++ cs
+            vs <- forM (Map.elems views) $ frec "views"
+            rs <- forM (Map.elems routines) $ frec "routines"
+            ss <- forM (Map.elems seqs) $ frec "sequences"
+            cs <- forM (Map.elems colls) $ frec "collations"
+            ts <- forM (Map.elems types) $ frec "types"
+            pure $ x : tbls ++ vs ++ rs ++ ss ++ cs ++ ts
 
 instance DbDiskObj TableHash where
     appr (TableHash _tblName tblHash columns constraints triggers policies indexes) frec ffile
@@ -133,7 +133,8 @@ instance DbDiskObj SequenceHash where
 instance DbDiskObj CollationHash where
     appr (CollationHash collName collHash) _ =
         simpleDbDiskObj collName collHash
-
+instance DbDiskObj TypeHash where
+    appr (TypeHash typeName typeHash) _ = simpleDbDiskObj typeName typeHash
 
 toFiles :: DbHashes -> [(FilePath, ObjHash)]
 toFiles = sortOn fst . frec
@@ -188,12 +189,14 @@ readSchemaHash dir =
         <*> readMultiple (dir </> "routines")   readRoutine
         <*> readMultiple (dir </> "sequences")  readSequence
         <*> readMultiple (dir </> "collations") readCollation
+        <*> readMultiple (dir </> "types")      readType
 
 readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableHash
 readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewHash
 readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineHash
 readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceHash
 readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationHash
+readType :: (MonadError Text m, MonadIO m) => FilePath -> m TypeHash
 readTable dir =
     TableHash (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
@@ -209,6 +212,7 @@ readView = simpleObjHashFileRead ViewHash
 readRoutine = simpleObjHashFileRead RoutineHash
 readSequence = simpleObjHashFileRead SequenceHash
 readCollation = simpleObjHashFileRead CollationHash
+readType = simpleObjHashFileRead TypeHash
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
