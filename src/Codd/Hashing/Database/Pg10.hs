@@ -337,8 +337,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 }
     HRoutine ->
         let nonAggCols =
-                [ "pg_roles.rolname"
-                , "pg_language.lanname"
+                [ "pg_language.lanname"
                 , "prosecdef"
                 , "proleakproof"
                 , "proisstrict"
@@ -359,6 +358,21 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
+                -- Problem:
+                -- - Postgresql creates constructor functions for range types
+                --   under ownership of the database admin. This makes things tricky
+                --   for cloud SQL and forces users to replicate the name of the DB
+                --   superuser locally. Let's consider documenting this and ignoring
+                --   the function's owner if this is a range constructor function.
+                -- - To make matters worse, types are created under the right owner
+                --   and users _can_ change ownership of the constructor functions.
+                -- - Yet another problem is that only the superuser can change ownership
+                --   of these functions, and some users might not want to run migrations
+                --   as the superuser.
+                -- Thus, we include rolname and add this to the documentation, suggesting
+                -- users make the superuser's name the same locally or remember to
+                -- alter ownership and run migrations as the superuser.
+                -- , "pg_roles.rolname"
                 ]
         in
             HashQuery
