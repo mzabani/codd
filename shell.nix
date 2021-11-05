@@ -33,8 +33,10 @@ in
             source scripts/source-env.sh .env
             ${postgres-service}/bin/init-postgres
             echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
-            echo You just might have to run 'codd up' first to create database '$PGDATABASE'.
+            echo You just might have to run 'codd up' first to create database $PGDATABASE.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
+
+            # Test with "quotes"
 
             alias codd='cabal run -O0 codd --'
         '';
