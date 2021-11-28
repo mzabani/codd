@@ -19,7 +19,7 @@ in
         # You might want some extra tools in the shell (optional).
 
         # Some common tools can be added with the `tools` argument
-        tools = { cabal = "3.2.0.0"; hlint = "2.2.11"; haskell-language-server = "latest"; };
+        tools = { cabal = "3.2.0.0"; hlint = "2.2.11"; };
         # See overlays/tools.nix for more details
 
         # Some you may need to get some other way.
@@ -38,10 +38,9 @@ in
             init-postgres
 
             echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
-            echo You just might have to run ./scripts/create-dev-db.sh and then 'codd up' first to create database $PGDATABASE.
+            echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-            alias codd='cabal run -O0 codd --'
-            export PATH="$PATH:scripts"
+            export PATH="$PATH:scripts/path"
         '';
     }

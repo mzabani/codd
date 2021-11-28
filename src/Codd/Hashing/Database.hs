@@ -17,7 +17,7 @@ import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( Include(..)
                                                 , SqlRole(..)
                                                 , SqlSchema(..)
-                                                , alsoInclude
+                                                , alsoInclude, ChecksumAlgo
                                                 )
 import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( MonadLogger
@@ -70,7 +70,7 @@ instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv
-  = (PgVersion, DB.Connection, Include SqlSchema, Include SqlRole, Bool)
+  = (PgVersionHasher, DB.Connection, Include SqlSchema, Include SqlRole, ChecksumAlgo, Bool)
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
@@ -82,7 +82,7 @@ data SameQueryFormatFetch = SameQueryFormatFetch
   }
 
 instance DataSource HaxlEnv HashReq where
-  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, hashedChecksums) =
+  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums) =
     SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
@@ -126,7 +126,7 @@ instance DataSource HaxlEnv HashReq where
           [1 ..]
           [ ( hobj
             , (schemaName, tblName)
-            , hashQueryFor allRoles allSchemas schemaName tblName hobj
+            , hashQueryFor allRoles allSchemas checksumAlgo schemaName tblName hobj
             , r
             )
           | BlockedFetch (GetHashesReq hobj schemaName tblName) r <-
@@ -185,9 +185,10 @@ instance DataSource HaxlEnv HashReq where
               allResults
         forM_ mergedResults $ uncurry putSuccess
 
-type PgVersion
+type PgVersionHasher
   =  Include SqlRole
   -> Include SqlSchema
+  -> ChecksumAlgo
   -> Maybe ObjName
   -> Maybe ObjName
   -> HashableObject
@@ -225,7 +226,7 @@ readHashesFromDatabaseWithSettings
   => CoddSettings
   -> DB.Connection
   -> m DbHashes
-readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, extraRolesToHash, hashedChecksums } conn
+readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
   = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
@@ -243,22 +244,26 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       checksumAlgo
                                        hashedChecksums
           11 -> readHashesFromDatabase Pg11.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       checksumAlgo
                                        hashedChecksums
           12 -> readHashesFromDatabase Pg12.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       checksumAlgo
                                        hashedChecksums
           -- Postgres 13 doesn't seem to have any hashable new features compared to 12
           13 -> readHashesFromDatabase Pg12.hashQueryFor
                                        conn
                                        schemasToHash
                                        rolesToHash
+                                       checksumAlgo
                                        hashedChecksums
           v
             | v <= 13 -> error
@@ -273,20 +278,22 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
                                      conn
                                      schemasToHash
                                      rolesToHash
+                                     checksumAlgo
                                      hashedChecksums
 
 readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
-  => PgVersion
+  => PgVersionHasher
   -> DB.Connection
   -> Include SqlSchema
   -> Include SqlRole
+  -> ChecksumAlgo 
   -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn allSchemas allRoles hashedChecksums = do
+readHashesFromDatabase pgVer conn allSchemas allRoles checksumAlgo hashedChecksums = do
   let stateStore = stateSet UserState{} stateEmpty
   env0 <- liftIO
-    $ initEnv stateStore (pgVer, conn, allSchemas, allRoles, hashedChecksums)
+    $ initEnv stateStore (pgVer, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
   liftIO $ runHaxl env0 $ do
     allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
     roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing

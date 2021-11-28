@@ -11,7 +11,8 @@ import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Parsing                   ( AddedSqlMigration
                                                 , parseMigrationTimestamp
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow(..)
+import           Codd.Types                     ( ChecksumAlgo (..)
+                                                , DeploymentWorkflow(..)
                                                 , Include(..)
                                                 , RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
@@ -64,6 +65,8 @@ data CoddSettings = CoddSettings
     -- ^ The Retry Policy to be used when applying failing migrations.
     , txnIsolationLvl     :: TxnIsolationLvl
     -- ^ Transaction isolation level to be used when applying migrations.
+    , checksumAlgo :: ChecksumAlgo
+    -- ^ Fine tuning that changes the checksum algorithm.
     , hashedChecksums     :: Bool
     -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
     -- by setting this to False.
@@ -162,6 +165,13 @@ txnIsolationLvlParser =
         <|> string "read uncommitted"
         *>  pure ReadUncommitted
 
+checksumAlgoParser :: Parser ChecksumAlgo
+checksumAlgoParser =
+    string "strict-collations"
+        *>  pure StrictCollations
+        <|> string ""
+        *>  pure LaxCollations
+
 readEnv :: MonadIO m => String -> m Text
 readEnv var =
     maybe (error $ "Could not find environment variable '" ++ var ++ "'")
@@ -222,6 +232,9 @@ getCoddSettings = do
     txnIsolationLvl <- parseEnv DbDefault
                                 (parseVar txnIsolationLvlParser)
                                 "CODD_TXN_ISOLATION"
+    checksumAlgo <- parseEnv LaxCollations 
+                                (parseVar checksumAlgoParser)
+                                "CODD_CHECKSUM_ALGO"
     pure CoddSettings { dbName              = appDbName
                       , superUserConnString = adminConnInfo
                       , sqlMigrations       = Left sqlMigrationPaths
@@ -231,6 +244,7 @@ getCoddSettings = do
                       , extraRolesToHash    = extraRolesToHash
                       , retryPolicy         = retryPolicy
                       , txnIsolationLvl     = txnIsolationLvl
+                      , checksumAlgo = checksumAlgo
                       , hashedChecksums     = True
                       }
 

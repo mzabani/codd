@@ -28,7 +28,7 @@
             else
                 echo All good, initializing postgres.
                 ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
-                ${postgres}/bin/pg_ctl start
+                ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
             fi
             '' else ""}
             ''

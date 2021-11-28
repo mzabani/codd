@@ -13,7 +13,8 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( execvoid_
                                                 , query
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow(..)
+import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , DeploymentWorkflow(..)
                                                 , Include(..)
                                                 , TxnIsolationLvl(..)
                                                 , singleTryPolicy
@@ -93,6 +94,7 @@ testCoddSettings migs = do
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
         , retryPolicy         = singleTryPolicy
         , txnIsolationLvl     = DbDefault
+        , checksumAlgo = LaxCollations
         , hashedChecksums     = True
         }
 

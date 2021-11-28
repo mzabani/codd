@@ -1,5 +1,6 @@
 module Codd.Types
     ( SqlFilePath(..)
+    , ChecksumAlgo(..)
     , DeploymentWorkflow(..)
     , SqlRole(..)
     , SqlSchema(..)
@@ -32,6 +33,8 @@ data RetryPolicy = RetryPolicy Int RetryBackoffPolicy
     deriving stock (Show, Eq)
 
 data TxnIsolationLvl = DbDefault | Serializable | RepeatableRead | ReadCommitted | ReadUncommitted deriving stock (Show, Eq)
+
+data ChecksumAlgo = StrictCollations | LaxCollations
 
 -- | A Retry Policy that tries at most 3 times (at most 2 retries) with an exponential backoff with
 -- base time of 1 second. It needs not be a reasonable policy for any workload,

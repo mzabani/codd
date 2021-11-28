@@ -11,7 +11,8 @@ import           Codd.Hashing.Database.SqlGen   ( includeSql
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
-import           Codd.Types                     ( Include
+import           Codd.Types                     ( ChecksumAlgo (..)
+                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
@@ -153,11 +154,12 @@ pgClassHashQuery allRoles schemaName = HashQuery
 hashQueryFor
     :: Include SqlRole
     -> Include SqlSchema
+    -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas schemaName tableName = \case
+hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
                 ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
@@ -555,11 +557,14 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
             , "collcollate"
             , "collctype"
             , "coll_owner_role.rolname"
-
-                          -- Read more about collation versions in DATABASE-EQUALITY.md
-            -- , "collversion"
-            -- , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
-            ]
+            ] ++
+                case checksumAlgo of
+                    LaxCollations  -> []
+                    StrictCollations  -> [
+                        -- Read more about collation checksumming in DATABASE-EQUALITY.md
+                        "collversion"
+                        , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+                        ]
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \
