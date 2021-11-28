@@ -11,6 +11,9 @@ This is not currently the case, may not be entirely possible and some decisions 
     - [Delayed effect in pg_catalog](#delayed-effect-in-pg_catalog)
     - [System-dependent collations in the System Catalog Schema](#system-dependent-collations-in-the-system-catalog-schema)
     - [System libraries and collations](#system-libraries-and-collations)
+  - [Interesting stuff](#interesting-stuff)
+    - [Array types](#array-types)
+    - [Row types](#row-types)
 
 <!-- vscode-markdown-toc-config
 	numbering=false
@@ -81,11 +84,15 @@ The collation might exist in the development database but might not in the produ
 
 One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a subset of production's collations, _codd_ only does equality checks at the moment.
 
-Our current recommendation is to create any collations you rely on in your app's schema.
+Our current recommendation is to create any collations you rely on in your app's schema and always use them schema-qualified.
 
 ### System libraries and collations
 
-This section is more of the informative kind. This is handled by _codd_ in a way that is likely what you expect.
+**Important:** _codd_'s default decision is to relax collation checksums, which could mean collations behave differently even when checksums match. The reason for that is that collations are affected by the specific version of native libraries used to compile postgres, which are _really_ hard to match across different machines, particularly if you're using a cloud provider.
+
+The following paragraphs describe strict mode, which you can enable by setting the environment variable `CODD_CHECKSUM_ALGO="strict-collations"` to make _codd_ check even the versions of system libraries collations are implemented with. Even minor version automatic upgrades of postgres can make checksums differ in this mode.
+
+---------------------------
 
 Collations are implemented by calling into system libraries such as _libc_ or _icu_. This means different binaries of the same PostgreSQL version can be linked to different versions of such libraries, which can lead to different collation behavior.
 It is possible to detect when versioned _icu_ or _libc_ provided collations are running in a postgres server linked to different versions of these libraries than the one collations were created with, because postgres will emit warnings like this one:
@@ -100,3 +107,17 @@ select oid, collname, collprovider, collversion AS created_with_version, pg_coll
 ```
 
 The decision made in _codd_ is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
+
+## Interesting stuff
+
+This section contains decisions that probably behave the way you would expect, yet might surprise you a little if you pay attention to details. It is not a necessary read but might answer some of your questions.
+
+### Array types
+
+For every user defined type, postgres creates an array type derived from it. This means if you create a type called `complex`, postgres will create one named `complex[]` (curiously the internal name that you find in the catalog is actually `_complex`). You can read about this in <https://www.postgresql.org/docs/10/sql-createtype.html>.
+
+Because postgres _always_ does this we've decided in _codd_ **not to include array types in checksums**. Existence of a type implies existence of an array type derived from it, and since the former is checksummed any differences will be detected. Array types cannot be dropped because of dependencies, so any two postgres clusters with a type `sometype` that are the same must contain a type `sometype[]` that is also the same.
+
+### Row types
+
+For every table and view, a composite/row type is created automatically by postgres with a shape that represents the created relation. Because _codd_ checksums tables and views, checksumming these types created in their image would be redundant, and would imply two files being changed for every change to a table or view, which is less than ideal.

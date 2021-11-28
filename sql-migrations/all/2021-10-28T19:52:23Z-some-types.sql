@@ -15,7 +15,8 @@ CREATE TYPE floatrange AS RANGE (
 );
 -- Range constructor functions are created as owned by the database admin,
 -- which is not what we want. However, users may not want to run migrations
--- as the SQL admin.
+-- as the SQL admin, and that's the scenario we want to emulate here
+-- for development purposes, so that we can discover these restrictions.
 -- ALTER ROUTINE floatrange(float8, float8) OWNER TO codd_admin;
 -- ALTER ROUTINE floatrange(float8, float8, text) OWNER TO codd_admin;
 
