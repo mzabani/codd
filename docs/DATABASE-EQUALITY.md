@@ -80,7 +80,7 @@ For an example look at _psql's_ `\dOS+`, pick a collation from `pg_catalog` and 
 SELECT 'abc' < 'abd' COLLATE "chr-x-icu";
 ```
 
-The collation might exist in the development database but might not in the production server, which can make checksums match but queries fail in one server and work in another.
+The collation might exist in the development database but might not in the production server, which can make checksums match but queries fail in one server and work in another, since the `pg_catalog` namespace is not checksummed.
 
 One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a subset of production's collations, _codd_ only does equality checks at the moment.
 
@@ -106,7 +106,7 @@ This means that the version of the _icu_ or _libc_ library a collation was creat
 select oid, collname, collprovider, collversion AS created_with_version, pg_collation_actual_version(oid) AS system_library_version from pg_catalog.pg_collation;
 ```
 
-The decision made in _codd_ is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
+The decision made in _codd_ with **strict-checksums** enabled is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
 
 ## Interesting stuff
 
