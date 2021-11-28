@@ -33,7 +33,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
-import           Codd.Types                     ( singleTryPolicy )
+import           Codd.Types                     ( singleTryPolicy, ChecksumAlgo (StrictCollations) )
 import           Control.Monad                  ( foldM
                                                 , foldM_
                                                 , forM
@@ -108,8 +108,9 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                                                                                                                                                                                                                -- Override name to avoid conflicts
-                   migrationName = show i <> "-migration.sql" }
+                   -- Override name to avoid conflicts
+                   migrationName = show i <> "-migration.sql"
+                  }
         )
         (getIncreasingTimestamp i)
       )
@@ -952,6 +953,31 @@ newtype AccumChanges = AccumChanges [((AddedSqlMigration, DbChange), DbHashes)]
 spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
+    aroundFreshDatabase $ it "Strict and Lax collation hashing differs" $ \emptyTestDbInfo -> do
+      -- It'd be nice to test that different libc/libicu versions make hashes
+      -- change, but I don't know how to do that sanely.
+      -- So we just test the code paths and make sure hashes differ.
+      let strictCollDbInfo = emptyTestDbInfo {
+        checksumAlgo = StrictCollations
+      }
+          createCollMig = AddedSqlMigration
+            (either
+                (error "Could not parse SQL migration")
+                id
+                (parseSqlMigrationSimpleWorkflow
+                  "1900-01-01T00:00:00Z-create-coll.sql"
+                  "CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
+                )
+            )
+            (getIncreasingTimestamp 0)
+      (laxCollHashes, strictCollHashes) <- runStdoutLoggingT $ applyMigrationsNoCheck
+                              (emptyTestDbInfo
+                                  { sqlMigrations = Right [createCollMig]
+                                  }
+                              )
+                              (\conn -> (,) <$> readHashesFromDatabaseWithSettings emptyTestDbInfo conn <*> readHashesFromDatabaseWithSettings strictCollDbInfo conn)
+      laxCollHashes `shouldNotBe` strictCollHashes
+
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
         $ aroundFreshDatabase
