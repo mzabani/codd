@@ -11,7 +11,7 @@ import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Parsing                   ( AddedSqlMigration
                                                 , parseMigrationTimestamp
                                                 )
-import           Codd.Types                     ( ChecksumAlgo (..)
+import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , DeploymentWorkflow(..)
                                                 , Include(..)
                                                 , RetryBackoffPolicy(..)
@@ -65,7 +65,7 @@ data CoddSettings = CoddSettings
     -- ^ The Retry Policy to be used when applying failing migrations.
     , txnIsolationLvl     :: TxnIsolationLvl
     -- ^ Transaction isolation level to be used when applying migrations.
-    , checksumAlgo :: ChecksumAlgo
+    , checksumAlgo        :: ChecksumAlgo
     -- ^ Fine tuning that changes the checksum algorithm.
     , hashedChecksums     :: Bool
     -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
@@ -232,9 +232,9 @@ getCoddSettings = do
     txnIsolationLvl <- parseEnv DbDefault
                                 (parseVar txnIsolationLvlParser)
                                 "CODD_TXN_ISOLATION"
-    checksumAlgo <- parseEnv LaxCollations 
-                                (parseVar checksumAlgoParser)
-                                "CODD_CHECKSUM_ALGO"
+    checksumAlgo <- parseEnv LaxCollations
+                             (parseVar checksumAlgoParser)
+                             "CODD_CHECKSUM_ALGO"
     pure CoddSettings { dbName              = appDbName
                       , superUserConnString = adminConnInfo
                       , sqlMigrations       = Left sqlMigrationPaths
@@ -244,7 +244,7 @@ getCoddSettings = do
                       , extraRolesToHash    = extraRolesToHash
                       , retryPolicy         = retryPolicy
                       , txnIsolationLvl     = txnIsolationLvl
-                      , checksumAlgo = checksumAlgo
+                      , checksumAlgo        = checksumAlgo
                       , hashedChecksums     = True
                       }
 

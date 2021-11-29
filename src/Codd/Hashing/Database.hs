@@ -14,10 +14,11 @@ import           Codd.Hashing.Database.SqlGen   ( interspBy
                                                 )
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
-import           Codd.Types                     ( Include(..)
+import           Codd.Types                     ( ChecksumAlgo
+                                                , Include(..)
                                                 , SqlRole(..)
                                                 , SqlSchema(..)
-                                                , alsoInclude, ChecksumAlgo
+                                                , alsoInclude
                                                 )
 import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( MonadLogger
@@ -70,7 +71,13 @@ instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv
-  = (PgVersionHasher, DB.Connection, Include SqlSchema, Include SqlRole, ChecksumAlgo, Bool)
+  = ( PgVersionHasher
+    , DB.Connection
+    , Include SqlSchema
+    , Include SqlRole
+    , ChecksumAlgo
+    , Bool
+    )
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
@@ -82,8 +89,8 @@ data SameQueryFormatFetch = SameQueryFormatFetch
   }
 
 instance DataSource HaxlEnv HashReq where
-  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums) =
-    SyncFetch combineQueriesWithWhere
+  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
+    = SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
 
@@ -126,7 +133,12 @@ instance DataSource HaxlEnv HashReq where
           [1 ..]
           [ ( hobj
             , (schemaName, tblName)
-            , hashQueryFor allRoles allSchemas checksumAlgo schemaName tblName hobj
+            , hashQueryFor allRoles
+                           allSchemas
+                           checksumAlgo
+                           schemaName
+                           tblName
+                           hobj
             , r
             )
           | BlockedFetch (GetHashesReq hobj schemaName tblName) r <-
@@ -287,25 +299,28 @@ readHashesFromDatabase
   -> DB.Connection
   -> Include SqlSchema
   -> Include SqlRole
-  -> ChecksumAlgo 
+  -> ChecksumAlgo
   -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn allSchemas allRoles checksumAlgo hashedChecksums = do
-  let stateStore = stateSet UserState{} stateEmpty
-  env0 <- liftIO
-    $ initEnv stateStore (pgVer, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
-  liftIO $ runHaxl env0 $ do
-    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
-    roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing
-    schemas       <- dataFetch $ GetHashesReq HSchema Nothing Nothing
-    let
-      dbSettings = case allDbSettings of
-        [(_, h)] -> h
-        _ ->
-          error
-            "More than one database returned from pg_database. Please file a bug."
-    DbHashes dbSettings <$> getSchemaHash schemas <*> pure
-      (listToMap $ map (uncurry RoleHash) roles)
+readHashesFromDatabase pgVer conn allSchemas allRoles checksumAlgo hashedChecksums
+  = do
+    let stateStore = stateSet UserState{} stateEmpty
+    env0 <- liftIO $ initEnv
+      stateStore
+      (pgVer, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
+    liftIO $ runHaxl env0 $ do
+      allDbSettings <- dataFetch
+        $ GetHashesReq HDatabaseSettings Nothing Nothing
+      roles   <- dataFetch $ GetHashesReq HRole Nothing Nothing
+      schemas <- dataFetch $ GetHashesReq HSchema Nothing Nothing
+      let
+        dbSettings = case allDbSettings of
+          [(_, h)] -> h
+          _ ->
+            error
+              "More than one database returned from pg_database. Please file a bug."
+      DbHashes dbSettings <$> getSchemaHash schemas <*> pure
+        (listToMap $ map (uncurry RoleHash) roles)
 
 getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)
 getSchemaHash schemas =

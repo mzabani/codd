@@ -11,7 +11,7 @@ import           Codd.Hashing.Database.SqlGen   ( includeSql
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
-import           Codd.Types                     ( ChecksumAlgo (..)
+import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , Include
                                                 , SqlRole
                                                 , SqlSchema
@@ -553,18 +553,19 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         { objNameCol    = "collname"
         , checksumCols  =
             [ "collprovider"
-            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-            , "collcollate"
-            , "collctype"
-            , "coll_owner_role.rolname"
-            ] ++
-                case checksumAlgo of
-                    LaxCollations  -> []
-                    StrictCollations  -> [
-                        -- Read more about collation checksumming in DATABASE-EQUALITY.md
-                        "collversion"
-                        , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
-                        ]
+                , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+                , "collcollate"
+                , "collctype"
+                , "coll_owner_role.rolname"
+                ]
+                ++ case checksumAlgo of
+                       LaxCollations -> []
+                       StrictCollations ->
+                           [
+                           -- Read more about collation checksumming in DATABASE-EQUALITY.md
+                             "collversion"
+                           , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+                           ]
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \
