@@ -9,16 +9,16 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 **It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
 
 <!-- vscode-markdown-toc -->
-* [Installing Codd](#InstallingCodd)
-	* [1. Docker](#Docker)
-	* [2. Nix](#Nix)
-* [Configuring Codd](#ConfiguringCodd)
-* [Starting out](#Startingout)
-* [Adding a SQL Migration](#AddingaSQLMigration)
-	* [no-txn migrations and more](#no-txnmigrationsandmore)
-* [Start using Codd in an existing database](#StartusingCoddinanexistingdatabase)
-* [Safety considerations](#Safetyconsiderations)
-* [Frequently Asked Questions](#FrequentlyAskedQuestions)
+* [Installing Codd](#installing-codd)
+	* [1. Nix (preferred)](#1-nix-preferred)
+	* [2. Docker](#2-docker)
+* [Configuring Codd](#configuring-codd)
+* [Starting out](#starting-out)
+* [Adding a SQL Migration](#adding-a-sql-migration)
+	* [no-txn migrations and more](#no-txn-migrations-and-more)
+* [Start using Codd in an existing database](#start-using-codd-in-an-existing-database)
+* [Safety considerations](#safety-considerations)
+* [Frequently Asked Questions](#frequently-asked-questions)
 
 <!-- vscode-markdown-toc-config
 	numbering=false
@@ -26,23 +26,23 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 	/vscode-markdown-toc-config -->
 <!-- /vscode-markdown-toc -->
 
-## <a name='InstallingCodd'></a>Installing Codd
+## Installing Codd
 
 We currently provide two installation methods.
 
-### <a name='Docker'></a>1. Docker
-
-We keep up-to-date images of _Codd_ in DockerHub. To run _Codd_ through docker just run `docker run --rm mzabani/codd --help`.
-Invoking _Codd_ this way will require mounting volumes and is certainly more bureaucratic than other installation methods.
-
-### <a name='Nix'></a>2. Nix
+### 1. Nix (preferred)
 
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would.
 
 1. Install Nix if you don't have it yet by using your package manager or running `sh <(curl -L https://nixos.org/nix/install) --daemon` and following its instructions.
 2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _Codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
 
-## <a name='ConfiguringCodd'></a>Configuring Codd
+### 2. Docker
+
+We keep up-to-date images of _Codd_ in DockerHub. To run _Codd_ through docker just run `docker run --rm mzabani/codd --help`.
+Invoking _Codd_ this way will require mounting volumes and is certainly more bureaucratic than other installation methods.
+
+## Configuring Codd
 
 _Codd_ will checksum DB objects to ensure database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects — such as schemas and roles — it will consider, and connection strings for it to connect.
 
@@ -84,7 +84,7 @@ CODD_TXN_ISOLATION=db-default
 CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
 
-## <a name='Startingout'></a>Starting out
+## Starting out
 
 After having configured your .env file and making sure Postgres is reachable run one of these:
 
@@ -98,7 +98,7 @@ $ codd up
 
 After this, you should be able to connect to your newly created Database, "codd-experiments".
 
-## <a name='AddingaSQLMigration'></a>Adding a SQL Migration
+## Adding a SQL Migration
 
 Here's an example of a first migration which creates a non-admin User and a table of employees:
 
@@ -135,7 +135,7 @@ CREATE TABLE employee (
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
 
-### <a name='no-txnmigrationsandmore'></a>no-txn migrations and more
+### no-txn migrations and more
 
 Not all SQL can run inside a transaction. One example is altering `enum` types and using the newly created `enum` values.
 Because of that, you can tell *codd* not to run a migration in a transaction, as is exemplified below:
@@ -150,7 +150,7 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 
 Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
-## <a name='StartusingCoddinanexistingdatabase'></a>Start using Codd in an existing database
+## Start using Codd in an existing database
 
 If you already have a Database and would like to start using _Codd_, here's a guideline to approach the problem. Remember to be very careful if/when making any changes to your Prod DB:
 
@@ -172,7 +172,7 @@ If you already have a Database and would like to start using _Codd_, here's a gu
 12. Before deploying with _codd_, we strongly recommend you run `codd verify-checksums -v` with your environment variables connected to your Production database and make sure checksums match.
 13. In Production, we strongly recommend running `codd up --soft-check` to start with until you get acquainted enough to consider hard-checking. Make sure you read `codd up --help` to better understand your options.
 
-## <a name='Safetyconsiderations'></a>Safety considerations
+## Safety considerations
 
 We recommend following these instructions closely to avoid several problems. Even then, they do not guarantee everything will work smoothly.
 
@@ -182,7 +182,7 @@ We recommend following these instructions closely to avoid several problems. Eve
 - Always run `codd up --hard-check` on CI because it's a good place to be strict.
 - After running `codd up --hard-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --hard-check` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 
-## <a name='FrequentlyAskedQuestions'></a>Frequently Asked Questions
+## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my checksums?
    `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more, but it still seems to lose schema permissions in some cases, for instance. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.

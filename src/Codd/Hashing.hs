@@ -10,7 +10,6 @@ module Codd.Hashing
 import           Codd.Hashing.Database          ( HashReq(..)
                                                 , Haxl
                                                 , HaxlEnv
-                                                , PgVersion
                                                 , QueryInPieces(..)
                                                 , SameQueryFormatFetch(..)
                                                 , State(..)

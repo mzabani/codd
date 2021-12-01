@@ -11,7 +11,8 @@ import           Codd.Hashing.Database.SqlGen   ( includeSql
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
-import           Codd.Types                     ( Include
+import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
@@ -153,11 +154,12 @@ pgClassHashQuery allRoles schemaName = HashQuery
 hashQueryFor
     :: Include SqlRole
     -> Include SqlSchema
+    -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas schemaName tableName = \case
+hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
                 ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
@@ -337,8 +339,7 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 }
     HRoutine ->
         let nonAggCols =
-                [ "pg_roles.rolname"
-                , "pg_language.lanname"
+                [ "pg_language.lanname"
                 , "prosecdef"
                 , "proleakproof"
                 , "proisstrict"
@@ -359,6 +360,21 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
+                -- Problem:
+                -- - Postgresql creates constructor functions for range types
+                --   under ownership of the database admin. This makes things tricky
+                --   for cloud SQL and forces users to replicate the name of the DB
+                --   superuser locally. Let's consider documenting this and ignoring
+                --   the function's owner if this is a range constructor function.
+                -- - To make matters worse, types are created under the right owner
+                --   and users _can_ change ownership of the constructor functions.
+                -- - Yet another problem is that only the superuser can change ownership
+                --   of these functions, and some users might not want to run migrations
+                --   as the superuser.
+                -- Thus, we include rolname and add this to the documentation, suggesting
+                -- users make the superuser's name the same locally or remember to
+                -- alter ownership and run migrations as the superuser.
+                -- , "pg_roles.rolname"
                 ]
         in
             HashQuery
@@ -537,15 +553,19 @@ hashQueryFor allRoles allSchemas schemaName tableName = \case
         { objNameCol    = "collname"
         , checksumCols  =
             [ "collprovider"
-            , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-            , "collcollate"
-            , "collctype"
-            , "coll_owner_role.rolname"
-
-                          -- Read more about collation versions in DATABASE-EQUALITY.md
-            , "collversion"
-            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
-            ]
+                , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
+                , "collcollate"
+                , "collctype"
+                , "coll_owner_role.rolname"
+                ]
+                ++ case checksumAlgo of
+                       LaxCollations -> []
+                       StrictCollations ->
+                           [
+                           -- Read more about collation checksumming in DATABASE-EQUALITY.md
+                             "collversion"
+                           , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+                           ]
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \

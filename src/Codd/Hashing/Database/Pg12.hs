@@ -7,7 +7,8 @@ import qualified Codd.Hashing.Database.Pg11    as Pg11
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
-import           Codd.Types                     ( Include
+import           Codd.Types                     ( ChecksumAlgo
+                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
@@ -15,12 +16,18 @@ import           Codd.Types                     ( Include
 hashQueryFor
     :: Include SqlRole
     -> Include SqlSchema
+    -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas schemaName tableName hobj =
-    let hq = Pg11.hashQueryFor allRoles allSchemas schemaName tableName hobj
+hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
+    let hq = Pg11.hashQueryFor allRoles
+                               allSchemas
+                               checksumAlgo
+                               schemaName
+                               tableName
+                               hobj
     in  case hobj of
             HColumn ->
                 hq { checksumCols = checksumCols hq ++ ["attgenerated"] }

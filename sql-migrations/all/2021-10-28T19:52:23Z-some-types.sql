@@ -13,6 +13,12 @@ CREATE TYPE floatrange AS RANGE (
     subtype = float8,
     subtype_diff = float8mi
 );
+-- Range constructor functions are created as owned by the database admin,
+-- which is not what we want. However, users may not want to run migrations
+-- as the SQL admin, and that's the scenario we want to emulate here
+-- for development purposes, so that we can discover these restrictions.
+-- ALTER ROUTINE floatrange(float8, float8) OWNER TO codd_admin;
+-- ALTER ROUTINE floatrange(float8, float8, text) OWNER TO codd_admin;
 
 SELECT '[1.234, 5.678]'::floatrange;
 
@@ -23,5 +29,7 @@ CREATE TYPE timerange AS RANGE (
     subtype = time,
     subtype_diff = time_subtype_diff
 );
+-- ALTER ROUTINE timerange(time, time) OWNER TO codd_admin;
+-- ALTER ROUTINE timerange(time, time, text) OWNER TO codd_admin;
 
 SELECT '[11:10, 23:00]'::timerange;

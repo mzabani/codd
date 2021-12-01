@@ -1,8 +1,8 @@
 let
     # Fetch the latest haskell.nix and import its default.nix
     haskellNix = import (builtins.fetchTarball {
-        url = "https://github.com/input-output-hk/haskell.nix/archive/72beef11fc6ec32a98f1dd0d4dcd072c89595b43.tar.gz";
-        sha256 = "0ckgssxp43iayp2qn4wf0f06hlfmqwwqvfmak836a7niznj8xz0s";
+        url = "https://github.com/input-output-hk/haskell.nix/archive/c810f3af58d6e93d1459315ae26b8d8e4b5c1f3d.tar.gz";
+        sha256 = "1dbdh8kmxargb9z09lrarbks1fngxc0lhrb13h5rg8xrqaxq9h5q";
     }) {};
 
     # haskell.nix provides access to the nixpkgs pins which are used by our CI,

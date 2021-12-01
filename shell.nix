@@ -2,7 +2,8 @@ let
     pkgs = import ./nix/nixpkgs.nix;
     hsPkgs = import ./default.nix { inherit pkgs; };
 
-    postgres-service = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_13; inherit pkgs; wipeCluster = false; };
+    postgres = pkgs.postgresql_12;
+    postgres-service = import ./nix/postgres-service.nix { postgres = postgres; inherit pkgs; initializePostgres = false; wipeCluster = false; };
 
 in
     hsPkgs.shellFor {
@@ -23,7 +24,7 @@ in
 
         # Some you may need to get some other way.
         buildInputs = with pkgs.haskellPackages;
-            [ ghcid hpack brittany hsPkgs.hspec-discover.components.exes.hspec-discover pkgs.postgresql_13 pkgs.glibcLocales pkgs.cacert ];
+            [ ghcid hpack brittany hsPkgs.hspec-discover.components.exes.hspec-discover postgres pkgs.glibcLocales pkgs.cacert postgres-service ];
 
         # Prevents cabal from choosing alternate plans, so that
         # *all* dependencies are provided by Nix.
@@ -31,11 +32,15 @@ in
 
         shellHook = ''
             source scripts/source-env.sh .env
-            ${postgres-service}/bin/init-postgres
-            echo You should be able to use 'psql' now to connect to a postgres database, independent from any your own system might have provided.
-            echo You just might have to run 'codd up' first to create database '$PGDATABASE'.
+
+            # init-postgres doesn't actually work with direnv. I tried to daemonize starting postgres but was not able
+            # to make it work. See https://github.com/direnv/direnv/issues/755
+            init-postgres
+
+            echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
+            echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
             echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-            alias codd='cabal run -O0 codd --'
+            export PATH="$PATH:scripts/path"
         '';
     }

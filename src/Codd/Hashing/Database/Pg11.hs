@@ -7,7 +7,8 @@ import qualified Codd.Hashing.Database.Pg10    as Pg10
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
-import           Codd.Types                     ( Include
+import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
@@ -15,12 +16,18 @@ import           Codd.Types                     ( Include
 hashQueryFor
     :: Include SqlRole
     -> Include SqlSchema
+    -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas schemaName tableName hobj =
-    let hq = Pg10.hashQueryFor allRoles allSchemas schemaName tableName hobj
+hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
+    let hq = Pg10.hashQueryFor allRoles
+                               allSchemas
+                               checksumAlgo
+                               schemaName
+                               tableName
+                               hobj
     in
         case hobj of
             HTableConstraint -> hq

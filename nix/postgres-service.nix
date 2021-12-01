@@ -1,4 +1,4 @@
-{ postgres, pkgs, wipeCluster }:
+{ postgres, pkgs, initializePostgres ? true, wipeCluster }:
     # wipeCluster=true ensures this is a deterministic derivation (assuming initdb/postgres cluster initialisation is pure,
     # which actually might not be true unless in a pure shell, since e.g. locales are imported from the system)
     let
@@ -22,11 +22,13 @@
             PGCTLSTATUS=$?
             set -e
 
+            ${if initializePostgres then ''
             if [ "$PGCTLSTATUS" -eq "0" ]; then
                 ${echo} Postgres already initialized.
             else
-                echo All good, initializing postgres
+                echo All good, initializing postgres.
                 ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
                 ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
             fi
+            '' else ""}
             ''
