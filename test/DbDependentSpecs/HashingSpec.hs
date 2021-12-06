@@ -110,7 +110,7 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                       -- Override name to avoid conflicts
+                                                                           -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -444,6 +444,31 @@ migrationsAndHashChange = zipWith
       $ ChangeEq
           [("schemas/public/routines/increment;text,int4", BothButDifferent)]
 
+    addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
+            "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
+      $ ChangeEq
+          [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+
+    addMig_ "ALTER FUNCTION increment(text, integer) PARALLEL RESTRICTED;"
+            "ALTER FUNCTION increment(text, integer) PARALLEL UNSAFE;"
+      $ ChangeEq
+          [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+
+    addMig_ "ALTER FUNCTION increment(text, integer) PARALLEL SAFE;"
+            "ALTER FUNCTION increment(text, integer) PARALLEL RESTRICTED;"
+      $ ChangeEq
+          [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+
+    addMig_ "ALTER FUNCTION increment(text, integer) LEAKPROOF;"
+            "ALTER FUNCTION increment(text, integer) NOT LEAKPROOF;"
+      $ ChangeEq
+          [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+
+    -- TODO: SECURITY attribute should be checksummed, but the following fails for some reason.
+    -- addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
+    --         "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
+    --   $ ChangeEq
+    --       [("schemas/public/routines/increment;text,int4", BothButDifferent)]
 
       -- TRIGGERS
     addMig_ "ALTER TABLE employee ADD COLUMN name TEXT"

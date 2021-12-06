@@ -338,7 +338,8 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                           \\n      WHERE NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')) owner_col_order USING (tableid, attnum)"
                 }
     HRoutine ->
-        let nonAggCols =
+        let
+            nonAggCols =
                 [ "pg_language.lanname"
                 , "prosecdef"
                 , "proleakproof"
@@ -360,21 +361,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
                 , "CASE WHEN pg_language.lanispl THEN prosrc END"
-                -- Problem:
-                -- - Postgresql creates constructor functions for range types
-                --   under ownership of the database admin. This makes things tricky
-                --   for cloud SQL and forces users to replicate the name of the DB
-                --   superuser locally. Let's consider documenting this and ignoring
-                --   the function's owner if this is a range constructor function.
-                -- - To make matters worse, types are created under the right owner
-                --   and users _can_ change ownership of the constructor functions.
-                -- - Yet another problem is that only the superuser can change ownership
-                --   of these functions, and some users might not want to run migrations
-                --   as the superuser.
-                -- Thus, we include rolname and add this to the documentation, suggesting
-                -- users make the superuser's name the same locally or remember to
-                -- alter ownership and run migrations as the superuser.
-                -- , "pg_roles.rolname"
+                -- Only include the owner of the function if this
+                -- is not a range type constructor. Read why in DATABASE-EQUALITY.md
+                , "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
                 ]
         in
             HashQuery
@@ -382,12 +371,14 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                 , checksumCols  = nonAggCols
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
-                    "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace"
-                    <> "\nJOIN pg_catalog.pg_roles ON pg_roles.oid=proowner"
-                    <> "\nLEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang"
-                    <> "\nLEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype"
-                    <> "\nLEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)"
-                    <> "\n LEFT JOIN LATERAL "
+                    "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace \
+                 \\n JOIN pg_catalog.pg_roles ON pg_roles.oid=proowner\
+                 \\n LEFT JOIN pg_catalog.pg_depend ON pg_depend.objid=pg_proc.oid\
+                 \\n LEFT JOIN pg_catalog.pg_range ON pg_range.rngtypid=pg_depend.refobjid\
+                 \\n LEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang\
+                 \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
+                 \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
+                 \\n LEFT JOIN LATERAL "
                     <> aclArrayTbl allRoles "proacl"
                     <> "_codd_roles ON TRUE"
                 , nonIdentWhere = Nothing

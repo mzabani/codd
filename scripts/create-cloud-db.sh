@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# This is nearly identical to create-dev-db.sh, with the
+# difference that it uses $PGPASSWORD to create $PGUSER
+# with it. This is necessary because apparently AWS RDS
+# doesn't allow passwordless logins.
+
 set -e
 
 psql -U "$PGSUPERUSER" -d postgres <<EOF
@@ -24,7 +29,7 @@ createdb -U "$PGSUPERUSER" -T template0 -E UTF8 -l en_US.UTF8 "$PGDATABASE"
 
 psql -U "$PGSUPERUSER" -d postgres <<EOF
 DROP ROLE IF EXISTS "$PGUSER";
-CREATE USER "$PGUSER" WITH CREATEROLE;
+CREATE USER "$PGUSER" WITH CREATEROLE PASSWORD '$PGPASSWORD';
 ALTER DATABASE "$PGDATABASE" OWNER TO "$PGUSER";
 GRANT CONNECT ON DATABASE "$PGDATABASE" TO "$PGUSER";
 EOF
