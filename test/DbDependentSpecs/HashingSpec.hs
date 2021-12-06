@@ -33,7 +33,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
-import           Codd.Types                     ( ChecksumAlgo(StrictCollations)
+import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
@@ -110,7 +110,7 @@ migrationsAndHashChange = zipWith
                doSql
              )
          in  mig {
-                                                                           -- Override name to avoid conflicts
+                                                                                                   -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -986,8 +986,11 @@ spec = do
       -- change, but I don't know how to do that sanely.
       -- So we just test the code paths and make sure hashes differ.
           let
-            strictCollDbInfo =
-              emptyTestDbInfo { checksumAlgo = StrictCollations }
+            strictCollDbInfo = emptyTestDbInfo
+              { checksumAlgo = ChecksumAlgo { strictCollations         = True
+                                            , strictRangeCtorOwnership = False
+                                            }
+              }
             createCollMig = AddedSqlMigration
               (either
                 (error "Could not parse SQL migration")
@@ -1007,6 +1010,47 @@ spec = do
                   <*> readHashesFromDatabaseWithSettings strictCollDbInfo conn
               )
           laxCollHashes `shouldNotBe` strictCollHashes
+
+    aroundFreshDatabase
+      $ it "Strict range constructor ownership"
+      $ \emptyTestDbInfo -> do
+          let
+            strictRangeDbInfo = emptyTestDbInfo
+              { checksumAlgo = ChecksumAlgo { strictCollations         = False
+                                            , strictRangeCtorOwnership = True
+                                            }
+              }
+            createMig = AddedSqlMigration
+              (either
+                (error "Could not parse SQL migration")
+                id
+                (parseSqlMigrationSimpleWorkflow
+                  "1900-01-01T00:00:00Z-create-range-and-other-function.sql"
+                  "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi); \
+               \\n CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
+                )
+              )
+              (getIncreasingTimestamp 0)
+          (laxRangeHashes, strictRangeHashes) <-
+            runStdoutLoggingT $ applyMigrationsNoCheck
+              (emptyTestDbInfo { sqlMigrations = Right [createMig] })
+              (\conn ->
+                (,)
+                  <$> readHashesFromDatabaseWithSettings emptyTestDbInfo   conn
+                  <*> readHashesFromDatabaseWithSettings strictRangeDbInfo conn
+              )
+
+          -- The time_subtype_diff function shouldn't have its hash change,
+          -- but the constructors of floatrange should.
+          hashDifferences laxRangeHashes strictRangeHashes
+            `shouldBe` Map.fromList
+                         [ ( "schemas/public/routines/floatrange;float8,float8"
+                           , BothButDifferent
+                           )
+                         , ( "schemas/public/routines/floatrange;float8,float8,text"
+                           , BothButDifferent
+                           )
+                         ]
 
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
