@@ -338,56 +338,52 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                           \\n      WHERE NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')) owner_col_order USING (tableid, attnum)"
                 }
     HRoutine ->
-        let nonAggCols =
+        let
+            nonAggCols =
                 [ "pg_language.lanname"
-                , "prosecdef"
-                , "proleakproof"
-                , "proisstrict"
-                , "proretset"
-                , "provolatile"
-                , "proparallel"
-                , "pronargs"
-                , "pronargdefaults"
-                , "pg_type_rettype.typname"
-                , "proargmodes"
-                , "proargnames"
+                    , "prosecdef"
+                    , "proleakproof"
+                    , "proisstrict"
+                    , "proretset"
+                    , "provolatile"
+                    , "proparallel"
+                    , "pronargs"
+                    , "pronargdefaults"
+                    , "pg_type_rettype.typname"
+                    , "proargmodes"
+                    , "proargnames"
                 -- , "proargdefaults" -- pg_node_tree type (avoid)
-                , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
-                , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
-                , "_codd_roles.permissions"
+                    , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
+                    , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
+                    , "_codd_roles.permissions"
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
                 -- is compiled, so we ignore this column in those cases.
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
-                , "CASE WHEN pg_language.lanispl THEN prosrc END"
-                -- Problem:
-                -- - Postgresql creates constructor functions for range types
-                --   under ownership of the database admin. This makes things tricky
-                --   for cloud SQL and forces users to replicate the name of the DB
-                --   superuser locally. Let's consider documenting this and ignoring
-                --   the function's owner if this is a range constructor function.
-                -- - To make matters worse, types are created under the right owner
-                --   and users _can_ change ownership of the constructor functions.
-                -- - Yet another problem is that only the superuser can change ownership
-                --   of these functions, and some users might not want to run migrations
-                --   as the superuser.
-                -- Thus, we include rolname and add this to the documentation, suggesting
-                -- users make the superuser's name the same locally or remember to
-                -- alter ownership and run migrations as the superuser.
-                -- , "pg_roles.rolname"
-                ]
+                    , "CASE WHEN pg_language.lanispl THEN prosrc END"
+                -- Only include the owner of the function if this
+                -- is not a range type constructor or if strict-range-ctor-ownership
+                -- is enabled. Read why in DATABASE-EQUALITY.md
+                    ]
+                    ++ if strictRangeCtorOwnership checksumAlgo
+                           then ["pg_roles.rolname"]
+                           else
+                               [ "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
+                               ]
         in
             HashQuery
                 { objNameCol    = pronameExpr "pg_proc"
                 , checksumCols  = nonAggCols
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
-                    "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace"
-                    <> "\nJOIN pg_catalog.pg_roles ON pg_roles.oid=proowner"
-                    <> "\nLEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang"
-                    <> "\nLEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype"
-                    <> "\nLEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)"
-                    <> "\n LEFT JOIN LATERAL "
+                    "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace \
+                 \\n JOIN pg_catalog.pg_roles ON pg_roles.oid=proowner\
+                 \\n LEFT JOIN pg_catalog.pg_depend ON pg_depend.objid=pg_proc.oid\
+                 \\n LEFT JOIN pg_catalog.pg_range ON pg_range.rngtypid=pg_depend.refobjid\
+                 \\n LEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang\
+                 \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
+                 \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
+                 \\n LEFT JOIN LATERAL "
                     <> aclArrayTbl allRoles "proacl"
                     <> "_codd_roles ON TRUE"
                 , nonIdentWhere = Nothing
@@ -558,14 +554,14 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                 , "collctype"
                 , "coll_owner_role.rolname"
                 ]
-                ++ case checksumAlgo of
-                       LaxCollations -> []
-                       StrictCollations ->
+                ++ if strictCollations checksumAlgo
+                       then
                            [
                            -- Read more about collation checksumming in DATABASE-EQUALITY.md
                              "collversion"
                            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
                            ]
+                       else []
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \

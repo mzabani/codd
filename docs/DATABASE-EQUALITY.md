@@ -11,6 +11,7 @@ This is not currently the case, may not be entirely possible and some decisions 
     - [Delayed effect in pg_catalog](#delayed-effect-in-pg_catalog)
     - [System-dependent collations in the System Catalog Schema](#system-dependent-collations-in-the-system-catalog-schema)
     - [System libraries and collations](#system-libraries-and-collations)
+    - [Range type constructors' ownership](#range-type-constructors-ownership)
   - [Interesting stuff](#interesting-stuff)
     - [Array types](#array-types)
     - [Row types](#row-types)
@@ -23,7 +24,7 @@ This is not currently the case, may not be entirely possible and some decisions 
 
 ## What does codd checksum?
 
- For a more thorough - but a bit drafty and _not necessarily up to date_ - description of what is checksummed, see [SCHEMA-MAPPINGS.md](SCHEMA-MAPPINGS.md). What follows is an incomplete list of what currently is checksummed, **but be aware** there may be caveats:
+ What follows is an incomplete list of what currently is checksummed, **but be aware** there may be caveats:
 
 - Tables, columns, CHECK constraints, FKs, indexes, and other constraints
 - Indexes
@@ -67,7 +68,7 @@ Database settings are not visible anywhere in `pg_catalog` (as far as the author
 
 The system catalog is a namespace called `pg_catalog` that comes with internal functions, operators, collations, and other database objects native to postgres.
 
-It is always in the search path regardless of the `search_path` setting and its objects take precedence over homonomous objects in other schemas. When you write `SELECT 1+2`, this is effectively the same as using the `+` operator from `pg_catalog`, and could be written as `SELECT 1 OPERATOR(pg_catalog.+) 2`.
+It is always in the search path regardless of the `search_path` setting and its objects take precedence over homonymous objects in other schemas. When you write `SELECT 1+2`, this is effectively the same as using the `+` operator from `pg_catalog`, and could be written as `SELECT 1 OPERATOR(pg_catalog.+) 2`.
 
 The problem is that while this is fine for most things, some objects in the System Catalog are system-dependent. Collations are one such example.
 
@@ -107,6 +108,28 @@ select oid, collname, collprovider, collversion AS created_with_version, pg_coll
 ```
 
 The decision made in _codd_ with **strict-checksums** enabled is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
+
+### Range type constructors' ownership
+
+When range types are created, postgres automatically creates two homonymous functions that build values of the newly created type. Let's call these the two constructors of the range type. For example:
+
+````sql
+    $ CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff     = float8mi);
+    $ SELECT floatrange(0.0, 10.0); -- Creates a range closed on     both ends
+     floatrange
+    ------------
+     [0,10)
+    (1 row)
+    $ SELECT floatrange(0.0, 10.0, '()'); -- Creates a range open on     both ends
+     floatrange
+    ------------
+     [0,10)
+    (1 row)
+````
+
+For some unknown reason - and I couldn't find this documented anywhere - it seems possible that the _owner_ of these constructors varies from one server to another. On my machine I get `postgres` - my local superuser - as the owner of these functions but on AWS RDS I get the user who created the range type, which is what I would've expected locally as well.
+
+So by default _codd_ does not checksum owner of range constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_CHECKSUM_ALGO` environment variable.
 
 ## Interesting stuff
 

@@ -94,7 +94,7 @@ testCoddSettings migs = do
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
         , retryPolicy         = singleTryPolicy
         , txnIsolationLvl     = DbDefault
-        , checksumAlgo        = LaxCollations
+        , checksumAlgo        = ChecksumAlgo False False
         , hashedChecksums     = True
         }
 
