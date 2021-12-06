@@ -341,30 +341,35 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         let
             nonAggCols =
                 [ "pg_language.lanname"
-                , "prosecdef"
-                , "proleakproof"
-                , "proisstrict"
-                , "proretset"
-                , "provolatile"
-                , "proparallel"
-                , "pronargs"
-                , "pronargdefaults"
-                , "pg_type_rettype.typname"
-                , "proargmodes"
-                , "proargnames"
+                    , "prosecdef"
+                    , "proleakproof"
+                    , "proisstrict"
+                    , "proretset"
+                    , "provolatile"
+                    , "proparallel"
+                    , "pronargs"
+                    , "pronargdefaults"
+                    , "pg_type_rettype.typname"
+                    , "proargmodes"
+                    , "proargnames"
                 -- , "proargdefaults" -- pg_node_tree type (avoid)
-                , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
-                , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
-                , "_codd_roles.permissions"
+                    , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
+                    , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
+                    , "_codd_roles.permissions"
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
                 -- is compiled, so we ignore this column in those cases.
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
-                , "CASE WHEN pg_language.lanispl THEN prosrc END"
+                    , "CASE WHEN pg_language.lanispl THEN prosrc END"
                 -- Only include the owner of the function if this
-                -- is not a range type constructor. Read why in DATABASE-EQUALITY.md
-                , "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
-                ]
+                -- is not a range type constructor or if strict-range-ctor-ownership
+                -- is enabled. Read why in DATABASE-EQUALITY.md
+                    ]
+                    ++ if strictRangeCtorOwnership checksumAlgo
+                           then ["pg_roles.rolname"]
+                           else
+                               [ "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
+                               ]
         in
             HashQuery
                 { objNameCol    = pronameExpr "pg_proc"
@@ -549,14 +554,14 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                 , "collctype"
                 , "coll_owner_role.rolname"
                 ]
-                ++ case checksumAlgo of
-                       LaxCollations -> []
-                       StrictCollations ->
+                ++ if strictCollations checksumAlgo
+                       then
                            [
                            -- Read more about collation checksumming in DATABASE-EQUALITY.md
                              "collversion"
                            , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
                            ]
+                       else []
         , fromTable     = "pg_catalog.pg_collation"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles coll_owner_role ON collowner=coll_owner_role.oid \

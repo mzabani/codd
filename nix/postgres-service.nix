@@ -30,5 +30,7 @@
                 ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
                 ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
             fi
-            '' else ""}
+            '' else ''
+            ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
+            ''}
             ''

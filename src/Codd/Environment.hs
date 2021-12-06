@@ -166,11 +166,17 @@ txnIsolationLvlParser =
         *>  pure ReadUncommitted
 
 checksumAlgoParser :: Parser ChecksumAlgo
-checksumAlgoParser =
-    string "strict-collations"
-        *>  pure StrictCollations
-        <|> string ""
-        *>  pure LaxCollations
+checksumAlgoParser = do
+    modifiers <- validModifier `Parsec.sepBy'` char ' '
+    pure ChecksumAlgo
+        { strictCollations         = collations `elem` modifiers
+        , strictRangeCtorOwnership = rangeCtorOwnership `elem` modifiers
+        }
+
+  where
+    collations         = "strict-collations"
+    rangeCtorOwnership = "strict-range-ctor-ownership"
+    validModifier      = string collations <|> string rangeCtorOwnership
 
 readEnv :: MonadIO m => String -> m Text
 readEnv var =
@@ -232,7 +238,7 @@ getCoddSettings = do
     txnIsolationLvl <- parseEnv DbDefault
                                 (parseVar txnIsolationLvlParser)
                                 "CODD_TXN_ISOLATION"
-    checksumAlgo <- parseEnv LaxCollations
+    checksumAlgo <- parseEnv (ChecksumAlgo False False)
                              (parseVar checksumAlgoParser)
                              "CODD_CHECKSUM_ALGO"
     pure CoddSettings { dbName              = appDbName
