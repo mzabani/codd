@@ -107,7 +107,7 @@ This means that the version of the _icu_ or _libc_ library a collation was creat
 select oid, collname, collprovider, collversion AS created_with_version, pg_collation_actual_version(oid) AS system_library_version from pg_catalog.pg_collation;
 ```
 
-The decision made in _codd_ with **strict-checksums** enabled is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
+The decision made in _codd_ with **strict-collations** enabled is to checksum both the _created-with_ version and the _current-library_ version for each collation. Checksumming only _current-library_ versions could trigger version mismatch warnings on one server but not on the other even though checksums match, and checksumming only _created-with_ versions could even lead to different behavior although checksums match.
 
 ### Range type constructors' ownership
 
