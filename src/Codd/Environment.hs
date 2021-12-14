@@ -1,6 +1,5 @@
 module Codd.Environment
     ( CoddSettings(..)
-    , connStringParser
     , getAdminConnInfo
     , getCoddSettings
     , retryPolicyParser
@@ -9,7 +8,9 @@ module Codd.Environment
 
 import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Parsing                   ( AddedSqlMigration
+                                                , connStringParser
                                                 , parseMigrationTimestamp
+                                                , parseWithEscapeCharProper
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , DeploymentWorkflow(..)
@@ -27,10 +28,8 @@ import           Control.Monad                  ( void
                                                 )
 import           Data.Attoparsec.Text           ( Parser
                                                 , char
-                                                , decimal
                                                 , endOfInput
                                                 , parseOnly
-                                                , peekChar
                                                 , skipSpace
                                                 , string
                                                 )
@@ -72,55 +71,10 @@ data CoddSettings = CoddSettings
     -- by setting this to False.
     }
 
--- | Parses a value using backslash as an escape char for any char that matches
--- the supplied predicate. Stops at and does not consume the first predicate-passing
--- char.
-parseWithEscapeChar :: (Char -> Bool) -> Parser Text
-parseWithEscapeChar untilc = do
-    cs       <- Parsec.takeWhile (\c -> c /= '\\' && not (untilc c))
-    nextChar <- peekChar
-    case nextChar of
-        Nothing   -> pure cs
-        Just '\\' -> do
-            void $ char '\\'
-            c    <- Parsec.take 1
-            rest <- parseWithEscapeChar untilc
-            pure $ cs <> c <> rest
-        Just _ -> pure cs
-
--- | Parses a string in the format protocol://username[:password]@host:port/database_name
-connStringParser :: Parser ConnectInfo
-connStringParser = do
-    void $ string "postgres://"
-    usr <- idParser "username"
-    pwd <- (char ':' *> idParser "password") <|> pure ""
-    void $ char '@'
-    host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
-    void $ char ':'
-    port <- decimal <|> fail "Could not find a port in the connection string."
-    void $ char '/'
-    adminDb <- idParser "database"
-    pure ConnectInfo { connectHost     = host
-                     , connectPort     = port
-                     , connectUser     = usr
-                     , connectPassword = pwd
-                     , connectDatabase = adminDb
-                     }
-  where
-    idParser :: String -> Parser String
-    idParser idName = do
-        x <- Text.unpack <$> parseWithEscapeChar (\c -> c == ':' || c == '@')
-        when (x == "")
-            $  fail
-            $  "Could not find a "
-            <> idName
-            <> " in the connection string."
-        pure x
-
 -- | Considers backslash as an espace character for space.
 spaceSeparatedObjNameParser :: Parser [Text]
 spaceSeparatedObjNameParser = do
-    v <- parseWithEscapeChar (== ' ')
+    v <- parseWithEscapeCharProper (== ' ')
     skipSpace
     (endOfInput *> pure [v]) <|> fmap (v :) spaceSeparatedObjNameParser
 

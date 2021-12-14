@@ -1,9 +1,8 @@
 module EnvironmentSpec where
 
-import           Codd.Environment               ( connStringParser
-                                                , retryPolicyParser
-                                                )
+import           Codd.Environment               ( retryPolicyParser )
 import           Codd.Hashing.Types             ( ObjName(..) )
+import           Codd.Parsing                   ( connStringParser )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 )

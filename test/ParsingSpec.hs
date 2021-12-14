@@ -180,7 +180,7 @@ genSql onlySyntacticallyValid = frequency
 
         mapLast :: (a -> a) -> [a] -> [a]
         mapLast _ []       = []
-        mapLast f (x : []) = [f x]
+        mapLast f [x     ] = [f x]
         mapLast f (x : xs) = x : mapLast f xs
 
     -- Optionally remove semi-colon from the last command if it ends with one
@@ -209,13 +209,12 @@ spec = do
               , "CREATE TABLE hello -- Comment\n;"
               ]
         eblks `shouldBe` Right
-          [ (OtherSqlPiece "CREATE TABLE hello;" :| [])
-          , (OtherSqlPiece "CREATE TABLE hello" :| [])
-          , (  OtherSqlPiece "CREATE TABLE hello;"
+          [ OtherSqlPiece "CREATE TABLE hello;" :| []
+          , OtherSqlPiece "CREATE TABLE hello" :| []
+          , OtherSqlPiece "CREATE TABLE hello;"
             :| [WhiteSpacePiece " ", CommentPiece "-- Comment"]
-            )
-          , (OtherSqlPiece "CREATE TABLE hello -- Comment" :| [])
-          , (OtherSqlPiece "CREATE TABLE hello -- Comment\n;" :| [])
+          , OtherSqlPiece "CREATE TABLE hello -- Comment" :| []
+          , OtherSqlPiece "CREATE TABLE hello -- Comment\n;" :| []
           ]
       it "Statement separation boundaries are good"
         $ forAll (listOf1 genSingleSqlStatement)

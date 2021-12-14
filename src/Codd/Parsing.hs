@@ -4,6 +4,7 @@ module Codd.Parsing
   , SqlPiece(..)
   , ParsedSql(..)
   , ParsingOptions(..)
+  , connStringParser
   , isTransactionEndingPiece
   , mapSqlMigration
   , nothingIfEmptyQuery
@@ -13,6 +14,7 @@ module Codd.Parsing
   , parseSqlMigrationBGS
   , parseSqlMigrationSimpleWorkflow
   , parseSqlMigration
+  , parseWithEscapeCharProper
   , parseAddedSqlMigration
   , parseMigrationTimestamp
   , parseSqlPieces
@@ -45,10 +47,10 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , takeWhile1
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
-import           Data.Bifunctor                 ( bimap )
+import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( foldl'
-                                                , sort
+                                                , nub
                                                 )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
@@ -57,10 +59,12 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time.Clock                ( UTCTime(..) )
 import           Data.Time.Format.ISO8601       ( iso8601ParseM )
+import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
+
 
 data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
   deriving stock (Eq, Show)
@@ -86,7 +90,7 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Ord, Eq, Show)
+data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -294,7 +298,7 @@ blockParser :: Parser (BlockType, Text)
 blockParser = do
   (bt, bBegin) <- blockBeginParser
   bRemaining   <- blockInnerContentsParser bt
-  pure $ (bt, bBegin <> bRemaining)
+  pure (bt, bBegin <> bRemaining)
 
 blockParserOfType :: (BlockType -> Bool) -> Parser Text
 blockParserOfType p = do
@@ -305,8 +309,8 @@ blockParserOfType p = do
 blockInnerContentsParser :: BlockType -> Parser Text
 blockInnerContentsParser bt = do
   t <- case bt of
-    SingleQuotedString     -> parseWithEscapeChar (== '\'') -- '' escaping is not to be explicitly implemented, but this parser understands it as two consecutive strings, and that's good enough for now
-    DoubleQuotedIdentifier -> parseWithEscapeChar (== '"') -- "" escaping seems to be the same as above..
+    SingleQuotedString     -> parseWithEscapeCharPreserve (== '\'') -- '' escaping is not to be explicitly implemented, but this parser understands it as two consecutive strings, and that's good enough for now
+    DoubleQuotedIdentifier -> parseWithEscapeCharPreserve (== '"') -- "" escaping seems to be the same as above..
     _                      -> takeWhile (not . isPossibleEndingChar bt)
   done <- atEnd
   if done
@@ -322,17 +326,68 @@ blockInnerContentsParser bt = do
         Just endingQuote -> pure $ t <> endingQuote
 
 -- | Parses a value using backslash as an escape char for any char that matches
--- the supplied predicate. Does not consume the ending char.
-parseWithEscapeChar :: (Char -> Bool) -> Parser Text
-parseWithEscapeChar untilc = do
+-- the supplied predicate. Does not consume the ending char and RETURNS any
+-- backslash escape chars in the result.
+-- Use parseWithEscapeCharProper to exclude the escape chars from the result.
+-- This function is useful if you want the original parsed contents.
+parseWithEscapeCharPreserve :: (Char -> Bool) -> Parser Text
+parseWithEscapeCharPreserve untilc = do
   cs       <- Parsec.takeWhile (\c -> c /= '\\' && not (untilc c))
   nextChar <- peekChar
   case nextChar of
     Just '\\' -> do
       c    <- Parsec.take 2
-      rest <- parseWithEscapeChar untilc
+      rest <- parseWithEscapeCharPreserve untilc
       pure $ cs <> c <> rest
     _ -> pure cs
+
+-- | Parses a value using backslash as an escape char for any char that matches
+-- the supplied predicate. Stops at and does not consume the first predicate-passing
+-- char, and does not include escape chars in the returned value,
+-- as one would expect.
+parseWithEscapeCharProper :: (Char -> Bool) -> Parser Text
+parseWithEscapeCharProper untilc = do
+  cs       <- Parsec.takeWhile (\c -> c /= '\\' && not (untilc c))
+  nextChar <- peekChar
+  case nextChar of
+    Nothing   -> pure cs
+    Just '\\' -> do
+      void $ char '\\'
+      c    <- Parsec.take 1
+      rest <- parseWithEscapeCharProper untilc
+      pure $ cs <> c <> rest
+    Just _ -> pure cs
+
+
+-- | Parses a string in the format protocol://username[:password]@host:port/database_name
+connStringParser :: Parser ConnectInfo
+connStringParser = do
+  void $ string "postgres://"
+  usr <- idParser "username"
+  pwd <- (char ':' *> idParser "password") <|> pure ""
+  void $ char '@'
+  host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
+  void $ char ':'
+  port <- Parsec.decimal
+    <|> fail "Could not find a port in the connection string."
+  void $ char '/'
+  adminDb <- idParser "database"
+  pure ConnectInfo { connectHost     = host
+                   , connectPort     = port
+                   , connectUser     = usr
+                   , connectPassword = pwd
+                   , connectDatabase = adminDb
+                   }
+ where
+  idParser :: String -> Parser String
+  idParser idName = do
+    x <- Text.unpack <$> parseWithEscapeCharProper (\c -> c == ':' || c == '@')
+    when (x == "")
+      $  fail
+      $  "Could not find a "
+      <> idName
+      <> " in the connection string."
+    pure x
 
 optionParser :: Parser SectionOption
 optionParser = do
@@ -343,6 +398,7 @@ optionParser = do
     <|> dest
     <|> inTxn
     <|> noTxn
+    -- <|> customConnString
     <|> fail
           "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
   skipJustSpace
@@ -353,6 +409,7 @@ optionParser = do
   dest    = string "destructive" >> pure (OptDest True)
   inTxn   = string "in-txn" >> pure (OptInTxn True)
   noTxn   = string "no-txn" >> pure (OptInTxn False)
+  -- customConnString = string "connection=" >> OptConnString <$> connStringParser
 
 skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
@@ -363,7 +420,7 @@ coddCommentParser = do
   skipJustSpace
   void $ string "codd:"
   skipJustSpace
-  opts <- optionParser `sepBy1` (char ',')
+  opts <- optionParser `sepBy1` char ','
   endOfLine
   pure opts
 
@@ -400,7 +457,7 @@ splitCoddOpts (p :| ps) = validate $ NE.reverse $ foldl' accum accInit ps
       allPiecesInOrder :: [SqlPiece]
       allPiecesInOrder = mconcat $ NE.toList $ fmap (NE.toList . snd) ls
     in
-      if any id
+      if or
          $ fmap (all (\x -> isWhiteSpacePiece x || isCommentPiece x) . snd) ls
       then
         Left
@@ -411,7 +468,7 @@ splitCoddOpts (p :| ps) = validate $ NE.reverse $ foldl' accum accInit ps
            (zipWith (==) (p : ps) allPiecesInOrder)
         then
           Left
-            $ "A internal error in SQL section splitting happened. Please report this as a bug."
+            "A internal error in SQL section splitting happened. Please report this as a bug."
         else
           Right ls
   accInit = (fromMaybe [] (optsOrNothing p), p :| []) :| []
@@ -460,17 +517,17 @@ migrationParserBGS = do
         "At most two '-- codd: options' section can exist in a Blue-Green-Safe migration."
     Right ((opts1, sql1) :| []) ->
       pure (opts1, WellParsedSql (piecesToText sql1) sql1, Nothing)
-    Right ((opts1, sql1) :| ((opts2, sql2) : [])) -> pure
+    Right ((opts1, sql1) :| [(opts2, sql2)]) -> pure
       ( opts1
       , WellParsedSql (piecesToText sql1) sql1
       , Just (opts2, WellParsedSql (piecesToText sql2) sql2)
       )
 
 parseSqlMigrationSimpleWorkflow :: String -> Text -> Either Text SqlMigration
-parseSqlMigrationSimpleWorkflow name t = bimap Text.pack id migE >>= toMig
+parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
  where
   migE = parseOnly (migrationParserSimpleWorkflow <* endOfInput) t
-  dupOpts (sort -> opts) = any (== True) $ zipWith (==) opts (drop 1 opts)
+  dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe Text
   checkOpts opts
     | isDest opts
@@ -502,10 +559,10 @@ parseSqlMigrationSimpleWorkflow name t = bimap Text.pack id migE >>= toMig
     _        -> Right $ mkMig x
 
 parseSqlMigrationBGS :: String -> Text -> Either Text SqlMigration
-parseSqlMigrationBGS name t = bimap Text.pack id migE >>= toMig
+parseSqlMigrationBGS name t = first Text.pack migE >>= toMig
  where
   migE = parseOnly (migrationParserBGS <* endOfInput) t
-  dupOpts (sort -> opts) = any (== True) $ zipWith (==) opts (drop 1 opts)
+  dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe Text
   checkOpts opts
     | isDest opts && isNonDest opts = Just
@@ -530,10 +587,10 @@ parseSqlMigrationBGS name t = bimap Text.pack id migE >>= toMig
   mkMig mndest mdest = SqlMigration
     { migrationName       = name
     , nonDestructiveSql   = snd <$> mndest
-    , nonDestructiveForce = fromMaybe False (isForce . fst <$> mndest)
-    , nonDestructiveInTxn = fromMaybe True (inTxn . fst <$> mndest)
+    , nonDestructiveForce = maybe False (isForce . fst) mndest
+    , nonDestructiveInTxn = maybe True (inTxn . fst) mndest
     , destructiveSql      = snd <$> mdest
-    , destructiveInTxn    = fromMaybe True (inTxn . fst <$> mdest)
+    , destructiveInTxn    = maybe True (inTxn . fst) mdest
     }
 
   toMig
