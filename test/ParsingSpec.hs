@@ -271,23 +271,25 @@ spec = do
             let parsedMig =
                   parseSqlMigrationSimpleWorkflow "any-name.sql" plainSql
             parsedMig `shouldBe` Right SqlMigration
-              { migrationName       = "any-name.sql"
-              , nonDestructiveSql   = Just $ mkValidSql plainSql -- That's right. Simple mode is just Blue-Green-Safe with force-non-destructive enabled
-              , nonDestructiveForce = True
-              , nonDestructiveInTxn = True
-              , destructiveSql      = Nothing
-              , destructiveInTxn    = True
+              { migrationName            = "any-name.sql"
+              , nonDestructiveSql        = Just $ mkValidSql plainSql -- That's right. Simple mode is just Blue-Green-Safe with force-non-destructive enabled
+              , nonDestructiveForce      = True
+              , nonDestructiveInTxn      = True
+              , destructiveSql           = Nothing
+              , destructiveInTxn         = True
+              , nonDestructiveCustomConn = Nothing
               }
         it "Sql Migration options parsed correctly"
           $ let sql = "-- codd: no-txn\nSOME SQL"
             in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
                   `shouldBe` Right SqlMigration
-                               { migrationName       = "any-name.sql"
-                               , nonDestructiveSql   = Just $ mkValidSql sql
-                               , nonDestructiveForce = True
-                               , nonDestructiveInTxn = False
-                               , destructiveSql      = Nothing
-                               , destructiveInTxn    = True
+                               { migrationName            = "any-name.sql"
+                               , nonDestructiveSql = Just $ mkValidSql sql
+                               , nonDestructiveForce      = True
+                               , nonDestructiveInTxn      = False
+                               , destructiveSql           = Nothing
+                               , destructiveInTxn         = True
+                               , nonDestructiveCustomConn = Nothing
                                }
 
         -- it "Sql Migration connection option with others"
@@ -311,12 +313,13 @@ spec = do
               let sql = "-- codd: connection = " <> connStr <> "\nSOME SQL"
               in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
                     `shouldBe` Right SqlMigration
-                                 { migrationName       = "any-name.sql"
-                                 , nonDestructiveSql   = Just $ mkValidSql sql
-                                 , nonDestructiveForce = True
-                                 , nonDestructiveInTxn = True
-                                 , destructiveSql      = Nothing
-                                 , destructiveInTxn    = True
+                                 { migrationName            = "any-name.sql"
+                                 , nonDestructiveSql = Just $ mkValidSql sql
+                                 , nonDestructiveForce      = True
+                                 , nonDestructiveInTxn      = True
+                                 , nonDestructiveCustomConn = Just connInfo
+                                 , destructiveSql           = Nothing
+                                 , destructiveInTxn         = True
                                  }
 
 
@@ -335,12 +338,13 @@ spec = do
                     d   = "-- codd: destructive\n" <> destSql
                     sql = nd <> d
                 in  parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right
-                      SqlMigration { migrationName       = "any-name.sql"
+                      SqlMigration { migrationName            = "any-name.sql"
                                    , nonDestructiveSql = nothingIfEmptyQuery nd
-                                   , nonDestructiveForce = False
-                                   , nonDestructiveInTxn = True
-                                   , destructiveSql      = nothingIfEmptyQuery d
-                                   , destructiveInTxn    = True
+                                   , nonDestructiveForce      = False
+                                   , nonDestructiveInTxn      = True
+                                   , destructiveSql = nothingIfEmptyQuery d
+                                   , destructiveInTxn         = True
+                                   , nonDestructiveCustomConn = Nothing
                                    }
         it "Sql Migration with one section, missing optional options" $ do
           property $ \(unSyntRandomSql -> sectionSql, nonDest :: Bool) ->
@@ -350,12 +354,13 @@ spec = do
                 sql = nonDestSql <> destSql
             in  parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right
                   SqlMigration
-                    { migrationName       = "any-name.sql"
-                    , nonDestructiveSql   = nothingIfEmptyQuery nonDestSql
-                    , nonDestructiveForce = False
-                    , nonDestructiveInTxn = True
-                    , destructiveSql      = nothingIfEmptyQuery destSql
-                    , destructiveInTxn    = True
+                    { migrationName            = "any-name.sql"
+                    , nonDestructiveSql        = nothingIfEmptyQuery nonDestSql
+                    , nonDestructiveForce      = False
+                    , nonDestructiveInTxn      = True
+                    , destructiveSql           = nothingIfEmptyQuery destSql
+                    , destructiveInTxn         = True
+                    , nonDestructiveCustomConn = Nothing
                     }
         it "Sql Migration options parsed correctly"
           $ let nonDestSql =
@@ -364,12 +369,13 @@ spec = do
                 sql     = nonDestSql <> destSql
             in  parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right
                   SqlMigration
-                    { migrationName       = "any-name.sql"
-                    , nonDestructiveSql   = Just $ mkValidSql nonDestSql
-                    , nonDestructiveForce = True
-                    , nonDestructiveInTxn = True
-                    , destructiveSql      = Just $ mkValidSql destSql
-                    , destructiveInTxn    = False
+                    { migrationName            = "any-name.sql"
+                    , nonDestructiveSql        = Just $ mkValidSql nonDestSql
+                    , nonDestructiveForce      = True
+                    , nonDestructiveInTxn      = True
+                    , destructiveSql           = Just $ mkValidSql destSql
+                    , destructiveInTxn         = False
+                    , nonDestructiveCustomConn = Nothing
                     }
 
         it "A real-life SqlMigration parsed correctly"
@@ -391,12 +397,13 @@ spec = do
               sql = nonDestSql <> destSql
             in
               parseSqlMigrationBGS "any-name.sql" sql `shouldBe` Right
-                SqlMigration { migrationName       = "any-name.sql"
+                SqlMigration { migrationName            = "any-name.sql"
                              , nonDestructiveSql = Just $ mkValidSql nonDestSql
-                             , nonDestructiveForce = False
-                             , nonDestructiveInTxn = True
-                             , destructiveSql      = Just $ mkValidSql destSql
-                             , destructiveInTxn    = True
+                             , nonDestructiveForce      = False
+                             , nonDestructiveInTxn      = True
+                             , destructiveSql = Just $ mkValidSql destSql
+                             , destructiveInTxn         = True
+                             , nonDestructiveCustomConn = Nothing
                              }
 
       context "Invalid SQL Migrations" $ do
@@ -454,13 +461,14 @@ spec = do
                                        "failed-parsing-migration.sql"
                                        "-- SQL with comments only!"
           `shouldBe` Right SqlMigration
-                       { migrationName       = "failed-parsing-migration.sql"
-                       , nonDestructiveSql   = Just
+                       { migrationName = "failed-parsing-migration.sql"
+                       , nonDestructiveSql        = Just
                          $ ParseFailSqlText "-- SQL with comments only!"
-                       , nonDestructiveForce = True
-                       , nonDestructiveInTxn = True
-                       , destructiveSql      = Nothing
-                       , destructiveInTxn    = True
+                       , nonDestructiveForce      = True
+                       , nonDestructiveInTxn      = True
+                       , destructiveSql           = Nothing
+                       , destructiveInTxn         = True
+                       , nonDestructiveCustomConn = Nothing
                        }
 
         it "Can't BEGIN, COMMIT or ROLLBACK Transactions inside SQL migrations"

@@ -32,43 +32,47 @@ import           Test.Hspec
 createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
 createTableMig = AddedSqlMigration
     SqlMigration
-        { migrationName       = "0001-create-table.sql"
-        , nonDestructiveSql   = Just $ mkValidSql "CREATE TABLE anytable ();"
-        , nonDestructiveForce = False
-        , nonDestructiveInTxn = True
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        { migrationName            = "0001-create-table.sql"
+        , nonDestructiveSql = Just $ mkValidSql "CREATE TABLE anytable ();"
+        , nonDestructiveForce      = False
+        , nonDestructiveInTxn      = True
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 1)
 addColumnMig = AddedSqlMigration
     SqlMigration
-        { migrationName       = "0002-add-column.sql"
-        , nonDestructiveSql   = Just
+        { migrationName            = "0002-add-column.sql"
+        , nonDestructiveSql        = Just
             $ mkValidSql "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
-        , nonDestructiveForce = False
-        , nonDestructiveInTxn = True
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        , nonDestructiveForce      = False
+        , nonDestructiveInTxn      = True
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 2)
 dropColumnMig = AddedSqlMigration
     SqlMigration
-        { migrationName       = "0003-drop-column.sql"
-        , nonDestructiveSql   = Just
+        { migrationName            = "0003-drop-column.sql"
+        , nonDestructiveSql        = Just
             $ mkValidSql "ALTER TABLE anytable DROP COLUMN anycolumn;"
-        , nonDestructiveForce = True
-        , nonDestructiveInTxn = True
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        , nonDestructiveForce      = True
+        , nonDestructiveInTxn      = True
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration
-    SqlMigration { migrationName       = "0004-drop-table.sql"
+    SqlMigration { migrationName            = "0004-drop-table.sql"
                  , nonDestructiveSql = Just $ mkValidSql "DROP TABLE anytable;"
-                 , nonDestructiveForce = True
-                 , nonDestructiveInTxn = True
-                 , destructiveSql      = Nothing
-                 , destructiveInTxn    = True
+                 , nonDestructiveForce      = True
+                 , nonDestructiveInTxn      = True
+                 , nonDestructiveCustomConn = Nothing
+                 , destructiveSql           = Nothing
+                 , destructiveInTxn         = True
                  }
     (getIncreasingTimestamp 4)
 
@@ -156,24 +160,26 @@ spec = do
                     $ do
                           let badMigs = map
                                   (\c -> SqlMigration
-                                      { migrationName       = "0000-begin.sql"
+                                      { migrationName = "0000-begin.sql"
                                       , nonDestructiveSql = Just $ mkValidSql c
-                                      , nonDestructiveForce = False
-                                      , nonDestructiveInTxn = False
-                                      , destructiveSql      = Nothing
-                                      , destructiveInTxn    = True
+                                      , nonDestructiveForce      = False
+                                      , nonDestructiveInTxn      = False
+                                      , nonDestructiveCustomConn = Nothing
+                                      , destructiveSql           = Nothing
+                                      , destructiveInTxn         = True
                                       }
                                   )
                                   ["BEGIN", "BEGIN; BEGIN; SELECT 1;"]
 
                               goodMigs = map
                                   (\c -> SqlMigration
-                                      { migrationName       = "0000-begin.sql"
+                                      { migrationName = "0000-begin.sql"
                                       , nonDestructiveSql = Just $ mkValidSql c
-                                      , nonDestructiveForce = False
-                                      , nonDestructiveInTxn = False
-                                      , destructiveSql      = Nothing
-                                      , destructiveInTxn    = True
+                                      , nonDestructiveForce      = False
+                                      , nonDestructiveInTxn      = False
+                                      , nonDestructiveCustomConn = Nothing
+                                      , destructiveSql           = Nothing
+                                      , destructiveInTxn         = True
                                       }
                                   )
                                   [ "BEGIN;ROLLBACK"
@@ -202,13 +208,14 @@ spec = do
                     $ \emptyTestDbInfo -> do
                           let
                               commitTxnMig = SqlMigration
-                                  { migrationName       = "0000-commit.sql"
-                                  , nonDestructiveSql   = Just
+                                  { migrationName            = "0000-commit.sql"
+                                  , nonDestructiveSql        = Just
                                       $ mkValidSql "COMMIT;"
-                                  , nonDestructiveForce = False
-                                  , nonDestructiveInTxn = True
-                                  , destructiveSql      = Nothing
-                                  , destructiveInTxn    = True
+                                  , nonDestructiveForce      = False
+                                  , nonDestructiveInTxn      = True
+                                  , nonDestructiveCustomConn = Nothing
+                                  , destructiveSql           = Nothing
+                                  , destructiveInTxn         = True
                                   }
                           isNonDestTxnClosing
                               <$>            (runStdoutLoggingT $ checkMigration
@@ -227,13 +234,14 @@ spec = do
                     $ \emptyTestDbInfo -> do
                           let
                               rollbackTxnMig = SqlMigration
-                                  { migrationName       = "0000-rollback.sql"
-                                  , nonDestructiveSql   = Just
+                                  { migrationName = "0000-rollback.sql"
+                                  , nonDestructiveSql        = Just
                                       $ mkValidSql "ROLLBACK;"
-                                  , nonDestructiveForce = False
-                                  , nonDestructiveInTxn = True
-                                  , destructiveSql      = Nothing
-                                  , destructiveInTxn    = True
+                                  , nonDestructiveForce      = False
+                                  , nonDestructiveInTxn      = True
+                                  , nonDestructiveCustomConn = Nothing
+                                  , destructiveSql           = Nothing
+                                  , destructiveInTxn         = True
                                   }
                           isNonDestTxnClosing
                               <$>            (runStdoutLoggingT $ checkMigration
@@ -252,14 +260,15 @@ spec = do
                     $ \emptyTestDbInfo ->
                           let
                               rollbackTxnMig = SqlMigration
-                                  { migrationName       = "0000-rollback.sql"
-                                  , nonDestructiveSql   = Just
+                                  { migrationName = "0000-rollback.sql"
+                                  , nonDestructiveSql        = Just
                                       $ mkValidSql "ROLLBACK;"
-                                  , nonDestructiveForce = False
-                                  , nonDestructiveInTxn = True
-                                  , destructiveSql      = Just
+                                  , nonDestructiveForce      = False
+                                  , nonDestructiveInTxn      = True
+                                  , nonDestructiveCustomConn = Nothing
+                                  , destructiveSql           = Just
                                       $ mkValidSql "ROLLBACK;"
-                                  , destructiveInTxn    = True
+                                  , destructiveInTxn         = True
                                   }
                           in
                               isDestTxnClosing
@@ -274,18 +283,19 @@ spec = do
                     $ \emptyTestDbInfo ->
                           let
                               rollbackTxnMig = SqlMigration
-                                  { migrationName       = "0000-rollback.sql"
-                                  , nonDestructiveSql   = Just
+                                  { migrationName = "0000-rollback.sql"
+                                  , nonDestructiveSql        = Just
                                       $ mkValidSql "ROLLBACK;"
-                                  , nonDestructiveForce = False
-                                  , nonDestructiveInTxn = True
-                                  , destructiveSql      = Nothing
-                                  , destructiveInTxn    = True
+                                  , nonDestructiveForce      = False
+                                  , nonDestructiveInTxn      = True
+                                  , nonDestructiveCustomConn = Nothing
+                                  , destructiveSql           = Nothing
+                                  , destructiveInTxn         = True
                                   }
                           in
                               isDestTxnClosing
-                              <$>            (runStdoutLoggingT $ checkMigration
-                                                 emptyTestDbInfo
-                                                 rollbackTxnMig
-                                             )
+                              <$>            runStdoutLoggingT
+                                                 (checkMigration emptyTestDbInfo
+                                                                 rollbackTxnMig
+                                                 )
                               `shouldReturn` False

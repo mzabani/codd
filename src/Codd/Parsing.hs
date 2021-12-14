@@ -54,7 +54,10 @@ import           Data.List                      ( foldl'
                                                 )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
-import           Data.Maybe                     ( fromMaybe )
+import           Data.Maybe                     ( fromMaybe
+                                                , listToMaybe
+                                                , mapMaybe
+                                                )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time.Clock                ( UTCTime(..) )
@@ -70,12 +73,13 @@ data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiec
   deriving stock (Eq, Show)
 
 data SqlMigration = SqlMigration
-  { migrationName       :: FilePath
-  , nonDestructiveSql   :: Maybe ParsedSql
-  , nonDestructiveForce :: Bool
-  , nonDestructiveInTxn :: Bool
-  , destructiveSql      :: Maybe ParsedSql
-  , destructiveInTxn    :: Bool
+  { migrationName            :: FilePath
+  , nonDestructiveSql        :: Maybe ParsedSql
+  , nonDestructiveForce      :: Bool
+  , nonDestructiveInTxn      :: Bool
+  , destructiveSql           :: Maybe ParsedSql
+  , destructiveInTxn         :: Bool
+  , nonDestructiveCustomConn :: Maybe ConnectInfo
   }
   deriving stock (Eq, Show)
 
@@ -398,7 +402,7 @@ optionParser = do
     <|> dest
     <|> inTxn
     <|> noTxn
-    <|> customConnString
+    <|> nonDestructiveCustomConn
     <|> fail
           "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force', 'connection=a-connection-string"
   skipJustSpace
@@ -409,7 +413,7 @@ optionParser = do
   dest    = string "destructive" >> pure (OptDest True)
   inTxn   = string "in-txn" >> pure (OptInTxn True)
   noTxn   = string "no-txn" >> pure (OptInTxn False)
-  customConnString =
+  nonDestructiveCustomConn =
     string "connection"
       >>  skipJustSpace
       >>  string "="
@@ -549,15 +553,23 @@ parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
   isDest opts = OptDest True `elem` opts
   inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
   noTxn opts = OptInTxn False `elem` opts
+  customConnInfo opts = listToMaybe $ mapMaybe
+    (\case
+      OptConnString ci -> Just ci
+      _                -> Nothing
+    )
+    opts
 
   mkMig :: ([SectionOption], ParsedSql) -> SqlMigration
-  mkMig (opts, sql) = SqlMigration { migrationName       = name
-                                   , nonDestructiveSql   = Just sql
-                                   , nonDestructiveForce = True
-                                   , nonDestructiveInTxn = inTxn opts
-                                   , destructiveSql      = Nothing
-                                   , destructiveInTxn    = True
-                                   }
+  mkMig (opts, sql) = SqlMigration
+    { migrationName            = name
+    , nonDestructiveSql        = Just sql
+    , nonDestructiveForce      = True
+    , nonDestructiveInTxn      = inTxn opts
+    , destructiveSql           = Nothing
+    , destructiveInTxn         = True
+    , nonDestructiveCustomConn = customConnInfo opts
+    }
 
   toMig :: ([SectionOption], ParsedSql) -> Either Text SqlMigration
   toMig x@(ops, _) = case checkOpts ops of
@@ -585,18 +597,25 @@ parseSqlMigrationBGS name t = first Text.pack migE >>= toMig
   inTxn opts = OptInTxn False `notElem` opts
   noTxn opts = OptInTxn False `elem` opts
   isForce opts = OptForce True `elem` opts
+  customConnInfo opts = listToMaybe $ mapMaybe
+    (\case
+      OptConnString ci -> Just ci
+      _                -> Nothing
+    )
+    opts
 
   mkMig
     :: Maybe ([SectionOption], ParsedSql)
     -> Maybe ([SectionOption], ParsedSql)
     -> SqlMigration
   mkMig mndest mdest = SqlMigration
-    { migrationName       = name
-    , nonDestructiveSql   = snd <$> mndest
-    , nonDestructiveForce = maybe False (isForce . fst) mndest
-    , nonDestructiveInTxn = maybe True (inTxn . fst) mndest
-    , destructiveSql      = snd <$> mdest
-    , destructiveInTxn    = maybe True (inTxn . fst) mdest
+    { migrationName            = name
+    , nonDestructiveSql        = snd <$> mndest
+    , nonDestructiveForce      = maybe False (isForce . fst) mndest
+    , nonDestructiveInTxn      = maybe True (inTxn . fst) mndest
+    , nonDestructiveCustomConn = (customConnInfo . fst) =<< mndest
+    , destructiveSql           = snd <$> mdest
+    , destructiveInTxn         = maybe True (inTxn . fst) mdest
     }
 
   toMig
@@ -632,8 +651,13 @@ parseSqlMigration
   -> Text
   -> Either Text SqlMigration
 parseSqlMigration dw popts name sql = case (dw, popts) of
-  (_, NoParse) -> Right
-    $ SqlMigration name (Just $ ParseFailSqlText sql) True True Nothing True
+  (_, NoParse) -> Right $ SqlMigration name
+                                       (Just $ ParseFailSqlText sql)
+                                       True
+                                       True
+                                       Nothing
+                                       True
+                                       Nothing
   (SimpleDeployment, _) -> parseSqlMigrationSimpleWorkflow name sql
   (BlueGreenSafeDeploymentUpToAndIncluding _, _) ->
     parseSqlMigrationBGS name sql

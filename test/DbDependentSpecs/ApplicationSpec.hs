@@ -72,62 +72,67 @@ import           UnliftIO.Concurrent            ( MVar
 placeHoldersMig, selectMig, copyMig :: AddedSqlMigration
 placeHoldersMig = AddedSqlMigration
     SqlMigration
-        { migrationName       = "0000-placeholders.sql"
-        , nonDestructiveSql   = Just
+        { migrationName            = "0000-placeholders.sql"
+        , nonDestructiveSql        = Just
             $ mkValidSql "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
-        , nonDestructiveForce = False
-        , nonDestructiveInTxn = True
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        , nonDestructiveForce      = False
+        , nonDestructiveInTxn      = True
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration
-    SqlMigration { migrationName       = "0001-select-mig.sql"
-                 , nonDestructiveSql   = Just $ mkValidSql "SELECT 1, 3"
-                 , nonDestructiveForce = True
-                 , nonDestructiveInTxn = True
-                 , destructiveSql      = Nothing
-                 , destructiveInTxn    = True
+    SqlMigration { migrationName            = "0001-select-mig.sql"
+                 , nonDestructiveSql        = Just $ mkValidSql "SELECT 1, 3"
+                 , nonDestructiveForce      = True
+                 , nonDestructiveInTxn      = True
+                 , nonDestructiveCustomConn = Nothing
+                 , destructiveSql           = Nothing
+                 , destructiveInTxn         = True
                  }
     (getIncreasingTimestamp 1)
 copyMig = AddedSqlMigration
     SqlMigration
-        { migrationName       = "0002-copy-mig.sql"
-        , nonDestructiveSql   =
+        { migrationName            = "0002-copy-mig.sql"
+        , nonDestructiveSql        =
             Just
                 $ mkValidSql
                       "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n "
-        , nonDestructiveForce = True
-        , nonDestructiveInTxn = False
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        , nonDestructiveForce      = True
+        , nonDestructiveInTxn      = False
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 2)
 divideBy0Mig = AddedSqlMigration
-    SqlMigration { migrationName       = "0003-divide-by-0-mig.sql"
+    SqlMigration { migrationName            = "0003-divide-by-0-mig.sql"
                  , nonDestructiveSql = Just $ mkValidSql "SELECT 2; SELECT 7/0"
-                 , nonDestructiveForce = True
-                 , nonDestructiveInTxn = True
-                 , destructiveSql      = Nothing
-                 , destructiveInTxn    = True
+                 , nonDestructiveForce      = True
+                 , nonDestructiveInTxn      = True
+                 , nonDestructiveCustomConn = Nothing
+                 , destructiveSql           = Nothing
+                 , destructiveInTxn         = True
                  }
     (getIncreasingTimestamp 3)
 
 createTableNewTableMig :: String -> Bool -> Int -> AddedSqlMigration
 createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
     SqlMigration
-        { migrationName       = "000"
-                                <> show migOrder
-                                <> "-create-table-newtable-mig.sql"
-        , nonDestructiveSql   = Just
-                                $  mkValidSql
-                                $  "CREATE TABLE "
-                                <> Text.pack tableName
-                                <> "()"
-        , nonDestructiveForce = True
-        , nonDestructiveInTxn = inTxn
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        { migrationName            = "000"
+                                     <> show migOrder
+                                     <> "-create-table-newtable-mig.sql"
+        , nonDestructiveSql        = Just
+                                     $  mkValidSql
+                                     $  "CREATE TABLE "
+                                     <> Text.pack tableName
+                                     <> "()"
+        , nonDestructiveForce      = True
+        , nonDestructiveInTxn      = inTxn
+        , nonDestructiveCustomConn = Nothing
+        , destructiveSql           = Nothing
+        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp (fromIntegral migOrder))
 
@@ -359,42 +364,44 @@ spec = do
                               migs =
                                   [ AddedSqlMigration
                                       SqlMigration
-                                          { migrationName       =
+                                          { migrationName            =
                                               "0000-first-in-txn-mig.sql"
-                                          , nonDestructiveSql   =
+                                          , nonDestructiveSql        =
                                               Just
                                               $ mkValidSql
                                               $ "CREATE TABLE any_table (txid bigint not null);"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                           -- One unique txid from this migration, two rows
-                                          , nonDestructiveForce = False
-                                          , nonDestructiveInTxn = True
-                                          , destructiveSql      = Nothing
-                                          , destructiveInTxn    = True
+                                          , nonDestructiveForce      = False
+                                          , nonDestructiveInTxn      = True
+                                          , nonDestructiveCustomConn = Nothing
+                                          , destructiveSql           = Nothing
+                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 0)
                                   , AddedSqlMigration
                                       SqlMigration
-                                          { migrationName       =
+                                          { migrationName            =
                                               "0001-second-in-txn-mig.sql"
-                                          , nonDestructiveSql   =
+                                          , nonDestructiveSql        =
                                               Just
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                           -- No txids from this migration because it runs in the same transaction as the last one, two more rows
-                                          , nonDestructiveForce = False
-                                          , nonDestructiveInTxn = True
-                                          , destructiveSql      = Nothing
-                                          , destructiveInTxn    = True
+                                          , nonDestructiveForce      = False
+                                          , nonDestructiveInTxn      = True
+                                          , nonDestructiveCustomConn = Nothing
+                                          , destructiveSql           = Nothing
+                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 1)
                                   , AddedSqlMigration
                                       SqlMigration
-                                          { migrationName       =
+                                          { migrationName            =
                                               "0002-no-txn-mig.sql"
-                                          , nonDestructiveSql   =
+                                          , nonDestructiveSql        =
                                               Just
                                               $ mkValidSql
                                               $ "CREATE TYPE experience AS ENUM ('junior', 'senior');"
@@ -404,42 +411,45 @@ spec = do
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                           -- Two distinct txids because this one doesn't run in a migration and two more rows
-                                          , nonDestructiveForce = True
-                                          , nonDestructiveInTxn = False
-                                          , destructiveSql      = Nothing
-                                          , destructiveInTxn    = True
+                                          , nonDestructiveForce      = True
+                                          , nonDestructiveInTxn      = False
+                                          , nonDestructiveCustomConn = Nothing
+                                          , destructiveSql           = Nothing
+                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 2)
                                   , AddedSqlMigration
                                       SqlMigration
-                                          { migrationName       =
+                                          { migrationName            =
                                               "0003-second-in-txn-mig.sql"
-                                          , nonDestructiveSql   =
+                                          , nonDestructiveSql        =
                                               Just
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                           -- One unique txid from this migration because it runs in a new transaction, two more rows
-                                          , nonDestructiveForce = False
-                                          , nonDestructiveInTxn = True
-                                          , destructiveSql      = Nothing
-                                          , destructiveInTxn    = True
+                                          , nonDestructiveForce      = False
+                                          , nonDestructiveInTxn      = True
+                                          , nonDestructiveCustomConn = Nothing
+                                          , destructiveSql           = Nothing
+                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 3)
                                   , AddedSqlMigration
                                       SqlMigration
-                                          { migrationName       =
+                                          { migrationName            =
                                               "0004-second-in-txn-mig.sql"
-                                          , nonDestructiveSql   =
+                                          , nonDestructiveSql        =
                                               Just
                                               $ mkValidSql
                                               $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                               <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                           -- No txids from this migration because it runs in the same transaction as the last one, two more rows
-                                          , nonDestructiveForce = False
-                                          , nonDestructiveInTxn = True
-                                          , destructiveSql      = Nothing
-                                          , destructiveInTxn    = True
+                                          , nonDestructiveForce      = False
+                                          , nonDestructiveInTxn      = True
+                                          , nonDestructiveCustomConn = Nothing
+                                          , destructiveSql           = Nothing
+                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 4)
                                   ]

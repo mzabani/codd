@@ -67,7 +67,7 @@ testCoddSettings migs = do
         createTestUserMig = AddedSqlMigration
             SqlMigration
                 { migrationName = show migTimestamp <> "-create-test-user.sql"
-                , nonDestructiveSql   =
+                , nonDestructiveSql        =
                     Just
                     $  mkValidSql
                     $  "DO\n"
@@ -78,10 +78,11 @@ testCoddSettings migs = do
                     <> "   END IF;\n"
                     <> "END\n"
                     <> "$do$; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
-                , nonDestructiveForce = True
-                , nonDestructiveInTxn = True
-                , destructiveSql      = Nothing
-                , destructiveInTxn    = True
+                , nonDestructiveForce      = True
+                , nonDestructiveInTxn      = True
+                , nonDestructiveCustomConn = Nothing
+                , destructiveSql           = Nothing
+                , destructiveInTxn         = True
                 }
             migTimestamp
     pure CoddSettings
