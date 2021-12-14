@@ -1,4 +1,7 @@
-module EnvironmentSpec where
+module EnvironmentSpec
+    ( ConnStringGen(..)
+    , spec
+    ) where
 
 import           Codd.Environment               ( retryPolicyParser )
 import           Codd.Hashing.Types             ( ObjName(..) )

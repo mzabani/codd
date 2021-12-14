@@ -90,7 +90,7 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Eq, Show)
+data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool | OptConnString !ConnectInfo deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -398,9 +398,9 @@ optionParser = do
     <|> dest
     <|> inTxn
     <|> noTxn
-    -- <|> customConnString
+    <|> customConnString
     <|> fail
-          "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
+          "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force', 'connection=a-connection-string"
   skipJustSpace
   return x
  where
@@ -409,7 +409,13 @@ optionParser = do
   dest    = string "destructive" >> pure (OptDest True)
   inTxn   = string "in-txn" >> pure (OptInTxn True)
   noTxn   = string "no-txn" >> pure (OptInTxn False)
-  -- customConnString = string "connection=" >> OptConnString <$> connStringParser
+  customConnString =
+    string "connection"
+      >>  skipJustSpace
+      >>  string "="
+      >>  skipJustSpace
+      >>  OptConnString
+      <$> connStringParser
 
 skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
@@ -420,7 +426,7 @@ coddCommentParser = do
   skipJustSpace
   void $ string "codd:"
   skipJustSpace
-  opts <- optionParser `sepBy1` char ','
+  opts <- optionParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
   endOfLine
   pure opts
 

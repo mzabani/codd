@@ -26,6 +26,7 @@ import           Data.Maybe                     ( fromMaybe
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           DbUtils                        ( mkValidSql )
+import           EnvironmentSpec                ( ConnStringGen(..) )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
@@ -289,6 +290,36 @@ spec = do
                                , destructiveInTxn    = True
                                }
 
+        -- it "Sql Migration connection option with others"
+        --   $ property
+        --   $ \(ConnStringGen connStr connInfo) ->
+        --       let sql =
+        --             "-- codd: connection=" <> connStr <> ",no-txn\nSOME SQL"
+        --       in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
+        --             `shouldBe` Right SqlMigration
+        --                          { migrationName       = "any-name.sql"
+        --                          , nonDestructiveSql   = Just $ mkValidSql sql
+        --                          , nonDestructiveForce = True
+        --                          , nonDestructiveInTxn = False
+        --                          , destructiveSql      = Nothing
+        --                          , destructiveInTxn    = True
+        --                          }
+
+        it "Sql Migration connection option alone"
+          $ property
+          $ \(ConnStringGen connStr connInfo) ->
+              let sql = "-- codd: connection = " <> connStr <> "\nSOME SQL"
+              in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
+                    `shouldBe` Right SqlMigration
+                                 { migrationName       = "any-name.sql"
+                                 , nonDestructiveSql   = Just $ mkValidSql sql
+                                 , nonDestructiveForce = True
+                                 , nonDestructiveInTxn = True
+                                 , destructiveSql      = Nothing
+                                 , destructiveInTxn    = True
+                                 }
+
+
         it "in-txn and no-txn are mutually exclusive"
           $ let plainSql = "SOME SQL"
                 sql      = "-- codd: no-txn, in-txn\n" <> plainSql
@@ -387,9 +418,14 @@ spec = do
             in  parseSqlMigrationBGS "any-name.sql" sql `shouldSatisfy` \case
                   Right _   -> False
                   Left  err -> "duplicate" `Text.isInfixOf` err
+
         it "Unknown / mistyped options"
           $ let sql =
                   "-- codd: force, NON-Destructive, in-txn\n" <> "ANY SQL HERE"
+            in  parseSqlMigrationBGS "any-name.sql" sql `shouldSatisfy` isLeft
+
+        it "Mistyped connection string option"
+          $ let sql = "-- codd: no-txn, connection=blah\n" <> "ANY SQL HERE"
             in  parseSqlMigrationBGS "any-name.sql" sql `shouldSatisfy` isLeft
 
         it "Missing non-destructive and destructive, otherwise valid options"
