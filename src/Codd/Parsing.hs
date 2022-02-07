@@ -11,7 +11,6 @@ module Codd.Parsing
   , piecesToText
   , sqlPieceText
   , parsedSqlText
-  , parseSqlMigrationBGS
   , parseSqlMigrationSimpleWorkflow
   , parseSqlMigration
   , parseWithEscapeCharProper
@@ -19,6 +18,7 @@ module Codd.Parsing
   , parseMigrationTimestamp
   , parseSqlPieces
   , toMigrationTimestamp
+  , coddConnStringCommentParser
   ) where
 
 import           Codd.Types                     ( DeploymentWorkflow(..) )
@@ -49,13 +49,10 @@ import           Data.Attoparsec.Text           ( Parser
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
-import           Data.List                      ( foldl'
-                                                , nub
-                                                )
+import           Data.List                      ( nub )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( fromMaybe
-                                                , listToMaybe
                                                 , mapMaybe
                                                 )
 import           Data.Text                      ( Text )
@@ -65,6 +62,7 @@ import           Data.Time.Format.ISO8601       ( iso8601ParseM )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
+import           Debug.Trace
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
 
@@ -94,7 +92,7 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool | OptConnString !ConnectInfo deriving stock (Eq, Show)
+data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -367,10 +365,10 @@ parseWithEscapeCharProper untilc = do
 connStringParser :: Parser ConnectInfo
 connStringParser = do
   void $ string "postgres://"
-  usr <- idParser "username"
+  usr <- traceShow @String "username" <$> idParser "username"
   pwd <- (char ':' *> idParser "password") <|> pure ""
-  void $ char '@'
-  host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
+  void $ traceShow @String "at-sign" <$> char '@'
+  host <- traceShow @String "host" <$> idParser "host" -- TODO: IPv6 addresses such as ::1 ??
   void $ char ':'
   port <- Parsec.decimal
     <|> fail "Could not find a port in the connection string."
@@ -385,7 +383,8 @@ connStringParser = do
  where
   idParser :: String -> Parser String
   idParser idName = do
-    x <- Text.unpack <$> parseWithEscapeCharProper (\c -> c == ':' || c == '@')
+    x <- Text.unpack
+      <$> parseWithEscapeCharProper (\c -> c == ':' || c == '@' || c == '\n')
     when (x == "")
       $  fail
       $  "Could not find a "
@@ -402,9 +401,8 @@ optionParser = do
     <|> dest
     <|> inTxn
     <|> noTxn
-    <|> nonDestructiveCustomConn
     <|> fail
-          "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force', 'connection=a-connection-string"
+          "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
   skipJustSpace
   return x
  where
@@ -413,17 +411,12 @@ optionParser = do
   dest    = string "destructive" >> pure (OptDest True)
   inTxn   = string "in-txn" >> pure (OptInTxn True)
   noTxn   = string "no-txn" >> pure (OptInTxn False)
-  nonDestructiveCustomConn =
-    string "connection"
-      >>  skipJustSpace
-      >>  string "="
-      >>  skipJustSpace
-      >>  OptConnString
-      <$> connStringParser
+
 
 skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
 
+-- | Parses a "-- codd: option1, option2" line.
 coddCommentParser :: Parser [SectionOption]
 coddCommentParser = do
   void $ string "--"
@@ -433,6 +426,17 @@ coddCommentParser = do
   opts <- optionParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
   endOfLine
   pure opts
+
+-- | Parses a "-- codd-connection: postgres://...." line.
+coddConnStringCommentParser :: Parser ConnectInfo
+coddConnStringCommentParser = do
+  void $ traceShow @String "--" <$> string "--"
+  skipJustSpace
+  void $ traceShow @String "CODD-CONNECTION" <$> string "codd-connection:"
+  skipJustSpace
+  connInfo <- connStringParser
+  endOfLine
+  pure connInfo
 
 isWhiteSpacePiece :: SqlPiece -> Bool
 isWhiteSpacePiece (WhiteSpacePiece _) = True
@@ -455,83 +459,58 @@ isTransactionEndingPiece _                       = False
 --   an error as well.
 -- - In case of success, every provided SqlPiece is contained in the response exactly once (without duplicates).
 splitCoddOpts
-  :: NonEmpty SqlPiece
-  -> Either String (NonEmpty ([SectionOption], NonEmpty SqlPiece))
-splitCoddOpts (p :| ps) = validate $ NE.reverse $ foldl' accum accInit ps
- where
-  validate
-    :: NonEmpty ([SectionOption], NonEmpty SqlPiece)
-    -> Either String (NonEmpty ([SectionOption], NonEmpty SqlPiece))
-  validate ls =
-    let
-      allPiecesInOrder :: [SqlPiece]
-      allPiecesInOrder = mconcat $ NE.toList $ fmap (NE.toList . snd) ls
-    in
-      if or
-         $ fmap (all (\x -> isWhiteSpacePiece x || isCommentPiece x) . snd) ls
-      then
+  :: [SqlPiece] -> Either String ([SectionOption], Maybe ConnectInfo)
+splitCoddOpts ps =
+  let
+    firstComments = traceShowId $ filter isCommentPiece $ Prelude.takeWhile
+      (\p -> isCommentPiece p || isWhiteSpacePiece p)
+      ps
+    allOptSections = mapMaybe
+      ( (\case
+          Left  _    -> Nothing
+          Right opts -> Just opts
+        )
+      . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
+      )
+      firstComments
+    customConnString = traceShowId $ mapMaybe
+      ( (\case
+          Left  _        -> traceShowId Nothing
+          Right connInfo -> Just connInfo
+        )
+      . ( parseOnly (coddConnStringCommentParser <* endOfInput)
+        . traceShowId
+        . sqlPieceText
+        )
+      )
+      firstComments
+    headMay []      = Nothing
+    headMay (x : _) = Just x
+  in
+    case (allOptSections, customConnString) of
+      (_ : _ : _, _) ->
+        Left "There must be at most one '-- codd:' comment in a migration"
+      (_, _ : _ : _) ->
         Left
-          "There must be some SQL we can run in for every section in the migration"
-      else
-        if length (p : ps) /= length allPiecesInOrder || any
-           not
-           (zipWith (==) (p : ps) allPiecesInOrder)
-        then
-          Left
-            "A internal error in SQL section splitting happened. Please report this as a bug."
-        else
-          Right ls
-  accInit = (fromMaybe [] (optsOrNothing p), p :| []) :| []
-  optsOrNothing el = case el of
-    CommentPiece c -> case parseOnly (coddCommentParser <* endOfInput) c of
-      Left  _    -> Nothing
-      Right opts -> Just opts
-    _ -> Nothing
-  accum acc@((currOpts, currPieces) :| xs) el = case optsOrNothing el of
-    Just newSectionOpts -> NE.cons (newSectionOpts, el :| []) acc
-    _                   -> (currOpts, currPieces <> (el :| [])) :| xs
+          "There must be at most one '-- codd-connection:' comment in a migration"
+      _ ->
+        Right (fromMaybe [] $ headMay allOptSections, headMay customConnString)
+
 
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
-migrationParserSimpleWorkflow :: Parser ([SectionOption], ParsedSql)
+migrationParserSimpleWorkflow
+  :: Parser ([SectionOption], Maybe ConnectInfo, ParsedSql)
 migrationParserSimpleWorkflow = do
   (text, sqlPieces) <- match sqlPiecesParser
   when (text /= piecesToText sqlPieces)
     $ fail
         "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
-  let sections = splitCoddOpts sqlPieces
-
-  -- At most one "-- codd: opts" can exist, but we are currently accepting multiple ones..
-  -- If the migration is Blue-Green-Safe, then when it's treated as Simple, the destructive
-  -- section will run right after the non-destructive, and it should all be ok.. hopefully
-  case sections of
-    Left  err               -> fail err
-    -- Right (_ :| (_ : _)) -> fail "At most one '-- codd: options' section can exist in a migration and it must be the very first line in the file."
-    Right ((opts1, _) :| _) -> pure (opts1, WellParsedSql text sqlPieces)
-
-migrationParserBGS
-  :: Parser ([SectionOption], ParsedSql, Maybe ([SectionOption], ParsedSql))
-migrationParserBGS = do
-  (text, sqlPieces) <- match sqlPiecesParser
-  when (text /= piecesToText sqlPieces)
-    $ fail
-        "An internal error happened when parsing. Use '--no-parse' when adding to treat it as a purely non-destructive, in-txn migration without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
-  let sections = splitCoddOpts sqlPieces
-
-  -- At most _two_ "-- codd: opts" can exist
-  case sections of
+  case splitCoddOpts (NE.toList sqlPieces) of
     Left err -> fail err
-    Right (_ :| (_ : _ : _)) ->
-      fail
-        "At most two '-- codd: options' section can exist in a Blue-Green-Safe migration."
-    Right ((opts1, sql1) :| []) ->
-      pure (opts1, WellParsedSql (piecesToText sql1) sql1, Nothing)
-    Right ((opts1, sql1) :| [(opts2, sql2)]) -> pure
-      ( opts1
-      , WellParsedSql (piecesToText sql1) sql1
-      , Just (opts2, WellParsedSql (piecesToText sql2) sql2)
-      )
+    Right (opts, customConnStr) ->
+      pure (opts, customConnStr, WellParsedSql text sqlPieces)
 
 parseSqlMigrationSimpleWorkflow :: String -> Text -> Either Text SqlMigration
 parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
@@ -553,93 +532,24 @@ parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
   isDest opts = OptDest True `elem` opts
   inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
   noTxn opts = OptInTxn False `elem` opts
-  customConnInfo opts = listToMaybe $ mapMaybe
-    (\case
-      OptConnString ci -> Just ci
-      _                -> Nothing
-    )
-    opts
 
-  mkMig :: ([SectionOption], ParsedSql) -> SqlMigration
-  mkMig (opts, sql) = SqlMigration
+  mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql) -> SqlMigration
+  mkMig (opts, customConnString, sql) = SqlMigration
     { migrationName            = name
     , nonDestructiveSql        = Just sql
     , nonDestructiveForce      = True
     , nonDestructiveInTxn      = inTxn opts
     , destructiveSql           = Nothing
     , destructiveInTxn         = True
-    , nonDestructiveCustomConn = customConnInfo opts
-    }
-
-  toMig :: ([SectionOption], ParsedSql) -> Either Text SqlMigration
-  toMig x@(ops, _) = case checkOpts ops of
-    Just err -> Left err
-    _        -> Right $ mkMig x
-
-parseSqlMigrationBGS :: String -> Text -> Either Text SqlMigration
-parseSqlMigrationBGS name t = first Text.pack migE >>= toMig
- where
-  migE = parseOnly (migrationParserBGS <* endOfInput) t
-  dupOpts opts = length (nub opts) < length opts
-  checkOpts :: [SectionOption] -> Maybe Text
-  checkOpts opts
-    | isDest opts && isNonDest opts = Just
-      "Choose either destructive or non-destructive"
-    | not (isDest opts) && not (isNonDest opts) = Just
-      "Choose either destructive or non-destructive"
-    | inTxn opts && noTxn opts = Just "Choose either in-txn or no-txn"
-    | OptDest False `elem` opts && OptDest True `elem` opts = Just
-      "Choose either 'force non-destructive' or just 'non-destructive'"
-    | dupOpts opts = Just "Some options are duplicated"
-    | otherwise = Nothing
-  isNonDest opts = OptDest False `elem` opts
-  isDest opts = OptDest True `elem` opts
-  inTxn opts = OptInTxn False `notElem` opts
-  noTxn opts = OptInTxn False `elem` opts
-  isForce opts = OptForce True `elem` opts
-  customConnInfo opts = listToMaybe $ mapMaybe
-    (\case
-      OptConnString ci -> Just ci
-      _                -> Nothing
-    )
-    opts
-
-  mkMig
-    :: Maybe ([SectionOption], ParsedSql)
-    -> Maybe ([SectionOption], ParsedSql)
-    -> SqlMigration
-  mkMig mndest mdest = SqlMigration
-    { migrationName            = name
-    , nonDestructiveSql        = snd <$> mndest
-    , nonDestructiveForce      = maybe False (isForce . fst) mndest
-    , nonDestructiveInTxn      = maybe True (inTxn . fst) mndest
-    , nonDestructiveCustomConn = (customConnInfo . fst) =<< mndest
-    , destructiveSql           = snd <$> mdest
-    , destructiveInTxn         = maybe True (inTxn . fst) mdest
+    , nonDestructiveCustomConn = customConnString
     }
 
   toMig
-    :: ([SectionOption], ParsedSql, Maybe ([SectionOption], ParsedSql))
+    :: ([SectionOption], Maybe ConnectInfo, ParsedSql)
     -> Either Text SqlMigration
-  toMig (fsops, fssql, mss) = case (fsops, mss) of
-    ([], _) ->
-      Left
-        "Migration needs at least one section marked as 'non-destructive' or 'destructive'"
-    (_, Nothing) -> case (checkOpts fsops, isDest fsops) of
-      (Just err, _    ) -> Left $ "Error in the first section: " <> err
-      (Nothing , True ) -> Right $ mkMig Nothing $ Just (fsops, fssql)
-      (Nothing , False) -> Right $ mkMig (Just (fsops, fssql)) Nothing
-    (_, Just (ssops, sssql)) ->
-      case (checkOpts fsops, checkOpts ssops, isDest fsops, isDest ssops) of
-        (Just err, _, _, _) -> Left $ "Error in the first section: " <> err
-        (_, Just err, _, _) -> Left $ "Error in the second section: " <> err
-        (_, _, False, True) ->
-          Right $ mkMig (Just (fsops, fssql)) (Just (ssops, sssql))
-        (_, _, True, False) ->
-          Right $ mkMig (Just (ssops, sssql)) (Just (fsops, fssql))
-        (_, _, True, True) -> Left "There can't be two destructive sections"
-        (_, _, False, False) ->
-          Left "There can't be two non-destructive sections"
+  toMig x@(ops, _, _) = case checkOpts ops of
+    Just err -> Left err
+    _        -> Right $ mkMig x
 
 data ParsingOptions = NoParse | DoParse
   deriving stock (Eq)
@@ -659,8 +569,7 @@ parseSqlMigration dw popts name sql = case (dw, popts) of
                                        True
                                        Nothing
   (SimpleDeployment, _) -> parseSqlMigrationSimpleWorkflow name sql
-  (BlueGreenSafeDeploymentUpToAndIncluding _, _) ->
-    parseSqlMigrationBGS name sql
+  (BlueGreenSafeDeploymentUpToAndIncluding _, _) -> error "BGS going down"
 
 parseAddedSqlMigration
   :: DeploymentWorkflow
