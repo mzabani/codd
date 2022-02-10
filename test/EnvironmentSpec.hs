@@ -34,15 +34,20 @@ instance Arbitrary NonEmptyString where
             <$>        arbitrary @ASCIIString
             `suchThat` (/= ASCIIString "")
 
--- TODO: HostString ipv6
 newtype HostString = HostString { unHostString :: String }
     deriving stock Show
 instance Arbitrary HostString where
     arbitrary =
-        HostString
-            .          getASCIIString
-            <$>        arbitrary @ASCIIString
-            `suchThat` (/= ASCIIString "")
+        fmap (HostString . Text.unpack)
+            $          oneof
+                           [ pure "127.0.0.1"
+                           , pure "200.200.100.100"
+                           , pure "some.host.name"
+                           , pure "[::1]" -- TODO: IPv6 address still needs testing!
+                           -- Abuse genObjName because we don't want newlines or other strange chars here
+                           , unObjName <$> genObjName
+                           ]
+            `suchThat` (/= "")
 
 getConnString
     :: ObjName -> PrintableString -> HostString -> Word16 -> ObjName -> Text
@@ -65,8 +70,10 @@ data ConnStringGen = ConnStringGen Text ConnectInfo
     deriving stock Show
 instance Arbitrary ConnStringGen where
     arbitrary = do
-        usr    <- genObjName
-        pwd    <- arbitrary @PrintableString
+        usr <- genObjName
+        pwd <-
+            arbitrary @PrintableString
+                `suchThat` (\(PrintableString s) -> '\n' `notElem` s)
         host   <- arbitrary @HostString
         port   <- arbitrary @Word16
         dbName <- genObjName

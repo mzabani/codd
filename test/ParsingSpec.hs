@@ -291,20 +291,41 @@ spec = do
                                , nonDestructiveCustomConn = Nothing
                                }
 
-        -- it "Sql Migration connection option with others"
-        --   $ property
-        --   $ \(ConnStringGen connStr connInfo) ->
-        --       let sql =
-        --             "-- codd: connection=" <> connStr <> ",no-txn\nSOME SQL"
-        --       in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-        --             `shouldBe` Right SqlMigration
-        --                          { migrationName       = "any-name.sql"
-        --                          , nonDestructiveSql   = Just $ mkValidSql sql
-        --                          , nonDestructiveForce = True
-        --                          , nonDestructiveInTxn = False
-        --                          , destructiveSql      = Nothing
-        --                          , destructiveInTxn    = True
-        --                          }
+        it "Sql Migration connection and custom options"
+          $ property
+          $ \(ConnStringGen connStr connInfo) -> do
+              let
+                sql1 =
+                  "\n-- codd: no-txn\n"
+                    <> "\n\n-- codd-connection: "
+                    <> connStr
+                    <> "\n\nSOME SQL"
+                sql2 =
+                  "\n\n-- codd-connection: "
+                    <> connStr
+                    <> "\n-- codd: in-txn\n"
+                    <> "SOME SQL"
+              parseSqlMigrationSimpleWorkflow "any-name.sql" sql1
+                `shouldBe` Right SqlMigration
+                             { migrationName            = "any-name.sql"
+                             , nonDestructiveSql        = Just $ mkValidSql sql1
+                             , nonDestructiveForce      = True
+                             , nonDestructiveInTxn      = False
+                             , destructiveSql           = Nothing
+                             , destructiveInTxn         = True
+                             , nonDestructiveCustomConn = Just connInfo
+                             }
+
+              parseSqlMigrationSimpleWorkflow "any-name.sql" sql2
+                `shouldBe` Right SqlMigration
+                             { migrationName            = "any-name.sql"
+                             , nonDestructiveSql        = Just $ mkValidSql sql2
+                             , nonDestructiveForce      = True
+                             , nonDestructiveInTxn      = True
+                             , destructiveSql           = Nothing
+                             , destructiveInTxn         = True
+                             , nonDestructiveCustomConn = Just connInfo
+                             }
 
         it "Sql Migration connection option alone"
           $ property
@@ -337,7 +358,9 @@ spec = do
       it "Gibberish after -- codd:"
         $ let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
           in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` isLeft
+                `shouldSatisfy` \(Left err) ->
+                                                                  -- Error message is specific about what is wrong
+                                  "complete gibberish" `Text.isInfixOf` err
 
       it "Duplicate options"
         $ let sql =
@@ -356,6 +379,17 @@ spec = do
 
       it "Mistyped connection string option"
         $ let sql = "-- codd-connection: blah\n" <> "ANY SQL HERE"
+          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
+                `shouldSatisfy` \(Left err) ->
+                                            -- Nice error message explaining valid format
+                                  "postgres://" `Text.isInfixOf` err
+
+      it "Two connection strings"
+        $ let
+            sql =
+              "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
+                <> "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
+                <> "ANY SQL HERE"
           in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
                 `shouldSatisfy` isLeft
 

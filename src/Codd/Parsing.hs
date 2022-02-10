@@ -1,6 +1,7 @@
 module Codd.Parsing
   ( SqlMigration(..)
   , AddedSqlMigration(..)
+  , CoddCommentParseResult(..)
   , SqlPiece(..)
   , ParsedSql(..)
   , ParsingOptions(..)
@@ -18,7 +19,6 @@ module Codd.Parsing
   , parseMigrationTimestamp
   , parseSqlPieces
   , toMigrationTimestamp
-  , coddConnStringCommentParser
   ) where
 
 import           Codd.Types                     ( DeploymentWorkflow(..) )
@@ -52,9 +52,7 @@ import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
-import           Data.Maybe                     ( fromMaybe
-                                                , mapMaybe
-                                                )
+import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time.Clock                ( UTCTime(..) )
@@ -62,7 +60,6 @@ import           Data.Time.Format.ISO8601       ( iso8601ParseM )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
-import           Debug.Trace
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
 
@@ -361,15 +358,15 @@ parseWithEscapeCharProper untilc = do
     Just _ -> pure cs
 
 
--- | Parses a string in the format protocol://username[:password]@host:port/database_name
+-- | Parses a string in the format postgres://username[:password]@host:port/database_name
 connStringParser :: Parser ConnectInfo
 connStringParser = do
   void $ string "postgres://"
-  usr <- traceShow @String "username" <$> idParser "username"
+  usr <- idParser "username"
   pwd <- (char ':' *> idParser "password") <|> pure ""
-  void $ traceShow @String "at-sign" <$> char '@'
-  host <- traceShow @String "host" <$> idParser "host" -- TODO: IPv6 addresses such as ::1 ??
-  void $ char ':'
+  void $ char '@'
+  host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
+  void $ char ':' <|> fail "Missing colon after host"
   port <- Parsec.decimal
     <|> fail "Could not find a port in the connection string."
   void $ char '/'
@@ -395,14 +392,8 @@ connStringParser = do
 optionParser :: Parser SectionOption
 optionParser = do
   skipJustSpace
-  x <-
-    force
-    <|> nonDest
-    <|> dest
-    <|> inTxn
-    <|> noTxn
-    <|> fail
-          "Valid options after '-- codd:' are 'non-destructive', 'destructive', 'in-txn', 'no-txn', 'force'"
+  x <- force <|> nonDest <|> dest <|> inTxn <|> noTxn <|> fail
+    "Valid options after '-- codd:' are 'in-txn', 'no-txn', 'force'"
   skipJustSpace
   return x
  where
@@ -416,27 +407,37 @@ optionParser = do
 skipJustSpace :: Parser ()
 skipJustSpace = skipWhile (== ' ')
 
--- | Parses a "-- codd: option1, option2" line.
-coddCommentParser :: Parser [SectionOption]
+data CoddCommentParseResult a = CoddCommentWithGibberish !Text | CoddCommentSuccess !a
+
+-- | Parses a "-- codd: option1, option2" line. Consumes all available input in case
+-- of malformed codd options!
+coddCommentParser :: Parser (CoddCommentParseResult [SectionOption])
 coddCommentParser = do
   void $ string "--"
   skipJustSpace
   void $ string "codd:"
   skipJustSpace
-  opts <- optionParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
-  endOfLine
-  pure opts
+  parseOptions <|> CoddCommentWithGibberish . Text.stripEnd <$> Parsec.takeText
+ where
+  parseOptions = do
+    opts <- optionParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
+    endOfLine
+    pure $ CoddCommentSuccess opts
 
--- | Parses a "-- codd-connection: postgres://...." line.
-coddConnStringCommentParser :: Parser ConnectInfo
+-- | Parses a "-- codd-connection: postgres://...." line. Consumes all available input
+-- in case of a malformed connection string.
+coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectInfo)
 coddConnStringCommentParser = do
-  void $ traceShow @String "--" <$> string "--"
+  void $ string "--"
   skipJustSpace
-  void $ traceShow @String "CODD-CONNECTION" <$> string "codd-connection:"
+  void $ string "codd-connection:"
   skipJustSpace
-  connInfo <- connStringParser
-  endOfLine
-  pure connInfo
+  parseConn <|> CoddCommentWithGibberish . Text.stripEnd <$> Parsec.takeText
+ where
+  parseConn = do
+    connInfo <- connStringParser
+    endOfLine
+    pure $ CoddCommentSuccess connInfo
 
 isWhiteSpacePiece :: SqlPiece -> Bool
 isWhiteSpacePiece (WhiteSpacePiece _) = True
@@ -462,9 +463,8 @@ splitCoddOpts
   :: [SqlPiece] -> Either String ([SectionOption], Maybe ConnectInfo)
 splitCoddOpts ps =
   let
-    firstComments = traceShowId $ filter isCommentPiece $ Prelude.takeWhile
-      (\p -> isCommentPiece p || isWhiteSpacePiece p)
-      ps
+    firstComments = filter isCommentPiece
+      $ Prelude.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
     allOptSections = mapMaybe
       ( (\case
           Left  _    -> Nothing
@@ -473,28 +473,42 @@ splitCoddOpts ps =
       . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
       )
       firstComments
-    customConnString = traceShowId $ mapMaybe
+    customConnString = mapMaybe
       ( (\case
-          Left  _        -> traceShowId Nothing
+          Left  _        -> Nothing
           Right connInfo -> Just connInfo
         )
-      . ( parseOnly (coddConnStringCommentParser <* endOfInput)
-        . traceShowId
-        . sqlPieceText
-        )
+      . (parseOnly (coddConnStringCommentParser <* endOfInput) . sqlPieceText)
       )
       firstComments
     headMay []      = Nothing
     headMay (x : _) = Just x
   in
+    -- Urgh.. is there no better way of pattern matching the stuff below?
     case (allOptSections, customConnString) of
       (_ : _ : _, _) ->
-        Left "There must be at most one '-- codd:' comment in a migration"
+        Left
+          "There must be at most one '-- codd:' comment in the first lines of a migration"
       (_, _ : _ : _) ->
         Left
-          "There must be at most one '-- codd-connection:' comment in a migration"
-      _ ->
-        Right (fromMaybe [] $ headMay allOptSections, headMay customConnString)
+          "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+      _ -> case (headMay allOptSections, headMay customConnString) of
+        (Just (CoddCommentWithGibberish badOptions), _) ->
+          Left
+            $ "The options '"
+            <> Text.unpack badOptions
+            <> "' are invalid. Valid options are a comma-separated list of 'in-txn', 'no-txn', 'force'"
+        (_, Just (CoddCommentWithGibberish badConn)) ->
+          Left
+            $ "The connection string '"
+            <> Text.unpack badConn
+            <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape 'at' signs and colons."
+        (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
+          Right (opts, Just conn)
+        (Just (CoddCommentSuccess opts), Nothing) -> Right (opts, Nothing)
+        (Nothing, Just (CoddCommentSuccess conn)) -> Right ([], Just conn)
+        (Nothing, Nothing) -> Right ([], Nothing)
+
 
 
 piecesToText :: Foldable t => t SqlPiece -> Text
