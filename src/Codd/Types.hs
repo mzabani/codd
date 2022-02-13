@@ -1,7 +1,6 @@
 module Codd.Types
     ( SqlFilePath(..)
     , ChecksumAlgo(..)
-    , DeploymentWorkflow(..)
     , SqlRole(..)
     , SqlSchema(..)
     , Include(..)
@@ -19,14 +18,10 @@ import           Data.Text                      ( Text )
 import           Data.Time                      ( NominalDiffTime
                                                 , secondsToNominalDiffTime
                                                 )
-import           Database.PostgreSQL.Simple.Time
-                                                ( UTCTimestamp )
 import           Database.PostgreSQL.Simple.ToField
                                                 ( ToField )
 
 newtype SqlFilePath = SqlFilePath { unSqlFilePath :: FilePath } deriving newtype (Eq, Ord, Show)
-
-data DeploymentWorkflow = SimpleDeployment | BlueGreenSafeDeploymentUpToAndIncluding UTCTimestamp deriving stock Show
 
 data RetryBackoffPolicy = ExponentialBackoff NominalDiffTime | ConstantBackoff NominalDiffTime deriving stock (Show, Eq)
 data RetryPolicy = RetryPolicy Int RetryBackoffPolicy

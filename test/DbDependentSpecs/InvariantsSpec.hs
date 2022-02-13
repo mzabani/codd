@@ -1,14 +1,9 @@
 module DbDependentSpecs.InvariantsSpec where
 
-import           Codd                           ( withDbAndDrop )
-import           Codd.Analysis                  ( DestructiveSectionCheck(..)
-                                                , MigrationCheck(..)
-                                                , NonDestructiveSectionCheck(..)
+import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
+import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( withConnection )
@@ -33,6 +28,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , aroundTestDbInfo
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , withDbAndDrop
                                                 )
 import           Test.Hspec
 import           UnliftIO.Concurrent            ( threadDelay )
@@ -48,8 +44,6 @@ timestampsMig = AddedSqlMigration
         , nonDestructiveForce      = False
         , nonDestructiveInTxn      = True
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 0)
 lotsOfObjectsMigration = AddedSqlMigration
@@ -65,8 +59,6 @@ lotsOfObjectsMigration = AddedSqlMigration
         , nonDestructiveForce      = False
         , nonDestructiveInTxn      = True
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 0)
 
@@ -85,9 +77,8 @@ spec = do
                 $
                     -- This is much more a test of postgresql-simple than Codd. But it's such an important property to know that holds
                     -- that we test for it here anyway.
-                  \dbInfo ->
+                  \dbInfo@CoddSettings { migsConnString } ->
                       let
-                          appConnInfo = superUserInAppDatabaseConnInfo dbInfo
                           veryCloseUtcTimes =
                               zip [0 ..]
                                   $  map (UTCTime (fromGregorian 2020 1 1))
@@ -116,33 +107,51 @@ spec = do
                                   )
                                   veryCloseUtcTimes
                       in
-                          withConnection appConnInfo $ \conn -> do
-                              void $ DB.executeMany
-                                  conn
-                                  "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)"
-                                  migTimes
-                              timesFromDb1 :: [(Int, UTCTime, UTCTime)] <-
-                                  DB.query
+                          do
+                              putStrLn "Right before!"
+                              withConnection migsConnString $ \conn -> do
+                                  putStrLn "INSIDE!"
+                                  void $ DB.executeMany
                                       conn
-                                      "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
-                                      ()
-                              timesFromDb2 :: [(Int, UTCTime, DB.UTCTimestamp)] <-
-                                  DB.query
-                                      conn
-                                      "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
-                                      ()
-                              timesFromDb2 `shouldBe` migTimes
-                              map (\(n, t1, t2) -> (n, t1, DB.Finite t2))
+                                      "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)"
+                                      migTimes
+                                  timesFromDb1 :: [(Int, UTCTime, UTCTime)] <-
+                                      DB.query
+                                          conn
+                                          "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
+                                          ()
+                                  timesFromDb2 :: [ ( Int
+                                        , UTCTime
+                                        , DB.UTCTimestamp
+                                        )
+                                      ]                               <-
+                                      DB.query
+                                          conn
+                                          "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
+                                          ()
+                                  timesFromDb2 `shouldBe` migTimes
+                                  map
+                                          (\(n, t1, t2) -> (n, t1, DB.Finite t2)
+                                          )
+                                          timesFromDb1
+                                      `shouldBe` timesFromDb2
                                   timesFromDb1
-                                  `shouldBe` timesFromDb2
-                              timesFromDb1
-                                  `shouldBeStrictlySortedOn` (\(v, _, _) -> v)
-                              timesFromDb1
-                                  `shouldBeStrictlySortedOn` (\(_, t1, _) -> t1)
-                              timesFromDb1
-                                  `shouldBeStrictlySortedOn` (\(_, _, t2) -> t2)
-                              timesFromDb2
-                                  `shouldBeStrictlySortedOn` (\(_, _, t2) -> t2)
+                                      `shouldBeStrictlySortedOn` (\(v, _, _) ->
+                                                                     v
+                                                                 )
+                                  timesFromDb1
+                                      `shouldBeStrictlySortedOn` (\(_, t1, _) ->
+                                                                     t1
+                                                                 )
+                                  timesFromDb1
+                                      `shouldBeStrictlySortedOn` (\(_, _, t2) ->
+                                                                     t2
+                                                                 )
+                                  timesFromDb2
+                                      `shouldBeStrictlySortedOn` (\(_, _, t2) ->
+                                                                     t2
+                                                                 )
+                                  putStrLn "All tests passed!"
 
             aroundTestDbInfo
                 $ it "We can't let impure properties affect our DB Hashing"
@@ -155,13 +164,13 @@ spec = do
                               }
                       dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
                           dbInfo
-                          (flip withConnection
-                                (readHashesFromDatabaseWithSettings dbInfo)
+                          (`withConnection` readHashesFromDatabaseWithSettings
+                              dbInfo
                           )
                       threadDelay (5 * 1000 * 1000)
                       dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
                           dbInfo
-                          (flip withConnection
-                                (readHashesFromDatabaseWithSettings dbInfo)
+                          (`withConnection` readHashesFromDatabaseWithSettings
+                              dbInfo
                           )
                       dbHashes1 `shouldBe` dbHashes2

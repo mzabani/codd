@@ -22,10 +22,7 @@ import           Codd.Query                     ( execvoid_
                                                 , query
                                                 , unsafeQuery1
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow
-                                                    ( SimpleDeployment
-                                                    )
-                                                , RetryPolicy(..)
+import           Codd.Types                     ( RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
                                                 , singleTryPolicy
                                                 )
@@ -56,7 +53,6 @@ import           Data.List                      ( find
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( isJust
-                                                , isNothing
                                                 , mapMaybe
                                                 )
 import           Data.String                    ( fromString )
@@ -79,7 +75,7 @@ import           UnliftIO.Exception             ( IOException
                                                 , handleJust
                                                 , onException
                                                 , throwIO
-                                                , tryAny
+                                                , tryJust
                                                 )
 
 dbIdentifier :: Text -> DB.Query
@@ -99,9 +95,14 @@ withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
                 then throwIO e
                 else threadDelay (1000 * 100) >> go (n - 1)
             Right conn -> action conn
-    go n = bracket (tryAny $ liftIO $ DB.connect connStr)
+    go n = bracket (tryTimeout $ liftIO $ DB.connect connStr)
                    (either (const $ pure ()) (liftIO . DB.close))
                    (wrappedAction n)
+    tryTimeout = tryJust $ \(e :: IOException) ->
+        let err = Text.pack $ show e
+        in  if "libpq" `Text.isInfixOf` err && "FATAL" `Text.isInfixOf` err
+                then Just e
+                else Nothing
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
@@ -133,59 +134,67 @@ createEmptyDbIfNecessary
      . (MonadUnliftIO m, MonadIO m, n ~ NoLoggingT m)
     => CoddSettings
     -> m ()
-createEmptyDbIfNecessary settings@CoddSettings { superUserConnString, txnIsolationLvl }
+createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl }
     = runNoLoggingT $ applyMigrationsInternal applyZeroMigs settings
     -- Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
     -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
   where
     applyZeroMigs
         :: CanUpdateCoddSchema
-        -> [NonEmpty MigrationToRun]
+        -> [NonEmpty AddedSqlMigration]
         -> n (ApplyMigsResult ())
-    applyZeroMigs canUpdSchema _ = baseApplyMigsBlock superUserConnString
+    applyZeroMigs canUpdSchema _ = baseApplyMigsBlock migsConnString
                                                       singleTryPolicy
                                                       (\_ _ -> pure ())
                                                       txnIsolationLvl
                                                       canUpdSchema
                                                       []
 
-checkDbExists
-    :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> Text -> m Bool
-checkDbExists connInfo dbName =
+-- | Returns True on any libpq connection error with the
+-- supplied connection string.
+checkNeedsBootstrapping
+    :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> m Bool
+checkNeedsBootstrapping connInfo =
     handleJust
-            (\e -> if isDbDoesNotExistError e
+            (\e ->
+                -- Maybe the default migration connection string doesn't work because:
+                -- - The DB does not exist.
+                -- - CONNECT rights not granted.
+                -- - User doesn't exist.
+                -- In any case, it's best to be conservative and consider any libpq errors
+                -- as errors that might just require bootstrapping.
+                   if isLibPqError e
                 then Just False
                 else
-                                        -- Let other exceptions blow up
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- Let other exceptions blow up
                      Nothing
             )
             pure
-        $ withConnection connInfo
-        $ \conn -> isSingleTrue <$> query
-              conn
-              "SELECT TRUE FROM pg_database WHERE datname = ?"
-              (DB.Only dbName)
+        $ withConnection connInfo (const $ pure True)
+  where
+    isLibPqError :: IOException -> Bool
+    isLibPqError e =
+        let err = Text.pack $ show e in "libpq: failed" `Text.isInfixOf` err
 
 applyMigrationsInternal
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => (CanUpdateCoddSchema -> [BlockOfMigrations] -> m (ApplyMigsResult a))
     -> CoddSettings
     -> m a
-applyMigrationsInternal txnApp coddSettings@CoddSettings { superUserConnString, dbName, sqlMigrations, txnIsolationLvl }
+applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, dbName, sqlMigrations, txnIsolationLvl }
     = do
-        logDebugN $ "Checking if Database " <> dbName <> " exists..."
-        dbExists <- checkDbExists superUserConnString dbName
-        let appDbSuperUserConnString = superUserConnString
-                { DB.connectDatabase = Text.unpack dbName
-                }
+        logDebugN
+            $  "Checking if Database '"
+            <> dbName
+            <> "' is accessible with the configured connection string..."
+        dbExists <- checkNeedsBootstrapping migsConnString
 
         if dbExists
             then do
                 logDebugN
                     "Checking if Codd Schema exists and creating it if necessary..."
 
-                withConnection appDbSuperUserConnString
-                    $ \conn -> createCoddSchema txnIsolationLvl conn
+                withConnection migsConnString $ createCoddSchema txnIsolationLvl
 
                 blocksOfMigsToRun <- collectPendingMigrations coddSettings
                 ApplyMigsResult _ actionAfterResult <- txnApp
@@ -214,7 +223,7 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { superUserConnString, 
                 ApplyMigsResult ranBootstrapMigs _ <- txnApp
                     CannotUpdateCoddSchema
                     bootstrapMigBlocks
-                dbWasCreated <- checkDbExists superUserConnString dbName
+                dbWasCreated <- checkNeedsBootstrapping migsConnString
                 unless dbWasCreated $ do
                     logErrorN
                         $  "It was not possible to connect to database '"
@@ -222,7 +231,7 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { superUserConnString, 
                         <> "' after running bootstrap migrations. Exiting."
                     liftIO exitFailure
 
-                withConnection appDbSuperUserConnString $ \conn -> do
+                withConnection migsConnString $ \conn -> do
                     logInfoN "Creating Codd Schema..."
                     createCoddSchema txnIsolationLvl conn
 
@@ -232,27 +241,22 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { superUserConnString, 
                         $ \(AddedSqlMigration sqlMig migTimestamp, timeFinished) ->
                               liftIO $ void $ DB.execute
                                   conn
-                                  "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) \
-                                \ VALUES (?, ?, ?, NULL)"
+                                  "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
+                                \ VALUES (?, ?, ?)"
                                   ( migTimestamp
                                   , migrationName sqlMig
                                   , timeFinished
                                   )
 
                 logInfoN "Running all other remaining migrations..."
+                liftIO $ putStrLn "BOOTSRAP!"
                 ApplyMigsResult _ actionAfterResult <- txnApp
                     CanUpdateCoddSchema
                     otherMigBlocks
                 pure actionAfterResult
 
 
-isDbDoesNotExistError :: IOException -> Bool
-isDbDoesNotExistError e =
-    let err = Text.pack $ show e
-    in  "database "
-            `Text.isInfixOf` err
-            &&               " does not exist"
-            `Text.isInfixOf` err
+
 
 isSingleTrue :: [DB.Only Bool] -> Bool
 isSingleTrue v = v == [DB.Only True]
@@ -276,7 +280,7 @@ createCoddSchema txnIsolationLvl conn =
             execvoid_ conn
                 $  "CREATE TABLE codd_schema.sql_migrations ( "
                 <> " migration_timestamp timestamptz not null"
-                <> ", non_dest_section_applied_at timestamptz not null "
+                <> ", applied_at timestamptz not null "
                 <> ", dest_section_applied_at timestamptz "
                 <> ", name text not null "
                 <> ", unique (name), unique (migration_timestamp))"
@@ -289,8 +293,7 @@ collectBootstrapMigrations
     => Either [FilePath] [AddedSqlMigration]
     -> m ([BlockOfMigrations], [BlockOfMigrations])
 collectBootstrapMigrations sqlMigrations =
-    parseMigrationFiles [] [] sqlMigrations
-        <&> span (isJust . blockCustomConnInfo)
+    parseMigrationFiles [] sqlMigrations <&> span (isJust . blockCustomConnInfo)
 
 
 -- | Parses on-disk migrations and checks for destructive SQL sections of migrations on the Database to collect which migrations must run,
@@ -299,91 +302,69 @@ collectPendingMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
     -> m [BlockOfMigrations]
-collectPendingMigrations CoddSettings { superUserConnString, dbName, sqlMigrations, txnIsolationLvl }
+collectPendingMigrations CoddSettings { migsConnString, dbName, sqlMigrations, txnIsolationLvl }
     = do
         let appDbSuperUserConnString =
-                superUserConnString { DB.connectDatabase = Text.unpack dbName }
+                migsConnString { DB.connectDatabase = Text.unpack dbName }
         withConnection appDbSuperUserConnString $ \conn -> do
             -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
             logDebugN
-                "Checking in the Database which SQL migrations have already run to completion..."
-            migsThatHaveRunSomeSection :: [(FilePath, Bool)] <-
-                liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ query
-                    conn
-                    "SELECT name, dest_section_applied_at IS NOT NULL FROM codd_schema.sql_migrations"
-                    ()
-            let migsCompleted = mapMaybe
-                    (\(n, f) -> if f then Just n else Nothing)
-                    migsThatHaveRunSomeSection
-                migsToRunDestSection = mapMaybe
-                    (\(n, f) -> if f then Nothing else Just n)
-                    migsThatHaveRunSomeSection
+                "Checking in the Database which SQL migrations have already been applied..."
+            migsAlreadyApplied :: [FilePath] <-
+                liftIO
+                $   beginCommitTxnBracket txnIsolationLvl conn
+                $   map DB.fromOnly
+                <$> query
+                        conn
+                        "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
+                        ()
 
             logDebugN "Parse-checking all pending SQL Migrations..."
-            parseMigrationFiles migsCompleted migsToRunDestSection sqlMigrations
+            parseMigrationFiles migsAlreadyApplied sqlMigrations
 
 parseMigrationFiles
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => [FilePath]
-    -> [FilePath]
     -> Either [FilePath] [AddedSqlMigration]
     -> m [BlockOfMigrations]
-parseMigrationFiles migsCompleted migsToRunDestSection sqlMigrations = do
-    pendingParsedMigrations :: [MigrationToRun] <- either
+parseMigrationFiles migsCompleted sqlMigrations = do
+    pendingParsedMigrations :: [AddedSqlMigration] <- either
         (\(sqlDirs :: [FilePath]) -> do
-            allSqlMigrationFiles :: [(FilePath, FilePath)] <-
+            pendingSqlMigrationFiles :: [(FilePath, FilePath)] <-
                 fmap (sortOn fst . concat) $ forM sqlDirs $ \dir -> do
                     filesInDir <- listDirectory dir
                     return $ map (\fn -> (fn, dir </> fn)) $ filter
-                        (".sql" `List.isSuffixOf`)
+                        (\fn ->
+                            ".sql"
+                                `List.isSuffixOf` fn
+                                &&                fn
+                                `notElem`         migsCompleted
+                        )
                         filesInDir
-            let
-                pendingSqlMigrationFiles = mapMaybe
-                    (\case
-                        (n, fp)
-                            | n `elem` migsCompleted -> Nothing
-                            | n `elem` migsToRunDestSection -> Just
-                                ((n, fp), ApplyDestructiveOnly)
-                            | otherwise -> Just
-                                ((n, fp), ApplyNonDestructiveOnly)
-                    )
-                    allSqlMigrationFiles
-            sqlMigrationsContents :: [ ( (FilePath, ByteString)
-                  , ApplySingleMigration
-                  )
-                ]                                               <-
-                liftIO $ pendingSqlMigrationFiles `forM` \((fn, fp), ap) ->
-                    readFile fp >>= (\contents -> pure ((fn, contents), ap))
+            sqlMigrationsContents :: [(FilePath, ByteString)] <-
+                liftIO
+                $      pendingSqlMigrationFiles
+                `forM` (\(fn, fp) -> (,) fn <$> readFile fp)
             -- TODO: decodeUtf8Lenient ?
             parsedMigs <-
-                forM sqlMigrationsContents $ \((fn, decodeUtf8 -> sql), ap) ->
-                    do
-                        let
-                            parsedMigGood = parseAddedSqlMigration
-                                SimpleDeployment
-                                DoParse
-                                fn
-                                sql
-                        parsedMigFinal <- do
-                            case parsedMigGood of
-                                Right _ -> pure parsedMigGood
-                                Left  _ -> do
-                                    logWarnN
-                                        $ Text.pack fn
-                                        <> " could not be parsed and thus will be considered in is entirety as in-txn"
-                                    pure $ parseAddedSqlMigration
-                                        SimpleDeployment
-                                        NoParse
-                                        fn
-                                        sql
-                        pure (fn, flip MigrationToRun ap <$> parsedMigFinal)
+                forM sqlMigrationsContents $ \(fn, decodeUtf8 -> sql) -> do
+                    let parsedMigGood = parseAddedSqlMigration DoParse fn sql
+                    parsedMigFinal <- do
+                        case parsedMigGood of
+                            Right _ -> pure parsedMigGood
+                            Left  _ -> do
+                                logWarnN
+                                    $ Text.pack fn
+                                    <> " could not be parsed and thus will be considered in is entirety as in-txn"
+                                pure $ parseAddedSqlMigration NoParse fn sql
+                    pure (fn, parsedMigFinal)
             case find (\(_, m) -> isLeft m) parsedMigs of
                 Just (fn, Left e) ->
                     error $ "Error parsing migration " ++ fn ++ ": " ++ show e
                 _ -> pure ()
 
             return
-                $ either (error "Failed to parse-check pending Migrations") id
+                $ either (error "Failed to parse-check pending migrations") id
                 $ traverse snd parsedMigs
         )
         (\(ams :: [AddedSqlMigration]) ->
@@ -391,11 +372,10 @@ parseMigrationFiles migsCompleted migsToRunDestSection sqlMigrations = do
                 $ mapMaybe
                       (\case
                           a@(AddedSqlMigration mig _)
-                              | migrationName mig `elem` migsCompleted -> Nothing
-                              | migrationName mig `elem` migsToRunDestSection -> Just
-                              $ MigrationToRun a ApplyDestructiveOnly
-                              | otherwise -> Just
-                              $ MigrationToRun a ApplyNonDestructiveOnly
+                              | migrationName mig `elem` migsCompleted
+                              -> Nothing
+                              | otherwise
+                              -> Just a
                       )
                 $ sortOn (\(AddedSqlMigration _ ts) -> ts) ams
         )
@@ -403,8 +383,11 @@ parseMigrationFiles migsCompleted migsToRunDestSection sqlMigrations = do
 
     -- Run all Migrations now. Group them in blocks of consecutive transactions by in-txn/no-txn and custom
     -- connection string.
-    return $ NE.groupWith (\m -> (runInTxn m, migToRunCustomConnInfo m))
-                          pendingParsedMigrations
+    return $ NE.groupWith
+        (\(AddedSqlMigration m _) ->
+            (nonDestructiveInTxn m, nonDestructiveCustomConn m)
+        )
+        pendingParsedMigrations
 
 data ApplyMigsResult a = ApplyMigsResult
     { migsAppliedAt     :: [(AddedSqlMigration, UTCTime)]
@@ -463,15 +446,13 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
 
 
   where
-    runMigs conn withRetryPolicy migs =
-        forM migs $ \(MigrationToRun asqlmig ap) ->
-            (,) asqlmig
-                <$> applySingleMigration conn
-                                         isolLvl
-                                         withRetryPolicy
-                                         ap
-                                         canUpdSchema
-                                         asqlmig
+    runMigs conn withRetryPolicy migs = forM migs $ \asqlmig ->
+        (,) asqlmig
+            <$> applySingleMigration conn
+                                     isolLvl
+                                     withRetryPolicy
+                                     canUpdSchema
+                                     asqlmig
     runBlock
         :: (DB.Connection -> m b)
         -> DB.Connection
@@ -488,11 +469,10 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
                         <*> act conn
                 logDebugN "COMMITed transaction"
                 pure res
-            else do
-                liftIO $ putStrLn "RUNNING no-txn block"
+            else
                 ApplyMigsResult
-                    <$> runMigs conn retryPol (NE.toList migBlock)
-                    <*> act conn
+                <$> runMigs conn retryPol (NE.toList migBlock)
+                <*> act conn
 
 -- | This can be used as a last-action when applying migrations to
 -- hard-check checksums, logging differences, success and throwing
@@ -524,25 +504,14 @@ softCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
     logChecksumsComparison cksums expectedHashes
     pure cksums
 
-data ApplySingleMigration = ApplyDestructiveOnly | ApplyNonDestructiveOnly deriving stock Show
-
-data MigrationToRun = MigrationToRun AddedSqlMigration ApplySingleMigration
-    deriving stock Show
-runInTxn :: MigrationToRun -> Bool
-runInTxn (MigrationToRun (AddedSqlMigration m _) ap) = case ap of
-    ApplyDestructiveOnly    -> destructiveInTxn m
-    ApplyNonDestructiveOnly -> nonDestructiveInTxn m
-
-migToRunCustomConnInfo :: MigrationToRun -> Maybe DB.ConnectInfo
-migToRunCustomConnInfo (MigrationToRun AddedSqlMigration { addedSqlMig } _) =
-    nonDestructiveCustomConn addedSqlMig
-
-type BlockOfMigrations = NonEmpty MigrationToRun
+type BlockOfMigrations = NonEmpty AddedSqlMigration
 blockInTxn :: BlockOfMigrations -> Bool
-blockInTxn (m1 :| _) = runInTxn m1
+blockInTxn (AddedSqlMigration { addedSqlMig } :| _) =
+    nonDestructiveInTxn addedSqlMig
 
 blockCustomConnInfo :: BlockOfMigrations -> Maybe DB.ConnectInfo
-blockCustomConnInfo (m1 :| _) = migToRunCustomConnInfo m1
+blockCustomConnInfo (AddedSqlMigration { addedSqlMig } :| _) =
+    nonDestructiveCustomConn addedSqlMig
 
 data CanUpdateCoddSchema = CanUpdateCoddSchema | CannotUpdateCoddSchema
 
@@ -553,44 +522,35 @@ applySingleMigration
     => DB.Connection
     -> TxnIsolationLvl
     -> RetryPolicy
-    -> ApplySingleMigration
     -> CanUpdateCoddSchema
     -> AddedSqlMigration
     -> m UTCTime
-applySingleMigration conn isolLvl statementRetryPol ap canUpdSchema (AddedSqlMigration sqlMig migTimestamp)
-    = case ap of
-        ApplyNonDestructiveOnly -> do
-            let fn = migrationName sqlMig
-            if isNothing (destructiveSql sqlMig)
-                then logDebugN $ "Applying " <> Text.pack fn
-                else
-                    logDebugN
-                    $  "Applying non-destructive section of "
-                    <> Text.pack fn
+applySingleMigration conn isolLvl statementRetryPol canUpdSchema (AddedSqlMigration sqlMig migTimestamp)
+    = do
+        let fn = migrationName sqlMig
+        logDebugN $ "Applying " <> Text.pack fn
 
-            case nonDestructiveSql sqlMig of
-                Nothing -> pure ()
-                Just nonDestSql ->
-                    let inTxn = if nonDestructiveInTxn sqlMig
-                            then InTransaction
-                            else NotInTransaction statementRetryPol
-                    in  multiQueryStatement_ inTxn conn nonDestSql
-                                                                                                                                                                                                                                                                                                                                        -- since every migration will have both sections marked as ran sequentially.
+        case nonDestructiveSql sqlMig of
+            Nothing -> pure ()
+            Just nonDestSql ->
+                let inTxn = if nonDestructiveInTxn sqlMig
+                        then InTransaction
+                        else NotInTransaction statementRetryPol
+                in  multiQueryStatement_ inTxn conn nonDestSql
+                                                                                                                                                                                                                                                                                                                                    -- since every migration will have both sections marked as ran sequentially.
 
-                                                                                                                                                                                                                                                                                                                    -- If already in a transaction, then just execute, otherwise
-                                                                                                                                                                                                                                                                                                                    -- start read-write txn
-            let query1_ :: DB.ToRow b => DB.Query -> b -> m (DB.Only UTCTime)
-                query1_ q qargs = if nonDestructiveInTxn sqlMig
-                    then unsafeQuery1 conn q qargs
-                    else beginCommitTxnBracket isolLvl conn
-                        $ unsafeQuery1 conn q qargs
+                                                                                                                                                                                                                                                                                                                -- If already in a transaction, then just execute, otherwise
+                                                                                                                                                                                                                                                                                                                -- start read-write txn
+        let query1_ :: DB.ToRow b => DB.Query -> b -> m (DB.Only UTCTime)
+            query1_ q qargs = if nonDestructiveInTxn sqlMig
+                then unsafeQuery1 conn q qargs
+                else beginCommitTxnBracket isolLvl conn
+                    $ unsafeQuery1 conn q qargs
 
-            case canUpdSchema of
-                CanUpdateCoddSchema -> DB.fromOnly <$> query1_
-                    "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, non_dest_section_applied_at, dest_section_applied_at) \
-                            \ VALUES (?, ?, now(), CASE WHEN ? THEN now() END) \
-                            \ RETURNING non_dest_section_applied_at"
-                    (migTimestamp, fn, isNothing (destructiveSql sqlMig))
-                CannotUpdateCoddSchema ->
-                    DB.fromOnly <$> query1_ "SELECT now()" ()
-        ApplyDestructiveOnly -> error "BGS mode about to be removed"
+        case canUpdSchema of
+            CanUpdateCoddSchema -> DB.fromOnly <$> query1_
+                "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
+                            \ VALUES (?, ?, now()) \
+                            \ RETURNING applied_at"
+                (migTimestamp, fn)
+            CannotUpdateCoddSchema -> DB.fromOnly <$> query1_ "SELECT now()" ()

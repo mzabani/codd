@@ -6,12 +6,11 @@ import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 , nothingIfEmptyQuery
                                                 , parseSqlMigration
-                                                , parseSqlMigrationSimpleWorkflow
+                                                , parseSqlMigrationOpts
                                                 , parseSqlPieces
                                                 , piecesToText
                                                 , sqlPieceText
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow(..) )
 import           Control.Monad                  ( forM_
                                                 , when
                                                 )
@@ -40,35 +39,6 @@ genSingleSqlStatement = elements validSqlStatements
 
 piecesToParsedSql :: NonEmpty SqlPiece -> ParsedSql
 piecesToParsedSql pcs = WellParsedSql (piecesToText pcs) pcs
-
-data LooseSqlMigration = LooseSqlMigration
-  { lmigrationName       :: FilePath
-  , lnonDestructiveSql   :: Maybe Text
-  , lnonDestructiveForce :: Bool
-  , lnonDestructiveInTxn :: Bool
-  , ldestructiveSql      :: Maybe Text
-  , ldestructiveInTxn    :: Bool
-  }
-  deriving stock (Eq, Show)
-
-shouldBeMigLoosely :: Either a SqlMigration -> LooseSqlMigration -> IO ()
-res `shouldBeMigLoosely` lmig = case res of
-  Left  _ -> expectationFailure "Migration not available in Either"
-  Right m -> do
-    migrationName m `shouldBe` lmigrationName lmig
-    nonDestructiveSql m
-      `shouldSatisfy` \mm -> migMatch mm (lnonDestructiveSql lmig)
-    nonDestructiveForce m `shouldBe` lnonDestructiveForce lmig
-    nonDestructiveInTxn m `shouldBe` lnonDestructiveInTxn lmig
-    destructiveSql m `shouldSatisfy` \mm -> migMatch mm (ldestructiveSql lmig)
-    destructiveInTxn m `shouldBe` ldestructiveInTxn lmig
- where
-  migMatch :: Maybe ParsedSql -> Maybe Text -> Bool
-  migMatch Nothing                     Nothing = True
-  migMatch (Just (ParseFailSqlText _)) _       = False
-  migMatch (Just (WellParsedSql t1 pcs)) (Just t2) =
-    piecesToText pcs == t1 && t1 == t2
-  migMatch _ _ = False
 
 validSqlStatements :: [SqlPiece]
 validSqlStatements =
@@ -267,27 +237,21 @@ spec = do
       context "Valid SQL Migrations" $ do
         it "Plain Sql Migration, missing optional options" $ do
           property $ \(unSyntRandomSql -> plainSql) -> do
-            let parsedMig =
-                  parseSqlMigrationSimpleWorkflow "any-name.sql" plainSql
+            let parsedMig = parseSqlMigration "any-name.sql" plainSql
             parsedMig `shouldBe` Right SqlMigration
               { migrationName            = "any-name.sql"
               , nonDestructiveSql        = Just $ mkValidSql plainSql -- That's right. Simple mode is just Blue-Green-Safe with force-non-destructive enabled
               , nonDestructiveForce      = True
               , nonDestructiveInTxn      = True
-              , destructiveSql           = Nothing
-              , destructiveInTxn         = True
               , nonDestructiveCustomConn = Nothing
               }
         it "Sql Migration options parsed correctly"
           $ let sql = "-- codd: no-txn\nSOME SQL"
-            in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                  `shouldBe` Right SqlMigration
-                               { migrationName            = "any-name.sql"
+            in  parseSqlMigration "any-name.sql" sql `shouldBe` Right
+                  SqlMigration { migrationName            = "any-name.sql"
                                , nonDestructiveSql = Just $ mkValidSql sql
                                , nonDestructiveForce      = True
                                , nonDestructiveInTxn      = False
-                               , destructiveSql           = Nothing
-                               , destructiveInTxn         = True
                                , nonDestructiveCustomConn = Nothing
                                }
 
@@ -305,84 +269,74 @@ spec = do
                     <> connStr
                     <> "\n-- codd: in-txn\n"
                     <> "SOME SQL"
-              parseSqlMigrationSimpleWorkflow "any-name.sql" sql1
-                `shouldBe` Right SqlMigration
-                             { migrationName            = "any-name.sql"
+              parseSqlMigration "any-name.sql" sql1 `shouldBe` Right
+                SqlMigration { migrationName            = "any-name.sql"
                              , nonDestructiveSql        = Just $ mkValidSql sql1
                              , nonDestructiveForce      = True
                              , nonDestructiveInTxn      = False
-                             , destructiveSql           = Nothing
-                             , destructiveInTxn         = True
                              , nonDestructiveCustomConn = Just connInfo
                              }
 
-              parseSqlMigrationSimpleWorkflow "any-name.sql" sql2
-                `shouldBe` Right SqlMigration
-                             { migrationName            = "any-name.sql"
+              parseSqlMigration "any-name.sql" sql2 `shouldBe` Right
+                SqlMigration { migrationName            = "any-name.sql"
                              , nonDestructiveSql        = Just $ mkValidSql sql2
                              , nonDestructiveForce      = True
                              , nonDestructiveInTxn      = True
-                             , destructiveSql           = Nothing
-                             , destructiveInTxn         = True
                              , nonDestructiveCustomConn = Just connInfo
                              }
 
         it "Sql Migration connection option alone"
           $ property
           $ \(ConnStringGen connStr connInfo) ->
-              let sql = "-- codd-connection: " <> connStr <> "\nSOME SQL"
-              in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                    `shouldBe` Right SqlMigration
-                                 { migrationName            = "any-name.sql"
+              let
+                sql =
+                  "-- random comment\n-- codd-connection: "
+                    <> connStr
+                    <> "\nSOME SQL"
+              in  parseSqlMigration "any-name.sql" sql `shouldBe` Right
+                    SqlMigration { migrationName            = "any-name.sql"
                                  , nonDestructiveSql = Just $ mkValidSql sql
                                  , nonDestructiveForce      = True
                                  , nonDestructiveInTxn      = True
                                  , nonDestructiveCustomConn = Just connInfo
-                                 , destructiveSql           = Nothing
-                                 , destructiveInTxn         = True
                                  }
 
 
         it "in-txn and no-txn are mutually exclusive"
           $ let plainSql = "SOME SQL"
                 sql      = "-- codd: no-txn, in-txn\n" <> plainSql
-            in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                  `shouldSatisfy` isLeft
+            in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
         property $ \(unRandomSql -> anyText) -> do
-          parseSqlMigrationSimpleWorkflow "any-name.sql" anyText
+          parseSqlMigration "any-name.sql" anyText
             `shouldSatisfy` \p -> seq p True
 
       it "Gibberish after -- codd:"
         $ let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` \(Left err) ->
-                                                                  -- Error message is specific about what is wrong
-                                  "complete gibberish" `Text.isInfixOf` err
+          in
+            parseSqlMigration "any-name.sql" sql `shouldSatisfy` \(Left err) ->
+                                                                      -- Error message is specific about what is wrong
+              "complete gibberish" `Text.isInfixOf` err
 
       it "Duplicate options"
-        $ let sql =
-                "-- codd: force, non-destructive, in-txn, non-destructive\n"
-                  <> "ANY SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` \case
-                                  Right _   -> False
-                                  Left  err -> "duplicate" `Text.isInfixOf` err
+        $ let sql = "-- codd: in-txn, in-txn\n" <> "ANY SQL HERE"
+          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` \case
+                Right _   -> False
+                Left  err -> "duplicate" `Text.isInfixOf` err
 
       it "Unknown / mistyped options"
-        $ let sql =
-                "-- codd: force, NON-Destructive, in-txn\n" <> "ANY SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` isLeft
+        $ let sql = "-- codd: unknown-txn\n" <> "ANY SQL HERE"
+          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
       it "Mistyped connection string option"
         $ let sql = "-- codd-connection: blah\n" <> "ANY SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` \(Left err) ->
-                                            -- Nice error message explaining valid format
-                                  "postgres://" `Text.isInfixOf` err
+          in
+            parseSqlMigration "any-name.sql" sql
+              `shouldSatisfy` \(Left err) ->
+                                                -- Nice error message explaining valid format
+                                             "postgres://" `Text.isInfixOf` err
 
       it "Two connection strings"
         $ let
@@ -390,33 +344,24 @@ spec = do
               "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
                 <> "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
                 <> "ANY SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` isLeft
+          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
       it "Two -- codd comments"
         $ let sql = "-- codd: in-txn\n--codd: in-txn\n" <> "MORE SQL HERE"
-          in  parseSqlMigrationSimpleWorkflow "any-name.sql" sql
-                `shouldSatisfy` isLeft
+          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
       it "--no-parse forcefully returns a SqlMigration"
-        $          parseSqlMigration SimpleDeployment
-                                     NoParse
-                                     "failed-parsing-migration.sql"
-                                     "-- SQL with comments only!"
+        $          parseSqlMigrationOpts NoParse
+                                         "failed-parsing-migration.sql"
+                                         "-- SQL with comments only!"
         `shouldBe` Right SqlMigration
                      { migrationName            = "failed-parsing-migration.sql"
                      , nonDestructiveSql        = Just
                        $ ParseFailSqlText "-- SQL with comments only!"
                      , nonDestructiveForce      = True
                      , nonDestructiveInTxn      = True
-                     , destructiveSql           = Nothing
-                     , destructiveInTxn         = True
                      , nonDestructiveCustomConn = Nothing
                      }
-
-      it "Can't BEGIN, COMMIT or ROLLBACK Transactions inside SQL migrations"
-        $ pendingWith
-            "Testing this by selecting txid_current() might be more effective"
 
       it "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith

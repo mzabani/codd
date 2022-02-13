@@ -3,17 +3,14 @@ module Codd.Environment
     , getAdminConnInfo
     , getCoddSettings
     , retryPolicyParser
-    , superUserInAppDatabaseConnInfo
     ) where
 
 import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Parsing                   ( AddedSqlMigration
                                                 , connStringParser
-                                                , parseMigrationTimestamp
                                                 , parseWithEscapeCharProper
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , DeploymentWorkflow(..)
                                                 , Include(..)
                                                 , RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
@@ -43,30 +40,27 @@ import           UnliftIO                       ( MonadIO(..) )
 import           UnliftIO.Environment           ( lookupEnv )
 
 data CoddSettings = CoddSettings
-    { dbName              :: Text
+    { dbName           :: Text
     -- ^ The name of the Database the Application will connect to
-    , superUserConnString :: ConnectInfo
+    , migsConnString   :: ConnectInfo
     -- ^ A Connection String which has the power to create databases, grant privileges and a lot more.
-    , sqlMigrations       :: Either [FilePath] [AddedSqlMigration]
+    , sqlMigrations    :: Either [FilePath] [AddedSqlMigration]
     -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
     --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
-    , onDiskHashes        :: Either FilePath DbHashes
+    , onDiskHashes     :: Either FilePath DbHashes
     -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
-    , deploymentWorkflow  :: DeploymentWorkflow
-    -- ^ Simple or Blue-Green-Safe deployment workflow? Simple means no destructive sections are allowed for any migrations and Blue-Green-Safe means
-    -- developers have to keep a file which points to the timestamp of the last migration up to which and including it destructive sections must run the next time.
-    , schemasToHash       :: Include SqlSchema
+    , schemasToHash    :: Include SqlSchema
     -- ^ Selection of Schemas in the DB that we should hash.
-    , extraRolesToHash    :: Include SqlRole
-    -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from superUserConnString is always included in hashing automatically and needs not be added here.
-    , retryPolicy         :: RetryPolicy
+    , extraRolesToHash :: Include SqlRole
+    -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from migsConnString is always included in hashing automatically and needs not be added here.
+    , retryPolicy      :: RetryPolicy
     -- ^ The Retry Policy to be used when applying failing migrations.
-    , txnIsolationLvl     :: TxnIsolationLvl
+    , txnIsolationLvl  :: TxnIsolationLvl
     -- ^ Transaction isolation level to be used when applying migrations.
-    , checksumAlgo        :: ChecksumAlgo
+    , checksumAlgo     :: ChecksumAlgo
     -- ^ Fine tuning that changes the checksum algorithm.
-    , hashedChecksums     :: Bool
+    , hashedChecksums  :: Bool
     -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
     -- by setting this to False.
     }
@@ -170,11 +164,7 @@ getCoddSettings = do
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
-    destructiveUpTo <- parseEnv
-        SimpleDeployment
-        (fmap BlueGreenSafeDeploymentUpToAndIncluding . parseMigrationTimestamp)
-        "CODD_DESTROY_UP_TO_AND_INCLUDING"
-    schemasToHash <- parseEnv
+    schemasToHash   <- parseEnv
         (error
             "Please define the CODD_SCHEMAS environment variable with a space separated list of schema names"
         )
@@ -195,24 +185,19 @@ getCoddSettings = do
     checksumAlgo <- parseEnv (ChecksumAlgo False False)
                              (parseVar checksumAlgoParser)
                              "CODD_CHECKSUM_ALGO"
-    pure CoddSettings { dbName              = appDbName
-                      , superUserConnString = adminConnInfo
-                      , sqlMigrations       = Left sqlMigrationPaths
-                      , onDiskHashes        = Left onDiskHashesDir
-                      , deploymentWorkflow  = destructiveUpTo
-                      , schemasToHash       = schemasToHash
-                      , extraRolesToHash    = extraRolesToHash
-                      , retryPolicy         = retryPolicy
-                      , txnIsolationLvl     = txnIsolationLvl
-                      , checksumAlgo        = checksumAlgo
-                      , hashedChecksums     = True
+    pure CoddSettings { dbName           = appDbName
+                      , migsConnString   = adminConnInfo
+                      , sqlMigrations    = Left sqlMigrationPaths
+                      , onDiskHashes     = Left onDiskHashesDir
+                      , schemasToHash    = schemasToHash
+                      , extraRolesToHash = extraRolesToHash
+                      , retryPolicy      = retryPolicy
+                      , txnIsolationLvl  = txnIsolationLvl
+                      , checksumAlgo     = checksumAlgo
+                      , hashedChecksums  = True
                       }
 
   where
     parseVar parser =
         first Text.pack . parseOnly (parser <* endOfInput) . Text.pack
 
--- | Returns a `ConnectInfo` that will connect to the App's Database with the Super User's credentials.
-superUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
-superUserInAppDatabaseConnInfo CoddSettings { superUserConnString, dbName } =
-    superUserConnString { connectDatabase = Text.unpack dbName }

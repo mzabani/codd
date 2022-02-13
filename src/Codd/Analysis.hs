@@ -4,15 +4,9 @@ This Module is all about analyzing SQL Migrations, by e.g. running them and chec
 
 module Codd.Analysis
     ( MigrationCheck(..)
-    , MigrationCheckSimpleWorkflow(..)
-    , NonDestructiveSectionCheck(..)
-    , DestructiveSectionCheck(..)
-    , canRunEverythingInASingleTransaction
-    , checkMigrationSimpleWorkflow
+    , checkMigration
     ) where
 
-import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal
 import           Codd.Parsing                   ( ParsedSql
                                                     ( ParseFailSqlText
                                                     , WellParsedSql
@@ -21,55 +15,19 @@ import           Codd.Parsing                   ( ParsedSql
                                                 , SqlPiece(BeginTransaction)
                                                 , isTransactionEndingPiece
                                                 )
-import           Control.Monad.Logger           ( MonadLogger )
 import           Data.Foldable                  ( foldl' )
 import           Data.List.NonEmpty             ( NonEmpty((:|)) )
-import           Data.Maybe                     ( isNothing )
 import           Data.Text                      ( Text )
-import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO
-                                                )
 
-newtype MigrationCheckSimpleWorkflow = MigrationCheckSimpleWorkflow { transactionManagementProblem :: Maybe Text }
+newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe Text }
     deriving stock Show
 
-data MigrationCheck = MigrationCheck NonDestructiveSectionCheck
-                                     DestructiveSectionCheck
-    deriving stock Show
 
-data NonDestructiveSectionCheck = NonDestructiveSectionCheck
-    { nonDestSectionIsDestructive   :: Bool
-    , nonDestSectionEndsTransaction :: Bool
-    }
-    deriving stock Show
-
-newtype DestructiveSectionCheck = DestructiveSectionCheck
-    { destSectionEndsTransaction :: Bool
-    }
-    deriving stock Show
-
--- | Returns True iff all pending migrations and the non-destructive section of the one passed as an argument can run in a single transaction.
-canRunEverythingInASingleTransaction
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
-    => CoddSettings
-    -> SqlMigration
-    -> m Bool
-canRunEverythingInASingleTransaction settings mig = do
-    createEmptyDbIfNecessary settings
-    pendingMigBlocks <- collectPendingMigrations settings
-    -- TODO: In Blue-Green-Safe mode, how do we decide this?
-    return
-        $  all blockInTxn pendingMigBlocks
-        && nonDestructiveInTxn mig
-        && isNothing (destructiveSql mig)
-
--- | Checks for problems in a migration for the Simple Workflow mode, including:
+-- | Checks for problems in a migration, including:
 --   1. in-txn migration ROLLBACKs or COMMITs.
 --   2. no-txn migrations BEGIN transaction but never ROLLBACKs or COMMITs it.
-checkMigrationSimpleWorkflow
-    :: SqlMigration -> Either Text MigrationCheckSimpleWorkflow
-checkMigrationSimpleWorkflow mig =
-    MigrationCheckSimpleWorkflow <$> migEndsTransaction
+checkMigration :: SqlMigration -> Either Text MigrationCheck
+checkMigration mig = MigrationCheck <$> migEndsTransaction
 
   where
     migEndsTransaction =

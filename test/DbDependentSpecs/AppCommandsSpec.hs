@@ -49,8 +49,6 @@ migThatWontRun = AddedSqlMigration
         , nonDestructiveForce      = True
         , nonDestructiveInTxn      = True
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 99999)
 
@@ -70,7 +68,7 @@ doesNotCreateDB act = do
                                   `isInfixOf` show e
                           )
 
-    withConnection (superUserConnString testSettings) $ \conn -> do
+    withConnection (migsConnString testSettings) $ \conn -> do
         dbExists :: Int <- DB.fromOnly <$> unsafeQuery1
             conn
             "SELECT COUNT(*) FROM pg_database WHERE datname = ?"
@@ -88,12 +86,12 @@ doesNotModifyExistingDb act assert = do
             }
 
         getCounts =
-            withConnection (superUserConnString vanillaTestSettings) $ \conn ->
+            withConnection (migsConnString vanillaTestSettings) $ \conn ->
                 unsafeQuery1 @(Int, Int, Int)
                     conn
                     "SELECT (SELECT COUNT(*) FROM pg_catalog.pg_namespace), (SELECT COUNT(*) FROM pg_catalog.pg_class), (SELECT COUNT(*) FROM pg_catalog.pg_roles)"
                     ()
-    withConnection (superUserConnString vanillaTestSettings) $ \conn -> do
+    withConnection (migsConnString vanillaTestSettings) $ \conn -> do
         execvoid_ conn "DROP DATABASE IF EXISTS new_checksums_test_db"
         execvoid_ conn "CREATE DATABASE new_checksums_test_db"
 

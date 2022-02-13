@@ -3,22 +3,18 @@ module DbDependentSpecs.ApplicationSpec where
 import           Codd                           ( CheckHashes(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
-                                                , withDbAndDrop
                                                 )
-import           Codd.Analysis                  ( DestructiveSectionCheck(..)
-                                                , MigrationCheck(..)
-                                                , NonDestructiveSectionCheck(..)
+import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
+import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
-import           Codd.Internal                  ( applyMigrationsInternal
+import           Codd.Internal                  ( CanUpdateCoddSchema(..)
+                                                , applyMigrationsInternal
                                                 , baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , withConnection
@@ -78,8 +74,6 @@ placeHoldersMig = AddedSqlMigration
         , nonDestructiveForce      = False
         , nonDestructiveInTxn      = True
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration
@@ -88,8 +82,6 @@ selectMig = AddedSqlMigration
                  , nonDestructiveForce      = True
                  , nonDestructiveInTxn      = True
                  , nonDestructiveCustomConn = Nothing
-                 , destructiveSql           = Nothing
-                 , destructiveInTxn         = True
                  }
     (getIncreasingTimestamp 1)
 copyMig = AddedSqlMigration
@@ -102,8 +94,6 @@ copyMig = AddedSqlMigration
         , nonDestructiveForce      = True
         , nonDestructiveInTxn      = False
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp 2)
 divideBy0Mig = AddedSqlMigration
@@ -112,8 +102,6 @@ divideBy0Mig = AddedSqlMigration
                  , nonDestructiveForce      = True
                  , nonDestructiveInTxn      = True
                  , nonDestructiveCustomConn = Nothing
-                 , destructiveSql           = Nothing
-                 , destructiveInTxn         = True
                  }
     (getIncreasingTimestamp 3)
 
@@ -131,8 +119,6 @@ createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
         , nonDestructiveForce      = True
         , nonDestructiveInTxn      = inTxn
         , nonDestructiveCustomConn = Nothing
-        , destructiveSql           = Nothing
-        , destructiveInTxn         = True
         }
     (getIncreasingTimestamp (fromIntegral migOrder))
 
@@ -206,6 +192,9 @@ spec = do
                                         runStdoutLoggingT @IO
                                             $ applyMigrationsInternal
                                                   (baseApplyMigsBlock
+                                                      (migsConnString
+                                                          modifiedSettings
+                                                      )
                                                       (retryPolicy
                                                           modifiedSettings
                                                       )
@@ -245,10 +234,7 @@ spec = do
                           let bogusDbHashes =
                                   DbHashes (ObjHash "") Map.empty Map.empty
                           void @IO
-                              $ withConnection
-                                    (superUserInAppDatabaseConnInfo
-                                        emptyTestDbInfo
-                                    )
+                              $ withConnection (migsConnString emptyTestDbInfo)
                               $ \conn -> do
 
                                 -- Hard checking will not apply the migration and therefore will not
@@ -321,7 +307,7 @@ spec = do
                                                 Map.empty
                                         void @IO
                                             $ withConnection
-                                                  (superUserInAppDatabaseConnInfo
+                                                  (migsConnString
                                                       emptyTestDbInfo
                                                   )
                                             $ \conn -> do
@@ -376,8 +362,6 @@ spec = do
                                           , nonDestructiveForce      = False
                                           , nonDestructiveInTxn      = True
                                           , nonDestructiveCustomConn = Nothing
-                                          , destructiveSql           = Nothing
-                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 0)
                                   , AddedSqlMigration
@@ -393,8 +377,6 @@ spec = do
                                           , nonDestructiveForce      = False
                                           , nonDestructiveInTxn      = True
                                           , nonDestructiveCustomConn = Nothing
-                                          , destructiveSql           = Nothing
-                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 1)
                                   , AddedSqlMigration
@@ -414,8 +396,6 @@ spec = do
                                           , nonDestructiveForce      = True
                                           , nonDestructiveInTxn      = False
                                           , nonDestructiveCustomConn = Nothing
-                                          , destructiveSql           = Nothing
-                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 2)
                                   , AddedSqlMigration
@@ -431,8 +411,6 @@ spec = do
                                           , nonDestructiveForce      = False
                                           , nonDestructiveInTxn      = True
                                           , nonDestructiveCustomConn = Nothing
-                                          , destructiveSql           = Nothing
-                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 3)
                                   , AddedSqlMigration
@@ -448,8 +426,6 @@ spec = do
                                           , nonDestructiveForce      = False
                                           , nonDestructiveInTxn      = True
                                           , nonDestructiveCustomConn = Nothing
-                                          , destructiveSql           = Nothing
-                                          , destructiveInTxn         = True
                                           }
                                       (getIncreasingTimestamp 4)
                                   ]
@@ -457,10 +433,7 @@ spec = do
                           void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
                               (emptyTestDbInfo { sqlMigrations = Right migs })
                               (const $ pure ())
-                          withConnection
-                                  (superUserInAppDatabaseConnInfo
-                                      emptyTestDbInfo
-                                  )
+                          withConnection (migsConnString emptyTestDbInfo)
                               $ \conn -> do
                                     (countTxIds :: Int, countInterns :: Int, totalRows :: Int) <-
                                         unsafeQuery1

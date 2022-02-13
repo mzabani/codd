@@ -12,8 +12,8 @@ module Codd.Parsing
   , piecesToText
   , sqlPieceText
   , parsedSqlText
-  , parseSqlMigrationSimpleWorkflow
   , parseSqlMigration
+  , parseSqlMigrationOpts
   , parseWithEscapeCharProper
   , parseAddedSqlMigration
   , parseMigrationTimestamp
@@ -21,7 +21,6 @@ module Codd.Parsing
   , toMigrationTimestamp
   ) where
 
-import           Codd.Types                     ( DeploymentWorkflow(..) )
 import           Control.Applicative            ( (<|>) )
 import           Control.Monad                  ( guard
                                                 , void
@@ -72,8 +71,6 @@ data SqlMigration = SqlMigration
   , nonDestructiveSql        :: Maybe ParsedSql
   , nonDestructiveForce      :: Bool
   , nonDestructiveInTxn      :: Bool
-  , destructiveSql           :: Maybe ParsedSql
-  , destructiveInTxn         :: Bool
   , nonDestructiveCustomConn :: Maybe ConnectInfo
   }
   deriving stock (Eq, Show)
@@ -522,8 +519,8 @@ migrationParserSimpleWorkflow = do
     Right (opts, customConnStr) ->
       pure (opts, customConnStr, WellParsedSql text sqlPieces)
 
-parseSqlMigrationSimpleWorkflow :: String -> Text -> Either Text SqlMigration
-parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
+parseSqlMigration :: String -> Text -> Either Text SqlMigration
+parseSqlMigration name t = first Text.pack migE >>= toMig
  where
   migE = parseOnly (migrationParserSimpleWorkflow <* endOfInput) t
   dupOpts opts = length (nub opts) < length opts
@@ -549,8 +546,6 @@ parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
     , nonDestructiveSql        = Just sql
     , nonDestructiveForce      = True
     , nonDestructiveInTxn      = inTxn opts
-    , destructiveSql           = Nothing
-    , destructiveInTxn         = True
     , nonDestructiveCustomConn = customConnString
     }
 
@@ -564,32 +559,18 @@ parseSqlMigrationSimpleWorkflow name t = first Text.pack migE >>= toMig
 data ParsingOptions = NoParse | DoParse
   deriving stock (Eq)
 
-parseSqlMigration
-  :: DeploymentWorkflow
-  -> ParsingOptions
-  -> String
-  -> Text
-  -> Either Text SqlMigration
-parseSqlMigration dw popts name sql = case (dw, popts) of
-  (_, NoParse) -> Right $ SqlMigration name
-                                       (Just $ ParseFailSqlText sql)
-                                       True
-                                       True
-                                       Nothing
-                                       True
-                                       Nothing
-  (SimpleDeployment, _) -> parseSqlMigrationSimpleWorkflow name sql
-  (BlueGreenSafeDeploymentUpToAndIncluding _, _) -> error "BGS going down"
+parseSqlMigrationOpts
+  :: ParsingOptions -> String -> Text -> Either Text SqlMigration
+parseSqlMigrationOpts popts name sql = case popts of
+  NoParse ->
+    Right $ SqlMigration name (Just $ ParseFailSqlText sql) True True Nothing
+  _ -> parseSqlMigration name sql
 
 parseAddedSqlMigration
-  :: DeploymentWorkflow
-  -> ParsingOptions
-  -> String
-  -> Text
-  -> Either Text AddedSqlMigration
-parseAddedSqlMigration depFlow popts name t =
+  :: ParsingOptions -> String -> Text -> Either Text AddedSqlMigration
+parseAddedSqlMigration popts name t =
   AddedSqlMigration
-    <$> parseSqlMigration depFlow popts name t
+    <$> parseSqlMigrationOpts popts name t
     <*> parseMigrationTimestamp name
 
 -- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
