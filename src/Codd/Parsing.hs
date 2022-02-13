@@ -452,16 +452,12 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
--- | Splits SQL pieces into multiple segments separated by "-- codd: opts" comments.
--- - The CommentPieces that contain "-- codd: opts" themselves are also included in the returned lists.
--- - If no "-- codd: opts" comment is found, this returns a one-element list with all provided SQL pieces in it.
---   Any kind of SQL contents before the first "-- codd: opts" comment will make this return an error,
---   and the lack of any kind of non-white-space SQL contents after a "-- codd: opts" comment makes this return
---   an error as well.
--- - In case of success, every provided SqlPiece is contained in the response exactly once (without duplicates).
-splitCoddOpts
+-- | Looks only at comments that precede the first SQL statement and
+-- extracts from them custom options and a custom connection string when
+-- they exist, or returns a good error message otherwise.
+extractCoddOpts
   :: [SqlPiece] -> Either String ([SectionOption], Maybe ConnectInfo)
-splitCoddOpts ps =
+extractCoddOpts ps =
   let
     firstComments = filter isCommentPiece
       $ Prelude.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
@@ -521,7 +517,7 @@ migrationParserSimpleWorkflow = do
   when (text /= piecesToText sqlPieces)
     $ fail
         "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
-  case splitCoddOpts (NE.toList sqlPieces) of
+  case extractCoddOpts (NE.toList sqlPieces) of
     Left err -> fail err
     Right (opts, customConnStr) ->
       pure (opts, customConnStr, WellParsedSql text sqlPieces)

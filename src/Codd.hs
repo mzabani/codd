@@ -44,12 +44,13 @@ applyMigrations
     => CoddSettings
     -> CheckHashes
     -> m ApplyResult
-applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
+applyMigrations dbInfo@CoddSettings { superUserConnString, onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
     = case checkHashes of
         HardCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
             applyMigrationsInternal
-                (baseApplyMigsBlock retryPolicy
+                (baseApplyMigsBlock superUserConnString
+                                    retryPolicy
                                     (hardCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
@@ -58,7 +59,8 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl
         SoftCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
             dbCksums <- applyMigrationsInternal
-                (baseApplyMigsBlock retryPolicy
+                (baseApplyMigsBlock superUserConnString
+                                    retryPolicy
                                     (softCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
@@ -81,9 +83,10 @@ applyMigrationsNoCheck
     => CoddSettings
     -> (DB.Connection -> m a)
     -> m a
-applyMigrationsNoCheck dbInfo@CoddSettings { retryPolicy, txnIsolationLvl } finalFunc
+applyMigrationsNoCheck dbInfo@CoddSettings { superUserConnString, retryPolicy, txnIsolationLvl } finalFunc
     = applyMigrationsInternal
-        (baseApplyMigsBlock retryPolicy
+        (baseApplyMigsBlock superUserConnString
+                            retryPolicy
                             (\_migBlocks conn -> finalFunc conn)
                             txnIsolationLvl
         )

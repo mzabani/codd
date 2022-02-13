@@ -5,9 +5,7 @@ module Codd.AppCommands.AddMigration
 
 import qualified Codd
 import           Codd.Analysis                  ( MigrationCheckSimpleWorkflow(..)
-                                                , checkMigration
                                                 , checkMigrationSimpleWorkflow
-                                                , migrationErrors
                                                 )
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
@@ -88,9 +86,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
             either (pure . (: []))
                    (pure . maybeToList . transactionManagementProblem)
               $ checkMigrationSimpleWorkflow sqlMig
-          BlueGreenSafeDeploymentUpToAndIncluding{} -> do
-            migCheck <- checkMigration dbInfo sqlMig
-            pure $ migrationErrors sqlMig migCheck
+          BlueGreenSafeDeploymentUpToAndIncluding{} -> error "BGS going down"
 
         when (migErrors /= []) $ liftIO $ do
           forM_ migErrors (Text.hPutStrLn stderr)
