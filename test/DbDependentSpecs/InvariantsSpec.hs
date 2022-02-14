@@ -28,6 +28,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , aroundTestDbInfo
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , testCoddSettings
                                                 , withDbAndDrop
                                                 )
 import           Test.Hspec
@@ -108,9 +109,7 @@ spec = do
                                   veryCloseUtcTimes
                       in
                           do
-                              putStrLn "Right before!"
                               withConnection migsConnString $ \conn -> do
-                                  putStrLn "INSIDE!"
                                   void $ DB.executeMany
                                       conn
                                       "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)"
@@ -153,24 +152,15 @@ spec = do
                                                                  )
                                   putStrLn "All tests passed!"
 
-            aroundTestDbInfo
-                $ it "We can't let impure properties affect our DB Hashing"
-                $ \intactDbInfo -> do
+            it "Timing does not affect hashing" $ do
                     -- One possible impurity is the time certain objects are added to the Database. So we apply our migrations with a few seconds
                     -- in between and check the hashes match
-                      let
-                          dbInfo = intactDbInfo
-                              { sqlMigrations = Right [lotsOfObjectsMigration]
-                              }
-                      dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
-                          dbInfo
-                          (`withConnection` readHashesFromDatabaseWithSettings
-                              dbInfo
-                          )
-                      threadDelay (5 * 1000 * 1000)
-                      dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
-                          dbInfo
-                          (`withConnection` readHashesFromDatabaseWithSettings
-                              dbInfo
-                          )
-                      dbHashes1 `shouldBe` dbHashes2
+                dbInfo    <- testCoddSettings [lotsOfObjectsMigration]
+                dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
+                    dbInfo
+                    (`withConnection` readHashesFromDatabaseWithSettings dbInfo)
+                threadDelay (5 * 1000 * 1000)
+                dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
+                    dbInfo
+                    (`withConnection` readHashesFromDatabaseWithSettings dbInfo)
+                dbHashes1 `shouldBe` dbHashes2

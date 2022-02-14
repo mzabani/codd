@@ -102,7 +102,7 @@ migrationsAndHashChange = zipWith
                id
                (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
          in  mig {
-                                                                                                           -- Override name to avoid conflicts
+                                                                                                                       -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -1049,8 +1049,7 @@ spec = do
         $ aroundFreshDatabase
         $ it "Checksumming schema changes"
         $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
-            let
-                -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
+            let -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
                 -- Use the above definition of emptyDbInfo if it helps debugging
                 emptyDbInfo = emptyDbInfo2
                 connInfo    = migsConnString emptyDbInfo

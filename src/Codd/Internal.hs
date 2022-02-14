@@ -95,12 +95,15 @@ withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
                 then throwIO e
                 else threadDelay (1000 * 100) >> go (n - 1)
             Right conn -> action conn
-    go n = bracket (tryTimeout $ liftIO $ DB.connect connStr)
+    go n = bracket (tryConnectError $ liftIO $ DB.connect connStr)
                    (either (const $ pure ()) (liftIO . DB.close))
                    (wrappedAction n)
-    tryTimeout = tryJust $ \(e :: IOException) ->
-        let err = Text.pack $ show e
-        in  if "libpq" `Text.isInfixOf` err && "FATAL" `Text.isInfixOf` err
+    tryConnectError = tryJust $ \(e :: IOException) ->
+        let err = traceShowId $ Text.pack $ show e
+        in  if "libpq"
+                   `Text.isInfixOf` err
+                   &&               "server closed the connection"
+                   `Text.isInfixOf` err
                 then Just e
                 else Nothing
 
@@ -166,7 +169,7 @@ checkNeedsBootstrapping connInfo =
                    if isLibPqError e
                 then Just False
                 else
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- Let other exceptions blow up
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- Let other exceptions blow up
                      Nothing
             )
             pure
@@ -249,14 +252,10 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, dbNam
                                   )
 
                 logInfoN "Running all other remaining migrations..."
-                liftIO $ putStrLn "BOOTSRAP!"
                 ApplyMigsResult _ actionAfterResult <- txnApp
                     CanUpdateCoddSchema
                     otherMigBlocks
                 pure actionAfterResult
-
-
-
 
 isSingleTrue :: [DB.Only Bool] -> Bool
 isSingleTrue v = v == [DB.Only True]

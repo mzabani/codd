@@ -52,7 +52,7 @@ import           UnliftIO.Environment           ( getEnv )
 testConnInfo :: MonadIO m => m ConnectInfo
 testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
     { connectHost     = "localhost"
-    , connectUser     = "codd-test-user"
+    , connectUser     = "postgres"
     , connectDatabase = "codd-test-db"
     , connectPort     = read portStr
     }
@@ -153,7 +153,6 @@ aroundDatabaseWithMigs :: [AddedSqlMigration] -> SpecWith CoddSettings -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
     coddSettings@CoddSettings { migsConnString } <- testCoddSettings
         startingMigs
-    putStrLn "AAAAAAAAAAAAAAAAAAAA"
 
     runStdoutLoggingT
         $         (  applyMigrationsNoCheck coddSettings (const $ pure ())
@@ -167,7 +166,6 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
                         -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
                         -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
                       (\conn -> do
-                          liftIO $ putStrLn "CLEANUP"
                           execvoid_ conn "ALTER ROLE postgres RESET ALL;"
                           execvoid_ conn "DROP DATABASE \"codd-test-db\";"
 
