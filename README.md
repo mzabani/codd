@@ -46,17 +46,13 @@ Invoking _Codd_ this way will require mounting volumes and is certainly more bur
 
 _Codd_ will checksum DB objects to ensure database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects — such as schemas and roles — it will consider, and connection strings for it to connect.
 
-Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable. We suggest you add this file to you project's root folder.
+Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.  
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
-# This connection string must be for a user with the CREATE and CONNECT permissions. The
-# database must already exist.
-CODD_ADMIN_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
-
-# The name of the Database the App uses. It does not need to exist and will be created
-# automatically by Codd if necessary.
-CODD_APPDB=codd-experiments
+# This connection string will be used to apply migrations. You can specify
+# custom connection strings on a per-migration basis too.
+CODD_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
 
 # A list of directories where SQL migration files will be found/added to. Do note that you
 # can have e.g. a testing environment with an extra folder for itself to hold data migrations
@@ -86,17 +82,17 @@ CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 
 ## Starting out
 
-After having configured your .env file and making sure Postgres is reachable run one of these:
+After having configured your environment variables and making sure Postgres is reachable run one of these:
 
 ````bash
 # With docker
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up
 
-# .. or with Nix
+# .. or with Nix (make sure env vars are all exported)
 $ codd up
 ````
 
-After this, you should be able to connect to your newly created Database, "codd-experiments".
+After this, you should be able to connect to your newly created Database, "codd_experiments".
 
 ## Adding a SQL Migration
 
@@ -113,7 +109,7 @@ BEGIN
 END
 $do$;
 
-GRANT CONNECT ON DATABASE "codd-experiments" TO codd_user;
+GRANT CONNECT ON DATABASE codd_experiments TO codd_user;
 
 CREATE TABLE employee (
     employee_id SERIAL PRIMARY KEY

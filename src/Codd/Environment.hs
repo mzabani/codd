@@ -40,10 +40,8 @@ import           UnliftIO                       ( MonadIO(..) )
 import           UnliftIO.Environment           ( lookupEnv )
 
 data CoddSettings = CoddSettings
-    { dbName           :: Text
-    -- ^ The name of the Database the Application will connect to
-    , migsConnString   :: ConnectInfo
-    -- ^ A Connection String which has the power to create databases, grant privileges and a lot more.
+    { migsConnString   :: ConnectInfo
+    -- ^ The Connection String which will be used to run migrations.
     , sqlMigrations    :: Either [FilePath] [AddedSqlMigration]
     -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
     --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
@@ -148,19 +146,18 @@ parseEnv defaultValue parser var = do
 
 getAdminConnInfo :: MonadIO m => m ConnectInfo
 getAdminConnInfo = do
-    adminConnStr <- readEnv "CODD_ADMIN_CONNECTION"
+    adminConnStr <- readEnv "CODD_CONNECTION"
     let connInfoE = parseOnly (connStringParser <* endOfInput) adminConnStr
     case connInfoE of
         Left err ->
             error
-                $ "Error parsing the connection string in environment variable CODD_ADMIN_CONNECTION: "
+                $ "Error parsing the connection string in environment variable CODD_CONNECTION: "
                 ++ err
         Right connInfo -> pure connInfo
 
 getCoddSettings :: MonadIO m => m CoddSettings
 getCoddSettings = do
     adminConnInfo     <- getAdminConnInfo
-    appDbName         <- readEnv "CODD_APPDB"
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
@@ -185,8 +182,7 @@ getCoddSettings = do
     checksumAlgo <- parseEnv (ChecksumAlgo False False)
                              (parseVar checksumAlgoParser)
                              "CODD_CHECKSUM_ALGO"
-    pure CoddSettings { dbName           = appDbName
-                      , migsConnString   = adminConnInfo
+    pure CoddSettings { migsConnString   = adminConnInfo
                       , sqlMigrations    = Left sqlMigrationPaths
                       , onDiskHashes     = Left onDiskHashesDir
                       , schemasToHash    = schemasToHash

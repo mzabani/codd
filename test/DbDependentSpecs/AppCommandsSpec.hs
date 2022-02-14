@@ -57,8 +57,7 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
-            { dbName         = "non-existing-db-name"
-            , onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
             , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
@@ -79,7 +78,7 @@ doesNotCreateDB act = do
               dbExists :: Int <- DB.fromOnly <$> unsafeQuery1
                   conn
                   "SELECT COUNT(*) FROM pg_database WHERE datname = ?"
-                  (DB.Only $ dbName testSettings)
+                  (DB.Only $ DB.connectDatabase $ migsConnString testSettings)
               dbExists `shouldBe` 0
 
 doesNotModifyExistingDb
@@ -87,8 +86,7 @@ doesNotModifyExistingDb
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
-            { dbName         = "new_checksums_test_db"
-            , onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
             , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =

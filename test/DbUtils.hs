@@ -67,11 +67,6 @@ mkValidSql t = case parseSqlPieces t of
     Left  e   -> error e -- Probably best to fail early if sql is invalid inside test code
     Right pcs -> WellParsedSql t pcs
 
--- | Returns a `ConnectInfo` that will connect to the App's Database with the "postgres" user.
-superUserInAppDatabaseConnInfo :: CoddSettings -> ConnectInfo
-superUserInAppDatabaseConnInfo CoddSettings { migsConnString, dbName } =
-    migsConnString { connectUser = "postgres" }
-
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
 withDbAndDrop
@@ -129,7 +124,6 @@ testCoddSettings migs = do
             migTimestamp
     pure CoddSettings
         { migsConnString   = connInfo
-        , dbName           = "codd-test-db"
         , sqlMigrations    = Right (createTestUserMig : migs)
         , onDiskHashes     = Left ""
         , schemasToHash    = Include ["public", "codd-extra-mapped-schema"]

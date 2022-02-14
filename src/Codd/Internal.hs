@@ -190,8 +190,9 @@ applyMigrationsInternal
     => (CanUpdateCoddSchema -> [BlockOfMigrations] -> m (ApplyMigsResult a))
     -> CoddSettings
     -> m a
-applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, dbName, sqlMigrations, txnIsolationLvl }
+applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl }
     = do
+        let dbName = Text.pack $ DB.connectDatabase migsConnString
         logDebugN
             $  "Checking if Database '"
             <> dbName
@@ -307,11 +308,9 @@ collectPendingMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
     -> m [BlockOfMigrations]
-collectPendingMigrations CoddSettings { migsConnString, dbName, sqlMigrations, txnIsolationLvl }
+collectPendingMigrations CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl }
     = do
-        let appDbSuperUserConnString =
-                migsConnString { DB.connectDatabase = Text.unpack dbName }
-        withConnection appDbSuperUserConnString $ \conn -> do
+        withConnection migsConnString $ \conn -> do
             -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
             logDebugN
                 "Checking in the Database which SQL migrations have already been applied..."
