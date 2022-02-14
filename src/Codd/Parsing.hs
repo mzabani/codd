@@ -67,11 +67,10 @@ data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiec
   deriving stock (Eq, Show)
 
 data SqlMigration = SqlMigration
-  { migrationName            :: FilePath
-  , nonDestructiveSql        :: Maybe ParsedSql
-  , nonDestructiveForce      :: Bool
-  , nonDestructiveInTxn      :: Bool
-  , nonDestructiveCustomConn :: Maybe ConnectInfo
+  { migrationName           :: FilePath
+  , migrationSql            :: Maybe ParsedSql
+  , migrationInTxn          :: Bool
+  , migrationCustomConnInfo :: Maybe ConnectInfo
   }
   deriving stock (Eq, Show)
 
@@ -86,7 +85,8 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-data SectionOption = OptForce !Bool | OptInTxn !Bool | OptDest !Bool deriving stock (Eq, Show)
+newtype SectionOption = OptInTxn Bool
+  deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -389,16 +389,13 @@ connStringParser = do
 optionParser :: Parser SectionOption
 optionParser = do
   skipJustSpace
-  x <- force <|> nonDest <|> dest <|> inTxn <|> noTxn <|> fail
-    "Valid options after '-- codd:' are 'in-txn', 'no-txn', 'force'"
+  x <- inTxn <|> noTxn <|> fail
+    "Valid options after '-- codd:' are 'in-txn' or 'no-txn'"
   skipJustSpace
   return x
  where
-  force   = string "force" >> pure (OptForce True)
-  nonDest = string "non-destructive" >> pure (OptDest False)
-  dest    = string "destructive" >> pure (OptDest True)
-  inTxn   = string "in-txn" >> pure (OptInTxn True)
-  noTxn   = string "no-txn" >> pure (OptInTxn False)
+  inTxn = string "in-txn" >> pure (OptInTxn True)
+  noTxn = string "no-txn" >> pure (OptInTxn False)
 
 
 skipJustSpace :: Parser ()
@@ -526,27 +523,19 @@ parseSqlMigration name t = first Text.pack migE >>= toMig
   dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe Text
   checkOpts opts
-    | isDest opts
-    = Just
-      "Simple deployment workflow does not allow for a SQL section explicitly marked as Destructive"
-    | inTxn opts && noTxn opts
-    = Just
+    | inTxn opts && noTxn opts = Just
       "Choose either in-txn, no-txn or leave blank for the default of in-txn"
-    | dupOpts opts
-    = Just "Some options are duplicated"
-    | otherwise
-    = Nothing
-  isDest opts = OptDest True `elem` opts
+    | dupOpts opts = Just "Some options are duplicated"
+    | otherwise = Nothing
   inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
   noTxn opts = OptInTxn False `elem` opts
 
   mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql) -> SqlMigration
   mkMig (opts, customConnString, sql) = SqlMigration
-    { migrationName            = name
-    , nonDestructiveSql        = Just sql
-    , nonDestructiveForce      = True
-    , nonDestructiveInTxn      = inTxn opts
-    , nonDestructiveCustomConn = customConnString
+    { migrationName           = name
+    , migrationSql            = Just sql
+    , migrationInTxn          = inTxn opts
+    , migrationCustomConnInfo = customConnString
     }
 
   toMig
@@ -563,7 +552,7 @@ parseSqlMigrationOpts
   :: ParsingOptions -> String -> Text -> Either Text SqlMigration
 parseSqlMigrationOpts popts name sql = case popts of
   NoParse ->
-    Right $ SqlMigration name (Just $ ParseFailSqlText sql) True True Nothing
+    Right $ SqlMigration name (Just $ ParseFailSqlText sql) True Nothing
   _ -> parseSqlMigration name sql
 
 parseAddedSqlMigration

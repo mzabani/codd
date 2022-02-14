@@ -1,4 +1,4 @@
--- codd: non-destructive, no-txn
+-- codd: no-txn
 DO
 $do$
 BEGIN

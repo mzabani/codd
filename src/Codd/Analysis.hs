@@ -30,26 +30,25 @@ checkMigration :: SqlMigration -> Either Text MigrationCheck
 checkMigration mig = MigrationCheck <$> migEndsTransaction
 
   where
-    migEndsTransaction =
-        case (nonDestructiveSql mig, nonDestructiveInTxn mig) of
-            (Nothing, _) -> Left "Empty migration"
-            (Just (ParseFailSqlText _), _) ->
-                Left "Error parsing migration so checking is not possible"
-            (Just (WellParsedSql _ pieces), True) ->
-                Right $ if any isTransactionEndingPiece pieces
-                    then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
-                    else Nothing
-            (Just (WellParsedSql _ (p1 :| ps)), False) ->
-                let
-                    isOpenAfter wasOpen p = case p of
-                        BeginTransaction _ -> True
-                        _ -> not (isTransactionEndingPiece p) && wasOpen
+    migEndsTransaction = case (migrationSql mig, migrationInTxn mig) of
+        (Nothing, _) -> Left "Empty migration"
+        (Just (ParseFailSqlText _), _) ->
+            Left "Error parsing migration so checking is not possible"
+        (Just (WellParsedSql _ pieces), True) ->
+            Right $ if any isTransactionEndingPiece pieces
+                then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
+                else Nothing
+        (Just (WellParsedSql _ (p1 :| ps)), False) ->
+            let
+                isOpenAfter wasOpen p = case p of
+                    BeginTransaction _ -> True
+                    _ -> not (isTransactionEndingPiece p) && wasOpen
 
-                    leavesTransactionOpen =
-                        foldl' isOpenAfter (isOpenAfter False p1) ps
-                in
-                    Right $ if leavesTransactionOpen
-                        then
-                            Just
-                                "no-txn migration BEGINs but does not COMMIT or ROLLBACK transaction"
-                        else Nothing
+                leavesTransactionOpen =
+                    foldl' isOpenAfter (isOpenAfter False p1) ps
+            in
+                Right $ if leavesTransactionOpen
+                    then
+                        Just
+                            "no-txn migration BEGINs but does not COMMIT or ROLLBACK transaction"
+                    else Nothing

@@ -41,15 +41,14 @@ import           UnliftIO                       ( IOException )
 migThatWontRun :: AddedSqlMigration
 migThatWontRun = AddedSqlMigration
     SqlMigration
-        { migrationName            = "create-things.sql"
-        , nonDestructiveSql        = Just
-                                     $ mkValidSql
-                                     $ "CREATE USER \"user-that-wont-exist\";\n"
-                                     <> "CREATE TABLE table_that_wont_exist();\n"
-                                     <> "CREATE SCHEMA schema_that_wont_exist;"
-        , nonDestructiveForce      = True
-        , nonDestructiveInTxn      = True
-        , nonDestructiveCustomConn = Nothing
+        { migrationName           = "create-things.sql"
+        , migrationSql            = Just
+                                    $  mkValidSql
+                                    $  "CREATE USER \"user-that-wont-exist\";\n"
+                                    <> "CREATE TABLE table_that_wont_exist();\n"
+                                    <> "CREATE SCHEMA schema_that_wont_exist;"
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 99999)
 

@@ -102,7 +102,7 @@ migrationsAndHashChange = zipWith
                id
                (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
          in  mig {
-                                                                                                                       -- Override name to avoid conflicts
+                                                                                                                           -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -1125,9 +1125,8 @@ spec = do
           dbHashesAfterMig <- runStdoutLoggingT $ applyMigrationsNoCheck
             dbInfo
             (readHashesFromDatabaseWithSettings dbInfo)
-          let migText =
-                parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
-              diff = hashDifferences hashSoFar dbHashesAfterMig
+          let migText = parsedSqlText <$> migrationSql (addedSqlMig nextMig)
+              diff    = hashDifferences hashSoFar dbHashesAfterMig
           case expectedChanges of
             ChangeEq c -> do
               (migText, diff) `shouldBe` (migText, Map.fromList c)

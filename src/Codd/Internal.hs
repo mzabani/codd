@@ -389,7 +389,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
     -- connection string.
     return $ NE.groupWith
         (\(AddedSqlMigration m _) ->
-            (nonDestructiveInTxn m, nonDestructiveCustomConn m)
+            (migrationInTxn m, migrationCustomConnInfo m)
         )
         pendingParsedMigrations
 
@@ -512,11 +512,11 @@ softCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
 type BlockOfMigrations = NonEmpty AddedSqlMigration
 blockInTxn :: BlockOfMigrations -> Bool
 blockInTxn (AddedSqlMigration { addedSqlMig } :| _) =
-    nonDestructiveInTxn addedSqlMig
+    migrationInTxn addedSqlMig
 
 blockCustomConnInfo :: BlockOfMigrations -> Maybe DB.ConnectInfo
 blockCustomConnInfo (AddedSqlMigration { addedSqlMig } :| _) =
-    nonDestructiveCustomConn addedSqlMig
+    migrationCustomConnInfo addedSqlMig
 
 data CanUpdateCoddSchema = CanUpdateCoddSchema | CannotUpdateCoddSchema
 
@@ -535,10 +535,10 @@ applySingleMigration conn isolLvl statementRetryPol canUpdSchema (AddedSqlMigrat
         let fn = migrationName sqlMig
         logDebugN $ "Applying " <> Text.pack fn
 
-        case nonDestructiveSql sqlMig of
+        case migrationSql sqlMig of
             Nothing -> pure ()
             Just nonDestSql ->
-                let inTxn = if nonDestructiveInTxn sqlMig
+                let inTxn = if migrationInTxn sqlMig
                         then InTransaction
                         else NotInTransaction statementRetryPol
                 in  multiQueryStatement_ inTxn conn nonDestSql
@@ -547,7 +547,7 @@ applySingleMigration conn isolLvl statementRetryPol canUpdSchema (AddedSqlMigrat
                                                                                                                                                                                                                                                                                                                 -- If already in a transaction, then just execute, otherwise
                                                                                                                                                                                                                                                                                                                 -- start read-write txn
         let query1_ :: DB.ToRow b => DB.Query -> b -> m (DB.Only UTCTime)
-            query1_ q qargs = if nonDestructiveInTxn sqlMig
+            query1_ q qargs = if migrationInTxn sqlMig
                 then unsafeQuery1 conn q qargs
                 else beginCommitTxnBracket isolLvl conn
                     $ unsafeQuery1 conn q qargs

@@ -100,7 +100,7 @@ testCoddSettings migs = do
         createTestUserMig = AddedSqlMigration
             SqlMigration
                 { migrationName = show migTimestamp <> "-create-test-user.sql"
-                , nonDestructiveSql        =
+                , migrationSql            =
                     Just
                     $  mkValidSql
                     $  "DO\n"
@@ -113,13 +113,12 @@ testCoddSettings migs = do
                     <> "$do$;\n"
                     <> "CREATE DATABASE \"codd-test-db\" WITH OWNER=\"codd-test-user\";\n"
                     <> "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
-                , nonDestructiveForce      = True
-                , nonDestructiveInTxn      = False
+                , migrationInTxn          = False
 -- A custom connection string is necessary because the DB doesn't yet exist
-                , nonDestructiveCustomConn = Just connInfo
-                                                 { connectUser     = "postgres"
-                                                 , connectDatabase = "postgres"
-                                                 }
+                , migrationCustomConnInfo = Just connInfo
+                                                { connectUser     = "postgres"
+                                                , connectDatabase = "postgres"
+                                                }
                 }
             migTimestamp
     pure CoddSettings

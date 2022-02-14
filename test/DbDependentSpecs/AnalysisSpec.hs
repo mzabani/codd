@@ -25,40 +25,35 @@ import           Test.Hspec
 
 createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
 createTableMig = AddedSqlMigration
-    SqlMigration
-        { migrationName            = "0001-create-table.sql"
-        , nonDestructiveSql = Just $ mkValidSql "CREATE TABLE anytable ();"
-        , nonDestructiveForce      = False
-        , nonDestructiveInTxn      = True
-        , nonDestructiveCustomConn = Nothing
-        }
+    SqlMigration { migrationName            = "0001-create-table.sql"
+                 , migrationSql = Just $ mkValidSql "CREATE TABLE anytable ();"
+                 , migrationInTxn           = True
+                 , migrationCustomConnInfo = Nothing
+                 }
     (getIncreasingTimestamp 1)
 addColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName            = "0002-add-column.sql"
-        , nonDestructiveSql        = Just
+        , migrationSql             = Just
             $ mkValidSql "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
-        , nonDestructiveForce      = False
-        , nonDestructiveInTxn      = True
-        , nonDestructiveCustomConn = Nothing
+        , migrationInTxn           = True
+        , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 2)
 dropColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName            = "0003-drop-column.sql"
-        , nonDestructiveSql        = Just
+        , migrationSql             = Just
             $ mkValidSql "ALTER TABLE anytable DROP COLUMN anycolumn;"
-        , nonDestructiveForce      = True
-        , nonDestructiveInTxn      = True
-        , nonDestructiveCustomConn = Nothing
+        , migrationInTxn           = True
+        , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration
     SqlMigration { migrationName            = "0004-drop-table.sql"
-                 , nonDestructiveSql = Just $ mkValidSql "DROP TABLE anytable;"
-                 , nonDestructiveForce      = True
-                 , nonDestructiveInTxn      = True
-                 , nonDestructiveCustomConn = Nothing
+                 , migrationSql = Just $ mkValidSql "DROP TABLE anytable;"
+                 , migrationInTxn           = True
+                 , migrationCustomConnInfo = Nothing
                  }
     (getIncreasingTimestamp 4)
 
@@ -76,10 +71,9 @@ spec = do
                         let badMigs = map
                                 (\c -> SqlMigration
                                     { migrationName = "0000-begin.sql"
-                                    , nonDestructiveSql = Just $ mkValidSql c
-                                    , nonDestructiveForce = False
-                                    , nonDestructiveInTxn = False
-                                    , nonDestructiveCustomConn = Nothing
+                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationInTxn = False
+                                    , migrationCustomConnInfo = Nothing
                                     }
                                 )
                                 ["BEGIN", "BEGIN; BEGIN; SELECT 1;"]
@@ -87,10 +81,9 @@ spec = do
                             goodMigs = map
                                 (\c -> SqlMigration
                                     { migrationName = "0000-begin.sql"
-                                    , nonDestructiveSql = Just $ mkValidSql c
-                                    , nonDestructiveForce = False
-                                    , nonDestructiveInTxn = False
-                                    , nonDestructiveCustomConn = Nothing
+                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationInTxn = False
+                                    , migrationCustomConnInfo = Nothing
                                     }
                                 )
                                 [ "BEGIN;ROLLBACK"
@@ -113,14 +106,11 @@ spec = do
                   $ it
                         "Non-destructive section containing COMMIT detected correctly"
                   $ \emptyTestDbInfo -> do
-                        let
-                            commitTxnMig = SqlMigration
+                        let commitTxnMig = SqlMigration
                                 { migrationName            = "0000-commit.sql"
-                                , nonDestructiveSql        = Just
-                                                                 $ mkValidSql "COMMIT;"
-                                , nonDestructiveForce      = False
-                                , nonDestructiveInTxn      = True
-                                , nonDestructiveCustomConn = Nothing
+                                , migrationSql = Just $ mkValidSql "COMMIT;"
+                                , migrationInTxn           = True
+                                , migrationCustomConnInfo = Nothing
                                 }
                         checkMigration commitTxnMig `shouldSatisfy` \case
                             Right (MigrationCheck (Just _)) -> True
@@ -132,11 +122,9 @@ spec = do
                         let
                             rollbackTxnMig = SqlMigration
                                 { migrationName            = "0000-rollback.sql"
-                                , nonDestructiveSql        = Just
-                                    $ mkValidSql "ROLLBACK;"
-                                , nonDestructiveForce      = False
-                                , nonDestructiveInTxn      = True
-                                , nonDestructiveCustomConn = Nothing
+                                , migrationSql = Just $ mkValidSql "ROLLBACK;"
+                                , migrationInTxn           = True
+                                , migrationCustomConnInfo = Nothing
                                 }
                         checkMigration rollbackTxnMig `shouldSatisfy` \case
                             Right (MigrationCheck (Just _)) -> True
