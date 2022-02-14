@@ -61,7 +61,6 @@ import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
 import           Data.Time                      ( UTCTime )
 import qualified Database.PostgreSQL.Simple    as DB
-import           Debug.Trace
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>) )
 import           UnliftIO                       ( MonadUnliftIO
@@ -98,14 +97,16 @@ withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
     go n = bracket (tryConnectError $ liftIO $ DB.connect connStr)
                    (either (const $ pure ()) (liftIO . DB.close))
                    (wrappedAction n)
-    tryConnectError = tryJust $ \(e :: IOException) ->
-        let err = traceShowId $ Text.pack $ show e
-        in  if "libpq"
-                   `Text.isInfixOf` err
-                   &&               "server closed the connection"
-                   `Text.isInfixOf` err
-                then Just e
-                else Nothing
+    tryConnectError = tryJust
+        $ \e -> if isServerNotAvailableError e then Just e else Nothing
+
+isServerNotAvailableError :: IOException -> Bool
+isServerNotAvailableError e =
+    let err = Text.pack $ show e
+    in  "libpq"
+            `Text.isInfixOf` err
+            &&               "server closed the connection"
+            `Text.isInfixOf` err
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
@@ -158,22 +159,27 @@ createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl
 checkNeedsBootstrapping
     :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> m Bool
 checkNeedsBootstrapping connInfo =
+    -- brittany-disable-next-identifier
     handleJust
             (\e ->
-                -- Maybe the default migration connection string doesn't work because:
+                -- 1. No server available is a big "No". Bootstrapping will very likely not fix this.
+                if isServerNotAvailableError e
+                    then Nothing
+
+                -- 2. Maybe the default migration connection string doesn't work because:
                 -- - The DB does not exist.
                 -- - CONNECT rights not granted.
                 -- - User doesn't exist.
                 -- In any case, it's best to be conservative and consider any libpq errors
                 -- as errors that might just require bootstrapping.
-                   if isLibPqError e
-                then Just False
-                else
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- Let other exceptions blow up
-                     Nothing
+                else if isLibPqError e
+                    then Just True
+
+                -- 3. Let other exceptions blow up
+                else Nothing
             )
             pure
-        $ withConnection connInfo (const $ pure True)
+        $ withConnection connInfo (const $ pure False)
   where
     isLibPqError :: IOException -> Bool
     isLibPqError e =
@@ -190,9 +196,9 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, dbNam
             $  "Checking if Database '"
             <> dbName
             <> "' is accessible with the configured connection string..."
-        dbExists <- checkNeedsBootstrapping migsConnString
+        needsBootstrapping <- checkNeedsBootstrapping migsConnString
 
-        if dbExists
+        if not needsBootstrapping
             then do
                 logDebugN
                     "Checking if Codd Schema exists and creating it if necessary..."
@@ -226,8 +232,8 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, dbNam
                 ApplyMigsResult ranBootstrapMigs _ <- txnApp
                     CannotUpdateCoddSchema
                     bootstrapMigBlocks
-                dbWasCreated <- checkNeedsBootstrapping migsConnString
-                unless dbWasCreated $ do
+                stillNeedsBootstrapping <- checkNeedsBootstrapping migsConnString
+                when stillNeedsBootstrapping $ do
                     logErrorN
                         $  "It was not possible to connect to database '"
                         <> dbName
@@ -411,6 +417,7 @@ baseApplyMigsBlock
     -> m (ApplyMigsResult a)
 baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blocksOfMigs
     = do
+        -- TODO: This function badly needs refactoring
         case blocksOfMigs of
             [] ->
                 withConnection defaultConnInfo
@@ -433,7 +440,7 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
                                               (const (pure ()))
                                               conn
                                               block
-                                Just (traceShowId -> customConnInfo) ->
+                                Just customConnInfo ->
                                     withConnection customConnInfo
                                         $ \customConn -> runBlock
                                               (const (pure ()))
