@@ -11,4 +11,4 @@ BEGIN
 END
 $do$;
 
-CREATE DATABASE "codd-experiments" WITH OWNER=codd_admin;
+CREATE DATABASE "codd-experiments" TEMPLATE template0 OWNER codd_admin ENCODING UTF8 LC_COLLATE "en_GB.UTF8";
