@@ -65,7 +65,7 @@ spec = do
         $ context "Transaction modifying migrations"
         $ do
               it
-                      "Non-destructive section of no-txn migrations can't leave transactions open"
+                      "no-txn migrations can't leave transactions open"
                   $ void @IO
                   $ do
                         let badMigs = map

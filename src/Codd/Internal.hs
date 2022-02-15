@@ -190,7 +190,7 @@ applyMigrationsInternal
     => (CanUpdateCoddSchema -> [BlockOfMigrations] -> m (ApplyMigsResult a))
     -> CoddSettings
     -> m a
-applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl }
+applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retryPolicy, sqlMigrations, txnIsolationLvl }
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         logDebugN
@@ -230,9 +230,8 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, sqlMi
                         "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
                     liftIO exitFailure
 
-                ApplyMigsResult ranBootstrapMigs _ <- txnApp
-                    CannotUpdateCoddSchema
-                    bootstrapMigBlocks
+                let applyBootstrapMigsFunc = baseApplyMigsBlock migsConnString retryPolicy (\_ _ -> pure ()) txnIsolationLvl CannotUpdateCoddSchema
+                ApplyMigsResult ranBootstrapMigs _ <- applyBootstrapMigsFunc bootstrapMigBlocks
                 stillNeedsBootstrapping <- checkNeedsBootstrapping migsConnString
                 when stillNeedsBootstrapping $ do
                     logErrorN
@@ -491,7 +490,7 @@ hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
     unless (all blockInTxn blocksOfMigs) $ do
         logWarnN
-            "IMPORTANT: Due to the presence of no-txn migrations, all migrations have been applied. We'll run a schema check."
+            "IMPORTANT: Due to the presence of no-txn or custom-connection migrations, all migrations have been applied. We'll run a schema check."
     logChecksumsComparison cksums expectedHashes
     when (cksums /= expectedHashes) $ throwIO $ userError
         "Exiting. Database checksums differ from expected."
