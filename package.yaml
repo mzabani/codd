@@ -71,6 +71,7 @@ library:
     - haxl
     - mtl
     - postgresql-libpq
+    - resourcet
     - text
     - time
     - unliftio

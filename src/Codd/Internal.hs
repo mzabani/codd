@@ -53,7 +53,7 @@ import           Data.List                      ( find
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( isJust
-                                                , mapMaybe
+                                                , mapMaybe, fromMaybe
                                                 )
 import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
@@ -76,6 +76,10 @@ import           UnliftIO.Exception             ( IOException
                                                 , throwIO
                                                 , tryJust
                                                 )
+import qualified Database.PostgreSQL.Simple.Time as DB
+import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release)
+import Control.Monad.Trans (MonadTrans(lift))
+import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -399,8 +403,8 @@ data ApplyMigsResult a = ApplyMigsResult
 
 -- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations with "txnBracket".
 -- Behaviour here unfortunately is _really_ complex right now. Important notes:
--- - Iff there's a single (in-txn, same-connection-string) block of migrations, then "actionAfter" runs in the same transaction
---   (and thus in the same connection as well) as that block.
+-- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
+--   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
 --   Otherwise - and including if there are no migrations - it runs after all migrations, not in an explicit transaction and
 --   in the supplied connection - not necessarily in the same as the last migration's.
 baseApplyMigsBlock
@@ -414,68 +418,90 @@ baseApplyMigsBlock
     -> [BlockOfMigrations]
     -> m (ApplyMigsResult a)
 baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blocksOfMigs
-    = do
-        -- TODO: This function badly needs refactoring
+    = runResourceT $ do
+        -- This function is complex because:
+        -- 1. There are 3 major cases (no migrations, one in-txn default-conn-string block of migrations, all others).
+        -- 2. We need to open connections only when strictly necessary due to bootstrapping.
+        -- 3. We want to insert into codd_schema.sql_migrations as early as possible even for custom-connection migrations.
+        -- 4. When possible, we want to insert into codd_schema.sql_migrations in the same transaction the migrations are running.
+
+        -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
+        -- with MonadUnliftIO.
+        connsPerInfo <- newMVar (mempty :: [(DB.ConnectInfo,DB.Connection)])
+        let getConn :: DB.ConnectInfo -> ResourceT m (ReleaseKey, DB.Connection)
+            getConn cinfo = flip allocate DB.close $ do
+                mConn <- lookup cinfo <$> readMVar connsPerInfo
+                case mConn of
+                    Just conn -> pure conn
+                    Nothing -> modifyMVar connsPerInfo $
+                                    \m -> do
+                                        conn <- DB.connect cinfo
+                                        pure ((cinfo, conn) : m, conn)
         case blocksOfMigs of
             [] ->
-                withConnection defaultConnInfo
-                    $ fmap (ApplyMigsResult [])
-                    . actionAfter blocksOfMigs
-            [x] | blockInTxn x -> case blockCustomConnInfo x of
-                Nothing -> withConnection defaultConnInfo
-                    $ \conn -> runBlock (actionAfter blocksOfMigs) conn x
-                Just customConnInfo ->
-                    withConnection customConnInfo $ \customConn ->
-                        runBlock (actionAfter blocksOfMigs) customConn x
+                lift $ withConnection defaultConnInfo $ fmap (ApplyMigsResult []) . actionAfter blocksOfMigs
+            [block] | blockInTxn block && fromMaybe defaultConnInfo (blockCustomConnInfo block) == defaultConnInfo ->
+                    -- Our very "special" case of all migs being in-txn in the default connection-string
+                    lift $ withConnection defaultConnInfo $ \defaultConn -> 
+                        let runAfterMig = getAfterMigRunFunc defaultConn (blockInTxn block)
+                        in
+                        runBlock (actionAfter blocksOfMigs) defaultConn block runAfterMig
             _ ->
-                ApplyMigsResult
+                  ApplyMigsResult
                     <$> (concatMap (\(ApplyMigsResult ms _) -> ms) <$> forM
                             blocksOfMigs
-                            \block -> case blockCustomConnInfo block of
-                                Nothing ->
-                                    withConnection defaultConnInfo
-                                        $ \conn -> runBlock
-                                              (const (pure ()))
-                                              conn
-                                              block
-                                Just customConnInfo ->
-                                    withConnection customConnInfo
-                                        $ \customConn -> runBlock
-                                              (const (pure ()))
-                                              customConn
-                                              block
+                            \block -> do
+                                let cinfo = fromMaybe defaultConnInfo (blockCustomConnInfo block)
+                                (_, conn) <- getConn cinfo
+                                let runAfterMig = getAfterMigRunFunc conn (blockInTxn block)
+                                lift $ runBlock
+                                                            (const (pure ()))
+                                                            conn
+                                                            block
+                                                            runAfterMig
                         )
-                    <*> withConnection defaultConnInfo
-                                       (actionAfter blocksOfMigs)
+                    <*> do
+                        (releaseDefaultConn, defaultConn) <- getConn defaultConnInfo
+                        res <- lift (actionAfter blocksOfMigs defaultConn)
+                        release releaseDefaultConn
+                        pure res
 
 
   where
-    runMigs conn withRetryPolicy migs = forM migs $ \asqlmig ->
-        (,) asqlmig
+    getAfterMigRunFunc :: DB.Connection -> Bool -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
+    getAfterMigRunFunc conn inTxn =
+        case canUpdSchema of
+            CannotUpdateCoddSchema -> \_ _ -> DB.fromOnly <$> unsafeQuery1 conn "SELECT now()" ()
+            CanUpdateCoddSchema | inTxn     -> maybeRegisterRanMigration defaultConnInfo conn
+                                | otherwise -> \fp time -> beginCommitTxnBracket isolLvl conn $ maybeRegisterRanMigration defaultConnInfo conn fp time
+
+    runMigs :: DB.Connection -> RetryPolicy -> [AddedSqlMigration] -> (FilePath -> DB.UTCTimestamp -> m UTCTime) -> m [(AddedSqlMigration, UTCTime)]
+    runMigs conn withRetryPolicy migs runAfterMig = forM migs $ \asqlmig ->
+        (asqlmig,)
             <$> applySingleMigration conn
-                                     isolLvl
                                      withRetryPolicy
-                                     canUpdSchema
+                                     runAfterMig
                                      asqlmig
     runBlock
         :: (DB.Connection -> m b)
         -> DB.Connection
         -> BlockOfMigrations
+        -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
         -> m (ApplyMigsResult b)
-    runBlock act conn migBlock = do
+    runBlock act conn migBlock runAfterMig = do
         if blockInTxn migBlock
             then do
                 res <- retry retryPol $ do
                     logDebugN "BEGINning transaction"
                     beginCommitTxnBracket isolLvl conn
                         $   ApplyMigsResult
-                        <$> runMigs conn singleTryPolicy (NE.toList migBlock) -- We retry entire transactions, not individual statements
+                        <$> runMigs conn singleTryPolicy (NE.toList migBlock) runAfterMig -- We retry entire transactions, not individual statements
                         <*> act conn
                 logDebugN "COMMITed transaction"
                 pure res
             else
                 ApplyMigsResult
-                <$> runMigs conn retryPol (NE.toList migBlock)
+                <$> runMigs conn retryPol (NE.toList migBlock) runAfterMig
                 <*> act conn
 
 -- | This can be used as a last-action when applying migrations to
@@ -524,12 +550,11 @@ applySingleMigration
     :: forall m
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => DB.Connection
-    -> TxnIsolationLvl
     -> RetryPolicy
-    -> CanUpdateCoddSchema
+    -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
     -> AddedSqlMigration
     -> m UTCTime
-applySingleMigration conn isolLvl statementRetryPol canUpdSchema (AddedSqlMigration sqlMig migTimestamp)
+applySingleMigration conn statementRetryPol afterMigRun (AddedSqlMigration sqlMig migTimestamp)
     = do
         let fn = migrationName sqlMig
         logDebugN $ "Applying " <> Text.pack fn
@@ -541,20 +566,24 @@ applySingleMigration conn isolLvl statementRetryPol canUpdSchema (AddedSqlMigrat
                         then InTransaction
                         else NotInTransaction statementRetryPol
                 in  multiQueryStatement_ inTxn conn nonDestSql
-                                                                                                                                                                                                                                                                                                                                    -- since every migration will have both sections marked as ran sequentially.
 
-                                                                                                                                                                                                                                                                                                                -- If already in a transaction, then just execute, otherwise
-                                                                                                                                                                                                                                                                                                                -- start read-write txn
-        let query1_ :: DB.ToRow b => DB.Query -> b -> m (DB.Only UTCTime)
-            query1_ q qargs = if migrationInTxn sqlMig
-                then unsafeQuery1 conn q qargs
-                else beginCommitTxnBracket isolLvl conn
-                    $ unsafeQuery1 conn q qargs
+        afterMigRun fn migTimestamp
 
-        case canUpdSchema of
-            CanUpdateCoddSchema -> DB.fromOnly <$> query1_
-                "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
-                            \ VALUES (?, ?, now()) \
-                            \ RETURNING applied_at"
+-- | If in a connection of the default connection string, registers in the DB
+--   that a migration with supplied name and timestamp has been applied
+--   and returns the DB's now() value (used for the "applied_at" column).
+--   Otherwise just returns the DB time now().
+maybeRegisterRanMigration :: MonadIO m =>
+    DB.ConnectInfo
+    -- ^ The default connection info, not any other.
+    -> DB.Connection
+    -- ^ The current connection, whatever it is.
+    -> FilePath -> DB.UTCTimestamp -> m UTCTime
+maybeRegisterRanMigration defaultConnInfo conn fn migTimestamp = do
+    canInsert :: [Bool] <- liftIO $ map DB.fromOnly <$> DB.query conn "SELECT TRUE FROM pg_catalog.pg_tables WHERE schemaname='codd_schema' AND tablename='sql_migrations' AND current_database()=?" (DB.Only $ DB.connectDatabase defaultConnInfo)
+    if canInsert == [True] then DB.fromOnly <$> unsafeQuery1 conn
+            "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
+            \                            VALUES (?, ?, now()) \
+            \                            RETURNING applied_at"
                 (migTimestamp, fn)
-            CannotUpdateCoddSchema -> DB.fromOnly <$> query1_ "SELECT now()" ()
+    else DB.fromOnly <$> unsafeQuery1 conn "SELECT now()" ()
