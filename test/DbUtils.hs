@@ -51,7 +51,10 @@ import           UnliftIO.Environment           ( getEnv )
 
 testConnInfo :: MonadIO m => m ConnectInfo
 testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
-    { connectHost     = "localhost"
+    {
+        -- It is strange, but IPv6 support in Github Actions seems not to be there yet.
+        -- https://github.com/actions/virtual-environments/issues/668
+      connectHost     = "127.0.0.1"
     , connectUser     = "postgres"
     , connectDatabase = "codd-test-db"
     , connectPort     = read portStr

@@ -163,7 +163,7 @@ spec = do
                                           )
                                           (const $ pure ())
 
-                      it "Rows-returning function work for no-txn migrations"
+                      it "Rows-returning function works for no-txn migrations"
                           $ \emptyTestDbInfo -> do
                                 void @IO
                                     $ runStdoutLoggingT
@@ -175,7 +175,7 @@ spec = do
                                           )
                                           (const $ pure ())
 
-                      it "Rows-returning function work for in-txn migrations"
+                      it "Rows-returning function works for in-txn migrations"
                           $ \emptyTestDbInfo -> do
                                 let (AddedSqlMigration mig t) = selectMig
                                     inTxnMig = AddedSqlMigration

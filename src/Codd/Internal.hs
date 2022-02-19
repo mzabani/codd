@@ -104,13 +104,18 @@ withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
     tryConnectError = tryJust
         $ \e -> if isServerNotAvailableError e then Just e else Nothing
 
+-- | Verifies if a libpq error means the server is not ready to accept connections yet,
+-- either by not being listening at all or still being initializing.
 isServerNotAvailableError :: IOException -> Bool
 isServerNotAvailableError e =
     let err = Text.pack $ show e
     in  "libpq"
             `Text.isInfixOf` err
-            &&               "server closed the connection"
-            `Text.isInfixOf` err
+            && 
+            (  "server closed the connection"
+                `Text.isInfixOf` err
+            || "the database system is starting up"
+                `Text.isInfixOf` err)
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
