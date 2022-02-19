@@ -227,9 +227,7 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
                 return actionAfterResult
             else do
                 logWarnN
-                    $ "Database '"
-                    <> dbName
-                    <> "' does not exist. Codd will run in bootstrap mode, expecting the very first migrations will contain custom connection strings and will create/bootstrap the database appropriately."
+                    "Default connection string is not accessible. Codd will run in bootstrap mode, expecting the very first migrations will contain custom connection strings and will create/bootstrap the database appropriately."
 
                 (bootstrapMigBlocks, otherMigBlocks) <-
                     collectBootstrapMigrations sqlMigrations
