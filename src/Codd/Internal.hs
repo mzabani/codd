@@ -112,7 +112,9 @@ isServerNotAvailableError e =
     in  "libpq"
             `Text.isInfixOf` err
             && 
-            (  "server closed the connection"
+            (  "could not connect to server: Connection refused"
+                    `Text.isInfixOf` err
+            || "server closed the connection"
                 `Text.isInfixOf` err
             || "the database system is starting up"
                 `Text.isInfixOf` err)
