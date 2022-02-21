@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 4f65ecad2f22a505ef4c41f3dd1f7f21bba35088cf5f72c930547e95a0f19123
+-- hash: 37f2d7a7645b596f63f5971598f99365cfe4331f3364d2467e6be1a80f5816a4
 
 name:           codd
 version:        0.1.0.0
@@ -78,7 +78,7 @@ library
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
+  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Wunused-packages -Werror
   build-depends:
       aeson
     , attoparsec
@@ -129,19 +129,12 @@ executable codd
       ViewPatterns
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
-      aeson
-    , base >=4.7 && <5
-    , bytestring
+      base >=4.7 && <5
     , codd
-    , containers
-    , filepath
     , monad-logger
-    , mtl
     , optparse-applicative
-    , postgresql-libpq
     , postgresql-simple
     , text
-    , unliftio
     , unliftio-core
   default-language: Haskell2010
 
@@ -187,22 +180,18 @@ test-suite codd-test
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wunused-packages
   build-depends:
       QuickCheck
-    , aeson
     , attoparsec
     , base >=4.7 && <5
-    , bytestring
     , codd
     , containers
-    , filepath
     , hspec
     , hspec-core
     , hspec-expectations
     , monad-logger
     , mtl
-    , postgresql-libpq
     , postgresql-simple
     , text
     , time

@@ -21,16 +21,9 @@ description:         Please see the README on GitHub at <https://github.com/mzab
 
 dependencies:
 - base >= 4.7 && < 5
-- aeson
-- bytestring
-- containers
-- filepath
 - monad-logger
-- mtl
-- postgresql-libpq
 - postgresql-simple
 - text
-- unliftio
 - unliftio-core
 
 ghc-options:
@@ -66,12 +59,21 @@ library:
     - -Wall
     - -Wincomplete-uni-patterns
     - -Wpartial-fields
+    - -Wunused-packages
     - -Werror
   dependencies:
+    - aeson
     - attoparsec
+    - bytestring
+    - containers
+    - filepath
     - hashable
     - haxl
+    - mtl
+    - postgresql-libpq
+    - text
     - time
+    - unliftio
 
 executables:
   codd:
@@ -88,6 +90,7 @@ executables:
     dependencies:
     - codd
     - optparse-applicative
+    - text
 
 tests:
   codd-test: 
@@ -97,6 +100,7 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -Wunused-packages
     # Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
     # do not include hspec-discover in system-build-tools. We hack around the issue
     # in default.nix so both cabal and nix-build work.
@@ -105,8 +109,11 @@ tests:
     dependencies:
     - attoparsec
     - codd
+    - containers
     - hspec
     - hspec-core
     - hspec-expectations
+    - mtl
     - QuickCheck
     - time
+    - unliftio
