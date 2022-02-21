@@ -263,7 +263,7 @@ spec = do
                                                                  -> "read uncommitted"
 
                       it
-                              "Hard checking and soft checking behaviour on mismatched checksums"
+                              "Strict checking and lax checking behaviour on mismatched checksums"
                           $ \emptyTestDbInfo -> do
                                 let
                                     bogusDbHashes = DbHashes (ObjHash "")
@@ -274,7 +274,7 @@ spec = do
                                           (migsConnString emptyTestDbInfo)
                                     $ \conn -> do
 
-                                      -- Hard checking will not apply the migration and therefore will not
+                                      -- Strict checking will not apply the migration and therefore will not
                                       -- create "newtable"
                                           DB.query_
                                                   conn
@@ -297,7 +297,7 @@ spec = do
                                                               bogusDbHashes
                                                           }
                                                       )
-                                                      HardCheck
+                                                      StrictCheck
                                                   )
                                               `shouldThrow` anyIOException
                                           DB.query_
@@ -308,7 +308,7 @@ spec = do
                                                                ]
                                                              )
 
-                                          -- Soft checking will apply the migration and will not throw an exception
+                                          -- Lax checking will apply the migration and will not throw an exception
                                           runStdoutLoggingT
                                               (applyMigrations
                                                   (emptyTestDbInfo
@@ -323,7 +323,7 @@ spec = do
                                                           bogusDbHashes
                                                       }
                                                   )
-                                                  SoftCheck
+                                                  LaxCheck
                                               )
                                           DB.query_
                                                   conn
@@ -340,7 +340,7 @@ spec = do
                                   ]
                               $ \(t1, t2) ->
                                     it
-                                            ("Hard checking falls back to soft checking in the presence of no-txn migrations - "
+                                            ("Strict checking commits before checking in the presence of no-txn migrations - "
                                             ++ show firstInTxn
                                             ++ " - "
                                             ++ t1
@@ -378,7 +378,7 @@ spec = do
                                                                                 bogusDbHashes
                                                                         }
                                                                     )
-                                                                    HardCheck
+                                                                    StrictCheck
                                                                 )
                                                             `shouldThrow` anyIOException
                                                         DB.query_

@@ -32,7 +32,7 @@ cmdParser = hsubparser
       (info
         upParser
         (progDesc
-          "Applies all pending migrations and possibly compares on-disk checksums to database checksums afterwards to check whether they match. The default mode of operation when none are provided is soft-check."
+          "Applies all pending migrations and possibly compares on-disk checksums to database checksums afterwards to check whether they match. The default mode of operation when none are provided is lax-checking."
         )
       )
   <> command
@@ -66,16 +66,16 @@ upParser =
   fmap
       Up
       (   flag'
-          (Just Codd.SoftCheck)
-          (  long "soft-check"
-          <> short 's'
+          (Just Codd.LaxCheck)
+          (  long "lax-check"
+          <> short 'l'
           <> help
                "Applies and commits all pending migrations and only then compares database and expected checksums, logging mismatches but returning a success status unless a migration fails."
           )
       <|> flag'
-            (Just Codd.HardCheck)
-            (  long "hard-check"
-            <> short 'h'
+            (Just Codd.StrictCheck)
+            (  long "strict-check"
+            <> short 's'
             <> help
                  "If and only if all pending migrations are in-txn, compares database and expected checksums before committing them, but aborts the transaction if they don't match.\
                  \\nIf there's even one pending no-txn migration, this mode _will_ commit all migrations and verify checksums after that, exiting with an error code if they don't match."
@@ -89,7 +89,7 @@ upParser =
             )
       )
 
-    <|> pure (Up $ Just Codd.SoftCheck)
+    <|> pure (Up $ Just Codd.LaxCheck)
 
 addParser :: Parser Cmd
 addParser =
@@ -136,7 +136,7 @@ writeChecksumsParser =
         )
 
 verifyChecksumParser :: Parser Cmd
-verifyChecksumParser = VerifyChecksum <$> verbositySwitch <*> switch
+verifyChecksumParser = VerifyChecksum <$> quietSwitch <*> switch
   (  long "from-stdin"
   <> help
        "Reads a JSON representation of the expected checksums from stdin (also see 'codd write-checkums'), instead of using on-disk checksums."
@@ -165,6 +165,13 @@ verbositySwitch =
     <&> \case
           True  -> Verbose
           False -> NonVerbose
+
+quietSwitch :: Parser Verbosity
+quietSwitch =
+  switch (long "quiet" <> short 'q' <> help "Hides some of the output.")
+    <&> \case
+          True  -> NonVerbose
+          False -> Verbose
 
 main :: IO ()
 main = do

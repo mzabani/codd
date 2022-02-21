@@ -13,8 +13,8 @@ import           Codd.Hashing                   ( DbHashes
                                                 )
 import           Codd.Internal                  ( applyMigrationsInternal
                                                 , baseApplyMigsBlock
-                                                , hardCheckLastAction
-                                                , softCheckLastAction
+                                                , laxCheckLastAction
+                                                , strictCheckLastAction
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
@@ -22,7 +22,7 @@ import           Control.Monad.Logger           ( MonadLogger )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
 
-data CheckHashes = SoftCheck | HardCheck
+data CheckHashes = LaxCheck | StrictCheck
 data ChecksumsPair = ChecksumsPair
     { expectedChecksums :: DbHashes
     , databaseChecksums :: DbHashes
@@ -31,7 +31,7 @@ data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | Che
 
 -- | Creates the new Database if it doesn't yet exist and applies every single migration, returning
 -- the Database's checksums if they're not the ones expected or a success result otherwise.
--- Throws an exception if a migration fails or if checksums mismatch and hard-checking is enabled.
+-- Throws an exception if a migration fails or if checksums mismatch and strict-checking is enabled.
 applyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
@@ -39,22 +39,22 @@ applyMigrations
     -> m ApplyResult
 applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
     = case checkHashes of
-        HardCheck -> do
+        StrictCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
             applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
                                     retryPolicy
-                                    (hardCheckLastAction dbInfo eh)
+                                    (strictCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
                 dbInfo
             pure $ ChecksumsMatch eh
-        SoftCheck -> do
+        LaxCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
             dbCksums <- applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
                                     retryPolicy
-                                    (softCheckLastAction dbInfo eh)
+                                    (laxCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
                 dbInfo
