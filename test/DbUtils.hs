@@ -1,10 +1,12 @@
 module DbUtils where
 
-import           Codd                           ( withDbAndDrop )
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
+import           Codd                           ( applyMigrations
+                                                , applyMigrationsNoCheck
                                                 )
-import           Codd.Internal                  ( withConnection )
+import           Codd.Environment               ( CoddSettings(..) )
+import           Codd.Internal                  ( dbIdentifier
+                                                , withConnection
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
@@ -14,15 +16,19 @@ import           Codd.Query                     ( execvoid_
                                                 , query
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , DeploymentWorkflow(..)
                                                 , Include(..)
                                                 , TxnIsolationLvl(..)
                                                 , singleTryPolicy
                                                 )
-import           Control.Monad                  ( forM_ )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad                  ( forM_
+                                                , void
+                                                )
+import           Control.Monad.Logger           ( MonadLogger
+                                                , runStdoutLoggingT
+                                                )
 import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as Text
 import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( NominalDiffTime
                                                 , UTCTime(..)
@@ -36,6 +42,8 @@ import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Test.Hspec
 import           UnliftIO                       ( MonadIO(..)
+                                                , MonadUnliftIO
+                                                , bracket
                                                 , finally
                                                 , liftIO
                                                 )
@@ -43,9 +51,12 @@ import           UnliftIO.Environment           ( getEnv )
 
 testConnInfo :: MonadIO m => m ConnectInfo
 testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
-    { connectHost     = "localhost"
+    {
+        -- It is strange, but IPv6 support in Github Actions seems not to be there yet.
+        -- https://github.com/actions/virtual-environments/issues/668
+      connectHost     = "127.0.0.1"
     , connectUser     = "postgres"
-    , connectDatabase = "postgres"
+    , connectDatabase = "codd-test-db"
     , connectPort     = read portStr
     }
 
@@ -59,6 +70,31 @@ mkValidSql t = case parseSqlPieces t of
     Left  e   -> error e -- Probably best to fail early if sql is invalid inside test code
     Right pcs -> WellParsedSql t pcs
 
+-- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
+-- afterwards.
+withDbAndDrop
+    :: (MonadUnliftIO m, MonadLogger m)
+    => CoddSettings
+    -> (ConnectInfo -> m a)
+    -> m a
+withDbAndDrop dbInfo@CoddSettings { migsConnString } f = bracket
+    (applyMigrationsNoCheck dbInfo (const $ pure ()))
+    dropDb
+    (const $ f migsConnString)
+  where
+    dropDb _ = do
+        withConnection migsConnString { connectDatabase = "postgres"
+                                      , connectUser     = "postgres"
+                                      }
+            $ \conn ->
+                  void
+                      $  liftIO
+                      $  DB.execute_ conn
+                      $  "DROP DATABASE IF EXISTS "
+                      <> dbIdentifier
+                             (Text.pack $ connectDatabase migsConnString)
+
+
 testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
 testCoddSettings migs = do
     connInfo <- testConnInfo
@@ -67,7 +103,7 @@ testCoddSettings migs = do
         createTestUserMig = AddedSqlMigration
             SqlMigration
                 { migrationName = show migTimestamp <> "-create-test-user.sql"
-                , nonDestructiveSql   =
+                , migrationSql            =
                     Just
                     $  mkValidSql
                     $  "DO\n"
@@ -77,25 +113,27 @@ testCoddSettings migs = do
                     <> "      CREATE USER \"codd-test-user\";\n"
                     <> "   END IF;\n"
                     <> "END\n"
-                    <> "$do$; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
-                , nonDestructiveForce = True
-                , nonDestructiveInTxn = True
-                , destructiveSql      = Nothing
-                , destructiveInTxn    = True
+                    <> "$do$;\n"
+                    <> "CREATE DATABASE \"codd-test-db\" WITH OWNER=\"codd-test-user\";\n"
+                    <> "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
+                , migrationInTxn          = False
+-- A custom connection string is necessary because the DB doesn't yet exist
+                , migrationCustomConnInfo = Just connInfo
+                                                { connectUser     = "postgres"
+                                                , connectDatabase = "postgres"
+                                                }
                 }
             migTimestamp
     pure CoddSettings
-        { superUserConnString = connInfo
-        , dbName              = "codd-test-db"
-        , sqlMigrations       = Right (createTestUserMig : migs)
-        , onDiskHashes        = Left ""
-        , deploymentWorkflow  = SimpleDeployment
-        , schemasToHash       = Include ["public", "codd-extra-mapped-schema"]
+        { migsConnString   = connInfo
+        , sqlMigrations    = Right (createTestUserMig : migs)
+        , onDiskHashes     = Left ""
+        , schemasToHash    = Include ["public", "codd-extra-mapped-schema"]
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
-        , retryPolicy         = singleTryPolicy
-        , txnIsolationLvl     = DbDefault
-        , checksumAlgo        = ChecksumAlgo False False
-        , hashedChecksums     = True
+        , retryPolicy      = singleTryPolicy
+        , txnIsolationLvl  = DbDefault
+        , checksumAlgo     = ChecksumAlgo False False
+        , hashedChecksums  = True
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
@@ -109,43 +147,49 @@ aroundFreshDatabase = aroundDatabaseWithMigs []
 
 aroundDatabaseWithMigs :: [AddedSqlMigration] -> SpecWith CoddSettings -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
-    coddSettings <- testCoddSettings startingMigs
-    runStdoutLoggingT $ withDbAndDrop coddSettings $ \_ ->
-        liftIO (act coddSettings) `finally` withConnection
-            (superUserInAppDatabaseConnInfo coddSettings)
+    coddSettings@CoddSettings { migsConnString } <- testCoddSettings
+        startingMigs
+
+    runStdoutLoggingT
+        $         (  applyMigrationsNoCheck coddSettings (const $ pure ())
+                  >> liftIO (act coddSettings)
+                  )
+        `finally` withConnection
+                      migsConnString { connectUser     = "postgres"
+                                     , connectDatabase = "postgres"
+                                     }
                         -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB/postgres instance.
                         -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
                         -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
-            (\conn -> do
-                execvoid_
-                    conn
-                    "ALTER ROLE postgres RESET ALL; ALTER ROLE \"codd-test-user\" RESET ALL; GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\"; \
-                   \ ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'read committed';"
+                      (\conn -> do
+                          execvoid_ conn "ALTER ROLE postgres RESET ALL;"
+                          execvoid_ conn "DROP DATABASE \"codd-test-db\";"
 
-                allRoles :: [String] <-
-                    map DB.fromOnly
-                        <$> query
-                                conn
-                                "SELECT rolname FROM pg_roles WHERE rolname NOT IN ('postgres') AND rolname NOT LIKE 'pg_%' ORDER BY rolname DESC"
-                                ()
-                forM_ allRoles $ \role -> do
-                    let escapedRole = fromString ("\"" <> role <> "\"")
-                    execvoid_ conn
-                        $  "DROP OWNED BY "
-                        <> escapedRole
-                        -- <> "; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "
-                        -- <> escapedRole
-                        -- <> "; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "
-                        -- <> escapedRole
-                        -- <> "; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "
-                        -- <> escapedRole
-                        -- <> "; REVOKE ALL ON SCHEMA public FROM "
-                        -- <> escapedRole
-                        -- <> "; REVOKE ALL ON DATABASE \"codd-test-db\" FROM "
-                        -- <> escapedRole
-                        <> "; DROP ROLE "
-                        <> escapedRole
-            )
+                          allRoles :: [String] <-
+                              map DB.fromOnly
+                                  <$> query
+                                          conn
+                                          "SELECT rolname FROM pg_roles WHERE rolname NOT IN ('postgres') AND rolname NOT LIKE 'pg_%' ORDER BY rolname DESC"
+                                          ()
+                          forM_ allRoles $ \role -> do
+                              let escapedRole =
+                                      fromString ("\"" <> role <> "\"")
+                              execvoid_ conn
+                                  $  "DROP OWNED BY "
+                                  <> escapedRole
+                                  -- <> "; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "
+                                  -- <> escapedRole
+                                  -- <> "; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "
+                                  -- <> escapedRole
+                                  -- <> "; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "
+                                  -- <> escapedRole
+                                  -- <> "; REVOKE ALL ON SCHEMA public FROM "
+                                  -- <> escapedRole
+                                  -- <> "; REVOKE ALL ON DATABASE \"codd-test-db\" FROM "
+                                  -- <> escapedRole
+                                  <> "; DROP ROLE "
+                                  <> escapedRole
+                      )
 
 -- | Returns a Postgres UTC Timestamp that increases with its input parameter.
 getIncreasingTimestamp :: NominalDiffTime -> DB.UTCTimestamp

@@ -3,7 +3,7 @@ module Codd.AppCommands.WriteChecksums
   , writeChecksums
   ) where
 
-import           Codd.Environment               ( CoddSettings )
+import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
 import qualified Codd.Hashing                  as Codd
 import qualified Codd.Internal                 as Codd
@@ -21,10 +21,10 @@ data WriteChecksumsOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 
 writeChecksums
   :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> WriteChecksumsOpts -> m ()
-writeChecksums dbInfo opts = case opts of
+writeChecksums dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToDisk mdest -> runStdoutLoggingT $ do
     checksum <- Codd.withConnection
-      (Codd.superUserInAppDatabaseConnInfo dbInfo)
+      migsConnString
       (Codd.readHashesFromDatabaseWithSettings dbInfo)
     let
       dirToSave = case mdest of
@@ -38,7 +38,7 @@ writeChecksums dbInfo opts = case opts of
     Codd.persistHashesToDisk checksum dirToSave
   WriteToStdout -> runErrorsOnlyLogger $ do
     checksums <- Codd.withConnection
-      (Codd.superUserInAppDatabaseConnInfo dbInfo)
+      migsConnString
       (Codd.readHashesFromDatabaseWithSettings dbInfo)
 
     -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..

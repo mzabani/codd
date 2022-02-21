@@ -46,17 +46,13 @@ Invoking _Codd_ this way will require mounting volumes and is certainly more bur
 
 _Codd_ will checksum DB objects to ensure database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects — such as schemas and roles — it will consider, and connection strings for it to connect.
 
-Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable. We suggest you add this file to you project's root folder.
+Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.  
 
 ````.env
 # A connection string in the format postgres://username[:password]@host:port/database_name
-# This connection string must be for a user with the CREATE and CONNECT permissions. The
-# database must already exist.
-CODD_ADMIN_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
-
-# The name of the Database the App uses. It does not need to exist and will be created
-# automatically by Codd if necessary.
-CODD_APPDB=codd-experiments
+# This connection string will be used to apply migrations. You can specify
+# custom connection strings on a per-migration basis too.
+CODD_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
 
 # A list of directories where SQL migration files will be found/added to. Do note that you
 # can have e.g. a testing environment with an extra folder for itself to hold data migrations
@@ -86,43 +82,33 @@ CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 
 ## Starting out
 
-After having configured your .env file and making sure Postgres is reachable run one of these:
+After having configured your environment variables and making sure Postgres is reachable run one of these:
 
 ````bash
 # With docker
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up
 
-# .. or with Nix
+# .. or with Nix (make sure env vars are all exported)
 $ codd up
 ````
 
-After this, you should be able to connect to your newly created Database, "codd-experiments".
+After this, you should be able to connect to your newly created Database, "codd_experiments".
 
 ## Adding a SQL Migration
 
-Here's an example of a first migration which creates a non-admin User and a table of employees:
+Here's a super quick way to experiment with _codd_. Let's create a table of employees with one employee inside by writing the following SQL to a file:
 
 ````sql
-DO
-$do$
-BEGIN
-   IF NOT EXISTS (
-      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd_user') THEN
-      CREATE USER codd_user;
-   END IF;
-END
-$do$;
-
-GRANT CONNECT ON DATABASE "codd-experiments" TO codd_user;
-
 CREATE TABLE employee (
     employee_id SERIAL PRIMARY KEY
     , employee_name TEXT NOT NULL
 );
+INSERT INTO employee (employee_name) VALUES ('John Doe');
 ````
 
-1. Save this file in your project's root folder with a name such as `create-user-and-employee-table.sql`.
-2. Run 
+1. Now save this file in your project's root folder with a name such as `create-user-and-employee-table.sql`.
+2. Make sure the connection string configured in `CODD_CONNECTION` works¹.
+3. Run 
    
    ````bash
    # With docker
@@ -131,9 +117,11 @@ CREATE TABLE employee (
    # .. or with Nix
    $ codd add create-user-and-employee-table.sql
    ````
-3. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
+4. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
+
+¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md).
 
 ### no-txn migrations and more
 
@@ -150,27 +138,10 @@ _Codd_ will parse the comment in the first line and understand that this migrati
 
 Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
-## Start using Codd in an existing database
+## Start using codd
 
-If you already have a Database and would like to start using _Codd_, here's a guideline to approach the problem. Remember to be very careful if/when making any changes to your Prod DB:
-
-1. Configure your `.env` file as explained in this guide.
-2. In that configuration make sure you have that extra `dev-only` folder to hold SQL migrations that will only run in developers' machines.
-3. Run `pg_dump your_database > bootstrap-migration.sql`. Do not use `pg_dumpall` because it includes _psql_'s meta-commands that _codd_ doesn't support.
-4. Run `dropdb your_database` to drop your DB.
-5. Run something like `createdb -T template0 -E UTF8 -l en_US.UTF8 your_database`, but with encoding and locale equal to your Production DB's. The database's and the _public_'s Schema ownership might need some manual intervention to match in different environments.
-   - **What do we mean?** Cloud services such as Amazon's RDS will create Schemas and DBs owned by users managed by them - such as the `rdsadmin` user -, that we don't usually replicate locally. We can either replicate these locally so we don't need to touch our Prod DB or change our Prod DB so only users managed by us are ever referenced in any environment.
-   - Use _psql_'s `\l` to check DB ownership and permissions of your Prod DB.
-   - Use _psql_'s `\dn+` to check the _public_ schema's ownership and permissions in your Prod DB.
-   - **Note:** Because _codd_ runs migrations with the user in the supplied connection string, that user must already have proper permissions and must be the same across environments so newly created objects have the same ownership. It also helps a lot if that user is the DB owner because some SQL statements are only allowed for DB owners.
-6. The user that you supply in your connection string can't be created in a migration because it needs to exist before _codd_ runs. That also applies to DB ownership, locale and encoding, among a few other things, so it is helpful to keep a script that creates your DB and sets up those bits in case you want to recreate it. See [scripts/create-dev-db.sh](scripts/create-dev-db.sh) for an example, but make sure to use the `createdb` statement you came up with in step 5. After creating one such script, **run it**.
-7. Add `CREATE USER`-like migrations for any non-admin users you need (`pg_dumpall --roles-only` before step 4 can help you with that) and run `codd add create-users-migration.sql --dest-folder your-dev-only-folder`.
-8. Edit `bootstrap-migration.sql` (created in step 3) and add `-- codd: no-txn` as its very first line.
-9.  Run `codd add bootstrap-migration.sql --dest-folder your-dev-only-folder`
-10. You should now have your database back and managed through _Codd_.
-11. Make sure your separate Production `.env` file does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
-12. Before deploying with _codd_, we strongly recommend you run `codd verify-checksums -v` with your environment variables connected to your Production database and make sure checksums match.
-13. In Production, we strongly recommend running `codd up --soft-check` to start with until you get acquainted enough to consider hard-checking. Make sure you read `codd up --help` to better understand your options.
+If you already have a database and want to start using _codd_ without losing it, read [START-USING.md](docs/START-USING.md).
+If you want to have a process where `codd up` will even create your database if necessary, read [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).
 
 ## Safety considerations
 
@@ -186,3 +157,5 @@ We recommend following these instructions closely to avoid several problems. Eve
 
 1. ### Why does taking and restoring a database dump affect my checksums?
    `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more, but it still seems to lose schema permissions in some cases, for instance. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.
+2. ### How do I specify custom connection strings on a per-migration basis?
+   Add a `-- codd-connection` comment to the first lines of your migration. You can see an example at [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).

@@ -4,10 +4,8 @@ module Codd.AppCommands.AddMigration
   ) where
 
 import qualified Codd
-import           Codd.Analysis                  ( MigrationCheckSimpleWorkflow(..)
+import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
-                                                , checkMigrationSimpleWorkflow
-                                                , migrationErrors
                                                 )
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
@@ -16,11 +14,9 @@ import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Parsing                   ( ParsingOptions(..)
-                                                , parseSqlMigration
+                                                , parseSqlMigrationOpts
                                                 )
-import           Codd.Types                     ( DeploymentWorkflow(..)
-                                                , SqlFilePath(..)
-                                                )
+import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
                                                 , unless
                                                 , when
@@ -55,7 +51,7 @@ addMigration
   -> Maybe FilePath
   -> SqlFilePath
   -> m ()
-addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentWorkflow } AddMigrationOptions { dontApply, noParse } destFolder sqlFp@(SqlFilePath fp)
+addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrationOptions { dontApply, noParse } destFolder sqlFp@(SqlFilePath fp)
   = do
     finalDir <- case (destFolder, sqlMigrations) of
       (Just f, _) -> pure f
@@ -74,8 +70,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
     sqlMigContents <- liftIO $ Text.readFile fp
-    let parsedSqlMigE = parseSqlMigration
-          deploymentWorkflow
+    let parsedSqlMigE = parseSqlMigrationOpts
           (if noParse then NoParse else DoParse)
           (takeFileName fp)
           sqlMigContents
@@ -83,14 +78,10 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes, deploymentW
       Left err ->
         error $ "There was an error parsing this SQL Migration: " ++ show err
       Right sqlMig -> do
-        migErrors <- case deploymentWorkflow of
-          SimpleDeployment ->
-            either (pure . (: []))
-                   (pure . maybeToList . transactionManagementProblem)
-              $ checkMigrationSimpleWorkflow sqlMig
-          BlueGreenSafeDeploymentUpToAndIncluding{} -> do
-            migCheck <- checkMigration dbInfo sqlMig
-            pure $ migrationErrors sqlMig migCheck
+        migErrors <-
+          either (pure . (: []))
+                 (pure . maybeToList . transactionManagementProblem)
+            $ checkMigration sqlMig
 
         when (migErrors /= []) $ liftIO $ do
           forM_ migErrors (Text.hPutStrLn stderr)

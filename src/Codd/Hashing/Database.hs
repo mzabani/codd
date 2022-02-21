@@ -238,7 +238,7 @@ readHashesFromDatabaseWithSettings
   => CoddSettings
   -> DB.Connection
   -> m DbHashes
-readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
+readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
   = do
   -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
   -- Extensibility is a problem if we do this, but we can worry about that later, if needed
@@ -249,7 +249,7 @@ readHashesFromDatabaseWithSettings CoddSettings { superUserConnString, schemasTo
       Right (numVersion :: Int) -> do
         let majorVersion = numVersion `div` 10000
             rolesToHash  = alsoInclude
-              [SqlRole . Text.pack . DB.connectUser $ superUserConnString]
+              [SqlRole . Text.pack . DB.connectUser $ migsConnString]
               extraRolesToHash
         case majorVersion of
           10 -> readHashesFromDatabase Pg10.hashQueryFor

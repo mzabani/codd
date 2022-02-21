@@ -4,7 +4,7 @@ Most of the time, you'll be able to simply add migrations and things should work
 
 <!-- vscode-markdown-toc -->
 - [SQL Migrations and Codd](#sql-migrations-and-codd)
-	- [Using no-txn migrations](#using-no-txn-migrations)
+	- [Using no-txn or custom-connection migrations](#using-no-txn-or-custom-connection-migrations)
 	- [Unsupported SQL inside migrations](#unsupported-sql-inside-migrations)
 	- [Retry Policies](#retry-policies)
 
@@ -14,11 +14,11 @@ Most of the time, you'll be able to simply add migrations and things should work
 	/vscode-markdown-toc-config -->
 <!-- /vscode-markdown-toc -->
 
-## Using no-txn migrations
+## Using no-txn or custom-connection migrations
 
-By using `no-txn` migrations, you're taking great risk with the possibility of a migration failing when deploying and leaving the database in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
+By using `no-txn` migrations or migrations with a custom connection string, you're taking great risk with the possibility of a migration failing when deploying and leaving the database in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
 
-_Codd_ will always run each block of consecutive `in-txn` migrations in a single transaction. If there are blocks of `in-txn` migrations intertwined with `no-txn` migrations, each consecutive block runs either in a transaction or outside a transaction, accordingly. Also, if even one `no-txn` migration exists, _codd_ will apply and commit every pending migration and verify checksums after that.  
+_Codd_ will always run each block of consecutive `in-txn` migrations with the same connection string in a single transaction. If there are `in-txn` migrations intertwined with `no-txn` migrations or migrations with custom connection strings, every block of consecutive `in-txn` and `same-connection-string` migrations runs in the same transaction, but other migrations run separately. Also, if even one `no-txn` migration or one migration with a custom connection string exists, _codd_ will apply and commit every pending migration and verify checksums only after that.  
 
 ## Unsupported SQL inside migrations
 
@@ -33,8 +33,8 @@ If you find a problem, please let us know.
 
 A migration can fail for a variety of reasons, including unhandled data and serializability errors when using Serializable transactions. For this reason, _codd_ comes with a default Retry Policy of 3 tries (at most 2 retries), the first retry attempt 1 second after the first fails, and the second retry attempt 2 seconds after the second one fails. This can be configured with the `CODD_RETRY_POLICY` environment variable as exemplified in [README.md](../README.md). Important observations are:
 
-- When faced with `in-txn` blocks of migrations, _codd_ retries them whole.
+- When faced with a block of consecutive `in-txn`  migrations, _codd_ retries the blocks whole.
   - For these, the retry count and intervals are "reset" for each block.
-- For `no-txn` blocks of migrations, _codd_ retries individual statements, not even entire migrations.
+- For `no-txn` migrations, _codd_ retries individual statements, not even entire migrations.
   - Otherwise retries would lead to possibly inconsistent data.
   - The retry count and intervals are also "reset" for each statement.

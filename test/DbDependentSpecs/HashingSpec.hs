@@ -6,14 +6,10 @@ import           Codd                           ( ApplyResult(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
-import           Codd.Analysis                  ( DestructiveSectionCheck(..)
-                                                , MigrationCheck(..)
-                                                , NonDestructiveSectionCheck(..)
+import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
+import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..)
                                                 , DiffType(..)
                                                 , hashDifferences
@@ -28,7 +24,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
-                                                , parseSqlMigrationSimpleWorkflow
+                                                , parseSqlMigration
                                                 , parsedSqlText
                                                 , toMigrationTimestamp
                                                 )
@@ -101,16 +97,12 @@ migrationsAndHashChange = zipWith
   (\(MU doSql undoSql, c) i ->
     ( MU
       (AddedSqlMigration
-        (let
-           mig = either
-             (error "Could not parse SQL migration")
-             id
-             (parseSqlMigrationSimpleWorkflow
-               "1900-01-01T00:00:00Z-migration.sql"
-               doSql
-             )
+        (let mig = either
+               (error "Could not parse SQL migration")
+               id
+               (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
          in  mig {
-                                                                                                   -- Override name to avoid conflicts
+                                                                                                                           -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -995,7 +987,7 @@ spec = do
               (either
                 (error "Could not parse SQL migration")
                 id
-                (parseSqlMigrationSimpleWorkflow
+                (parseSqlMigration
                   "1900-01-01T00:00:00Z-create-coll.sql"
                   "CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
                 )
@@ -1024,7 +1016,7 @@ spec = do
               (either
                 (error "Could not parse SQL migration")
                 id
-                (parseSqlMigrationSimpleWorkflow
+                (parseSqlMigration
                   "1900-01-01T00:00:00Z-create-range-and-other-function.sql"
                   "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi); \
                \\n CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
@@ -1057,11 +1049,10 @@ spec = do
         $ aroundFreshDatabase
         $ it "Checksumming schema changes"
         $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
-            let
-                -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
+            let -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
                 -- Use the above definition of emptyDbInfo if it helps debugging
                 emptyDbInfo = emptyDbInfo2
-                connInfo    = superUserInAppDatabaseConnInfo emptyDbInfo
+                connInfo    = migsConnString emptyDbInfo
                 getHashes sett = runStdoutLoggingT $ withConnection
                   connInfo
                   (readHashesFromDatabaseWithSettings sett)
@@ -1134,9 +1125,8 @@ spec = do
           dbHashesAfterMig <- runStdoutLoggingT $ applyMigrationsNoCheck
             dbInfo
             (readHashesFromDatabaseWithSettings dbInfo)
-          let migText =
-                parsedSqlText <$> nonDestructiveSql (addedSqlMig nextMig)
-              diff = hashDifferences hashSoFar dbHashesAfterMig
+          let migText = parsedSqlText <$> migrationSql (addedSqlMig nextMig)
+              diff    = hashDifferences hashSoFar dbHashesAfterMig
           case expectedChanges of
             ChangeEq c -> do
               (migText, diff) `shouldBe` (migText, Map.fromList c)

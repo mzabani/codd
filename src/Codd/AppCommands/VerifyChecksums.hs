@@ -2,9 +2,7 @@ module Codd.AppCommands.VerifyChecksums
   ( verifyChecksums
   ) where
 
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
+import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 , readHashesFromDisk
@@ -29,24 +27,25 @@ import           UnliftIO                       ( MonadUnliftIO
 
 verifyChecksums
   :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> m ()
-verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes } fromStdin = do
-  let dbInfoDontApplyAnything = dbInfoWithAllMigs { sqlMigrations = Right [] }
-      adminConnInfo = superUserInAppDatabaseConnInfo dbInfoDontApplyAnything
-  expectedChecksums :: DbHashes <- if fromStdin
-    then do
-      liftIO $ hSetBinaryMode stdin True
-      inputs <- liftIO $ hGetContents stdin
-      pure
-        $ fromMaybe
-            (error
-              "Could not decode the JSON input as a DB-checksum representation. Make sure it is the output of 'codd write-checksums --to-stdout' and that the versions of codd are exactly the same."
-            )
-        $ decode inputs
-    else either readHashesFromDisk pure onDiskHashes
-  dbHashes <- withConnection
-    adminConnInfo
-    (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
-  when (dbHashes /= expectedChecksums) $ do
-    logChecksumsComparison dbHashes expectedChecksums
-    liftIO $ exitWith (ExitFailure 1)
-  logInfoN "Database and expected checksums match."
+verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes, migsConnString } fromStdin
+  = do
+    let dbInfoDontApplyAnything =
+          dbInfoWithAllMigs { sqlMigrations = Right [] }
+    expectedChecksums :: DbHashes <- if fromStdin
+      then do
+        liftIO $ hSetBinaryMode stdin True
+        inputs <- liftIO $ hGetContents stdin
+        pure
+          $ fromMaybe
+              (error
+                "Could not decode the JSON input as a DB-checksum representation. Make sure it is the output of 'codd write-checksums --to-stdout' and that the versions of codd are exactly the same."
+              )
+          $ decode inputs
+      else either readHashesFromDisk pure onDiskHashes
+    dbHashes <- withConnection
+      migsConnString
+      (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
+    when (dbHashes /= expectedChecksums) $ do
+      logChecksumsComparison dbHashes expectedChecksums
+      liftIO $ exitWith (ExitFailure 1)
+    logInfoN "Database and expected checksums match."

@@ -37,19 +37,18 @@ import           Test.Hspec                     ( Spec
                                                 )
 import           UnliftIO                       ( IOException )
 
+
 migThatWontRun :: AddedSqlMigration
 migThatWontRun = AddedSqlMigration
     SqlMigration
-        { migrationName       = "create-things.sql"
-        , nonDestructiveSql   = Just
-                                $  mkValidSql
-                                $  "CREATE USER \"user-that-wont-exist\";\n"
-                                <> "CREATE TABLE table_that_wont_exist();\n"
-                                <> "CREATE SCHEMA schema_that_wont_exist;"
-        , nonDestructiveForce = True
-        , nonDestructiveInTxn = True
-        , destructiveSql      = Nothing
-        , destructiveInTxn    = True
+        { migrationName           = "create-things.sql"
+        , migrationSql            = Just
+                                    $  mkValidSql
+                                    $  "CREATE USER \"user-that-wont-exist\";\n"
+                                    <> "CREATE TABLE table_that_wont_exist();\n"
+                                    <> "CREATE SCHEMA schema_that_wont_exist;"
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 99999)
 
@@ -57,9 +56,11 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
-            { dbName        = "non-existing-db-name"
-            , onDiskHashes  = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations = Right [migThatWontRun]
+            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            , sqlMigrations  = Right [migThatWontRun]
+            , migsConnString = (migsConnString vanillaTestSettings)
+                                   { DB.connectDatabase = "non-existing-db-name"
+                                   }
             }
     runStdoutLoggingT $ do
         -- libpq's fatal connection error is an IOException
@@ -69,32 +70,43 @@ doesNotCreateDB act = do
                                   `isInfixOf` show e
                           )
 
-    withConnection (superUserConnString testSettings) $ \conn -> do
-        dbExists :: Int <- DB.fromOnly <$> unsafeQuery1
-            conn
-            "SELECT COUNT(*) FROM pg_database WHERE datname = ?"
-            (DB.Only $ dbName testSettings)
-        dbExists `shouldBe` 0
+    withConnection (migsConnString testSettings)
+            { DB.connectDatabase = "postgres"
+            }
+        $ \conn -> do
+              dbExists :: Int <- DB.fromOnly <$> unsafeQuery1
+                  conn
+                  "SELECT COUNT(*) FROM pg_database WHERE datname = ?"
+                  (DB.Only $ DB.connectDatabase $ migsConnString testSettings)
+              dbExists `shouldBe` 0
 
 doesNotModifyExistingDb
     :: (CoddSettings -> LoggingT IO a) -> (IO a -> IO ()) -> IO ()
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings []
     let testSettings = vanillaTestSettings
-            { dbName        = "new_checksums_test_db"
-            , onDiskHashes  = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations = Right [migThatWontRun]
+            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            , sqlMigrations  = Right [migThatWontRun]
+            , migsConnString = (migsConnString vanillaTestSettings)
+                                   { DB.connectDatabase =
+                                       "new_checksums_test_db"
+                                   }
             }
 
         getCounts =
-            withConnection (superUserConnString vanillaTestSettings) $ \conn ->
-                unsafeQuery1 @(Int, Int, Int)
-                    conn
-                    "SELECT (SELECT COUNT(*) FROM pg_catalog.pg_namespace), (SELECT COUNT(*) FROM pg_catalog.pg_class), (SELECT COUNT(*) FROM pg_catalog.pg_roles)"
-                    ()
-    withConnection (superUserConnString vanillaTestSettings) $ \conn -> do
-        execvoid_ conn "DROP DATABASE IF EXISTS new_checksums_test_db"
-        execvoid_ conn "CREATE DATABASE new_checksums_test_db"
+            withConnection (migsConnString vanillaTestSettings)
+                    { DB.connectDatabase = "postgres"
+                    }
+                $ \conn -> unsafeQuery1 @(Int, Int, Int)
+                      conn
+                      "SELECT (SELECT COUNT(*) FROM pg_catalog.pg_namespace), (SELECT COUNT(*) FROM pg_catalog.pg_class), (SELECT COUNT(*) FROM pg_catalog.pg_roles)"
+                      ()
+    withConnection (migsConnString vanillaTestSettings)
+            { DB.connectDatabase = "postgres"
+            }
+        $ \conn -> do
+              execvoid_ conn "DROP DATABASE IF EXISTS new_checksums_test_db"
+              execvoid_ conn "CREATE DATABASE new_checksums_test_db"
 
     countsBefore <- getCounts
     assert $ runStdoutLoggingT $ act testSettings

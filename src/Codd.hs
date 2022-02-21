@@ -5,29 +5,22 @@ module Codd
     , CheckHashes(..)
     , applyMigrations
     , applyMigrationsNoCheck
-    , withDbAndDrop
     ) where
 
-import           Codd.Environment               ( CoddSettings(..)
-                                                , superUserInAppDatabaseConnInfo
-                                                )
+import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes
                                                 , readHashesFromDisk
                                                 )
 import           Codd.Internal                  ( applyMigrationsInternal
                                                 , baseApplyMigsBlock
-                                                , dbIdentifier
                                                 , hardCheckLastAction
                                                 , softCheckLastAction
-                                                , withConnection
                                                 )
-import           Control.Monad                  ( void )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
-import           UnliftIO.Exception             ( bracket )
 
 data CheckHashes = SoftCheck | HardCheck
 data ChecksumsPair = ChecksumsPair
@@ -44,12 +37,13 @@ applyMigrations
     => CoddSettings
     -> CheckHashes
     -> m ApplyResult
-applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
+applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
     = case checkHashes of
         HardCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
             applyMigrationsInternal
-                (baseApplyMigsBlock retryPolicy
+                (baseApplyMigsBlock migsConnString
+                                    retryPolicy
                                     (hardCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
@@ -58,7 +52,8 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes, retryPolicy, txnIsolationLvl
         SoftCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
             dbCksums <- applyMigrationsInternal
-                (baseApplyMigsBlock retryPolicy
+                (baseApplyMigsBlock migsConnString
+                                    retryPolicy
                                     (softCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
@@ -81,30 +76,12 @@ applyMigrationsNoCheck
     => CoddSettings
     -> (DB.Connection -> m a)
     -> m a
-applyMigrationsNoCheck dbInfo@CoddSettings { retryPolicy, txnIsolationLvl } finalFunc
+applyMigrationsNoCheck dbInfo@CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } finalFunc
     = applyMigrationsInternal
-        (baseApplyMigsBlock retryPolicy
+        (baseApplyMigsBlock migsConnString
+                            retryPolicy
                             (\_migBlocks conn -> finalFunc conn)
                             txnIsolationLvl
         )
         dbInfo
 
--- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
--- afterwards. Useful for testing.
-withDbAndDrop
-    :: (MonadUnliftIO m, MonadLogger m)
-    => CoddSettings
-    -> (DB.ConnectInfo -> m a)
-    -> m a
-withDbAndDrop dbInfo f = bracket
-    (applyMigrationsNoCheck dbInfo (const $ pure ()))
-    dropDb
-    (const $ f (superUserInAppDatabaseConnInfo dbInfo))
-  where
-    dropDb _ = do
-        withConnection (superUserConnString dbInfo) $ \conn ->
-            void
-                $  liftIO
-                $  DB.execute_ conn
-                $  "DROP DATABASE IF EXISTS "
-                <> dbIdentifier (dbName dbInfo)
