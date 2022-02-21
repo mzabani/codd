@@ -136,7 +136,7 @@ writeChecksumsParser =
         )
 
 verifyChecksumParser :: Parser Cmd
-verifyChecksumParser = VerifyChecksum <$> verbositySwitch <*> switch
+verifyChecksumParser = VerifyChecksum <$> quietSwitch <*> switch
   (  long "from-stdin"
   <> help
        "Reads a JSON representation of the expected checksums from stdin (also see 'codd write-checkums'), instead of using on-disk checksums."
@@ -165,6 +165,13 @@ verbositySwitch =
     <&> \case
           True  -> Verbose
           False -> NonVerbose
+
+quietSwitch :: Parser Verbosity
+quietSwitch =
+  switch (long "quiet" <> short 'q' <> help "Hides some of the output.")
+    <&> \case
+          True  -> NonVerbose
+          False -> Verbose
 
 main :: IO ()
 main = do
