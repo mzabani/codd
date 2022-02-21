@@ -150,8 +150,8 @@ We recommend following these instructions closely to avoid several problems. Eve
 - Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).  
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
-- Always run `codd up --hard-check` on CI because it's a good place to be strict.
-- After running `codd up --hard-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --hard-check` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- Always run `codd up --strict-check` on CI because it's a good place to be strict.
+- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 
 ## Frequently Asked Questions
 

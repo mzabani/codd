@@ -510,14 +510,14 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
                 <*> act conn
 
 -- | This can be used as a last-action when applying migrations to
--- hard-check checksums, logging differences, success and throwing
+-- strict-check checksums, logging differences, success and throwing
 -- an exception if they mismatch.
-hardCheckLastAction
+strictCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
     -> DbHashes
     -> ([BlockOfMigrations] -> DB.Connection -> m ())
-hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
+strictCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
     unless (all blockInTxn blocksOfMigs) $ do
         logWarnN
@@ -527,14 +527,14 @@ hardCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
         "Exiting. Database checksums differ from expected."
 
 -- | This can be used as a last-action when applying migrations to
--- soft-check checksums, logging differences or success, but
+-- lax-check checksums, logging differences or success, but
 -- _never_ throwing exceptions and returning database checksums.
-softCheckLastAction
+laxCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
     -> DbHashes
     -> ([BlockOfMigrations] -> DB.Connection -> m DbHashes)
-softCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
+laxCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
     logChecksumsComparison cksums expectedHashes
     pure cksums
