@@ -33,6 +33,7 @@ import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( NominalDiffTime
                                                 , UTCTime(..)
                                                 , addUTCTime
+                                                , secondsToNominalDiffTime
                                                 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..)
                                                 , defaultConnectInfo
@@ -211,6 +212,17 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
 getIncreasingTimestamp :: NominalDiffTime -> DB.UTCTimestamp
 getIncreasingTimestamp n =
     DB.Finite $ addUTCTime n $ UTCTime (fromGregorian 2020 1 1) 0
+
+-- | Changes every added migrations's timestamp so they're applied in the order of the list.
+fixMigsOrder :: [AddedSqlMigration] -> [AddedSqlMigration]
+fixMigsOrder = zipWith
+    (\i (AddedSqlMigration mig _) ->
+        AddedSqlMigration mig
+            $ getIncreasingTimestamp
+            $ secondsToNominalDiffTime
+            $ fromIntegral i
+    )
+    [(0 :: Int) ..]
 
 shouldBeStrictlySortedOn :: (Show a, Ord b) => [a] -> (a -> b) -> Expectation
 shouldBeStrictlySortedOn xs f =
