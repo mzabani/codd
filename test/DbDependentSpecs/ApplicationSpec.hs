@@ -53,14 +53,17 @@ import           Data.Time                      ( UTCTime
 import qualified Database.PostgreSQL.Simple    as DB
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
+                                                , finallyDrop
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , shouldBeStrictlySortedOn
                                                 , testCoddSettings
                                                 , testConnInfo
                                                 )
 import           Test.Hspec
 import           Test.Hspec.Expectations
 import           Test.QuickCheck
+import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
@@ -140,8 +143,31 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder =
             , migrationInTxn          = False
             , migrationCustomConnInfo = Just customConnInfo
             }
-        -- Make sure these are really old, we want them to run before codd-test-db is created
-        (getIncreasingTimestamp (fromIntegral migOrder - 10000))
+        (getIncreasingTimestamp 0)
+
+createCountCheckingMig :: Int -> AddedSqlMigration
+createCountCheckingMig expectedCount = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "000"
+                                    <> show expectedCount
+                                    <> "-count-checking-mig.sql"
+        , migrationSql            =
+            Just
+            $  mkValidSql
+            $  "DO\
+\\n$do$\
+\\nBEGIN\
+\\n   IF (SELECT COUNT(*) <> "
+            <> Text.pack (show expectedCount)
+            <> " FROM codd_schema.sql_migrations) THEN\
+\\n      RAISE 'Not the right count';\
+\\n   END IF;\
+\\nEND\
+\\n$do$;"
+        , migrationInTxn          = False
+        , migrationCustomConnInfo = Nothing
+        }
+    (getIncreasingTimestamp 0)
 
 spec :: Spec
 spec = do
@@ -586,82 +612,171 @@ spec = do
                                 it "For in-txn migrations" $ testRetries True
                                 it "For no-txn migrations" $ testRetries True
 
-            describe "Custom connection-string migrations" $ do
-                it "Bootstrapping works and connections are lazily opened" $ do
-                    defaultConnInfo <- testConnInfo
-                    testSettings    <- testCoddSettings []
-                    let Right createCoddTestDbMigs = sqlMigrations testSettings
-                    let postgresCinfo = defaultConnInfo
-                            { DB.connectDatabase = "postgres"
-                            , DB.connectUser     = "postgres"
-                            }
-                    let customConnMigs =
-                            [ createDatabaseMig
-                                  postgresCinfo
-                                      { DB.connectDatabase = previousDbName
-                                      }
-                                  ("new_database_" <> show i)
-                                  1 {- 1 sec pg_sleep -}
-                                  i
-                            | i              <- [0 .. 3]
-                            , previousDbName <- if i == 0
-                                then ["postgres"]
-                                else ["new_database_" <> show (i - 1)]
-                            ]
-                    void @IO $ do
-                        runStdoutLoggingT $ applyMigrationsNoCheck
-                            (testSettings
-                                { sqlMigrations = Right
-                                                  $  customConnMigs
-                                                  ++ createCoddTestDbMigs
-                                }
-                            )
-                            (const $ pure ())
-                        withConnection defaultConnInfo $ \conn -> do
-                            -- 1. Check all databases were created
-                            map DB.fromOnly
-                                <$>            DB.query
-                                                   conn
-                                                   "SELECT datname FROM pg_database WHERE datname LIKE 'new_database_%' ORDER BY datname"
-                                                   ()
+            describe "Custom connection-string migrations"
+                $ it "Bootstrapping works and connections are lazily opened"
+                $ do
+                    -- We want to diversify the order of migrations we apply.
+                    -- Meaning we want to test regexp-like sequences
+                    -- like (custom-connection-mig | default-connection-mig)+
+                    -- However, some custom-connection migrations need to run
+                    -- in the right relative order between them, and any default-connection
+                    -- migrations need to run after the mig that creates "codd-test-db".
+                    -- So the format is actually approximately:
+                    -- 1. migs <- [create-codd-test-db] ++ Perm{default-conn-migs}
+                    -- 2. Merge [create-database-migs] and `migs` into another list
+                    --    preserving relative order of migs from each list randomly.
 
-                                `shouldReturn` [ "new_database_0" :: String
-                                               , "new_database_1"
-                                               , "new_database_2"
-                                               , "new_database_3"
-                                               ]
+                    -- Also, we want - to the extent that it's possible - ensure
+                    -- codd_schema.sql_migrations is up-to-date and with rows in
+                    -- the correct order.
+                    -- We do that by having default-conn-migs check COUNT(*)
+                    -- for that table.
 
-                            -- 2. Check order of migrations and time between their applied_at is adequate
-                            bootstrapMigs <- DB.query
-                                conn
-                                "SELECT name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at LIMIT 4"
-                                ()
-                            map fst bootstrapMigs
-                                `shouldBe` map
-                                               (migrationName . addedSqlMig)
-                                               customConnMigs
-                            -- Half a second is a conservative minimum given pg_sleep(1) in each migration
-                            let minTimeBetweenMigs =
-                                    secondsToNominalDiffTime 0.5
-                            zipWith
-                                    (\(_, time1 :: UTCTime) (_, time2) ->
-                                        diffUTCTime time2 time1
+                    -- Finally we check the order of migrations in codd_schema.sql_migrations
+                    -- after having all migrations applied.
+                      defaultConnInfo <- testConnInfo
+                      testSettings    <- testCoddSettings []
+                      let postgresCinfo = defaultConnInfo
+                              { DB.connectDatabase = "postgres"
+                              , DB.connectUser     = "postgres"
+                              }
+
+                          Right createCoddTestDbMigs =
+                              sqlMigrations testSettings
+                          createDbMigs =
+                              [ createDatabaseMig
+                                    postgresCinfo
+                                        { DB.connectDatabase = previousDbName
+                                        }
+                                    ("new_database_" <> show i)
+                                    0 {- 0 sec pg_sleep -}
+                                    i
+                              | i              <- [0 .. 3]
+                              , previousDbName <- if i == 0
+                                  then ["postgres"]
+                                  else ["new_database_" <> show (i - 1)]
+                              ]
+
+                      shuffledMigs0 <-
+                          QC.generate $ (CreateCoddTestDb :) <$> QC.resize
+                              10
+                              (QC.listOf $ pure CreateCountCheckingMig)
+                      shuffledMigs <-
+                          fmap concat
+                          $ QC.generate
+                          $ mergeShuffle shuffledMigs0
+                                         (map CreateDbCreationMig [0 .. 3])
+                          $ \migOrder migType -> case migType of
+                                CreateCoddTestDb -> createCoddTestDbMigs
+                                CreateDbCreationMig i ->
+                                    [ createDatabaseMig
+                                          postgresCinfo
+                                              { DB.connectDatabase =
+                                                  previousDbName
+                                              }
+                                          ("new_database_" <> show i)
+                                          1 {- 1 sec pg_sleep -}
+                                          i
+                                    | previousDbName <- if i == 0
+                                        then ["postgres"]
+                                        else ["new_database_" <> show (i - 1)]
+                                    ]
+                                CreateCountCheckingMig ->
+                                    [createCountCheckingMig migOrder]
+
+-- Make sure timestamps of migrations are in order. They don't run
+-- in the order of the list.
+                      let
+                          allMigs = zipWith
+                              (\i (AddedSqlMigration mig time) ->
+                                  AddedSqlMigration
+                                      mig
+                                      ( getIncreasingTimestamp
+                                      $ secondsToNominalDiffTime i
+                                      )
+                              )
+                              [1, 2, 3, 4, 5, 6, 7]
+                              shuffledMigs
+                      finallyDrop "codd-test-db"
+                          $ finallyDrop "new_database_0"
+                          $ finallyDrop "new_database_1"
+                          $ finallyDrop "new_database_2"
+                          $ finallyDrop "new_database_3"
+                          $ void @IO
+                          $ do
+                                runStdoutLoggingT $ applyMigrationsNoCheck
+                                    (testSettings
+                                        { sqlMigrations = Right allMigs
+                                        }
                                     )
-                                    bootstrapMigs
-                                    (drop 1 bootstrapMigs)
-                                `shouldSatisfy` all (> minTimeBetweenMigs)
+                                    (const $ pure ())
+                                withConnection defaultConnInfo $ \conn -> do
+                                    -- 1. Check all databases were created
+                                    map DB.fromOnly
+                                        <$> DB.query
+                                                conn
+                                                "SELECT datname FROM pg_database WHERE datname LIKE 'new_database_%' ORDER BY datname"
+                                                ()
 
-                            -- 3. Check every migration was reported as applied
-                            map DB.fromOnly
-                                <$>            DB.query
-                                                   conn
-                                                   "SELECT name FROM codd_schema.sql_migrations ORDER BY applied_at"
-                                                   ()
-                                `shouldReturn` map
-                                                   (migrationName . addedSqlMig)
-                                                   (  customConnMigs
-                                                   ++ createCoddTestDbMigs
-                                                   )
+                                        `shouldReturn` [ "new_database_0" :: String
+                                                       , "new_database_1"
+                                                       , "new_database_2"
+                                                       , "new_database_3"
+                                                       ]
+
+                                    -- 2. Check all migrations were applied in order
+                                    runMigs :: [(Int, FilePath, UTCTime)] <-
+                                        DB.query
+                                            conn
+                                            "SELECT id, name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                            ()
+                                    map (\(_, n, _) -> n) runMigs
+                                        `shouldBe` map
+                                                       ( migrationName
+                                                       . addedSqlMig
+                                                       )
+                                                       allMigs
+                                    runMigs
+                                        `shouldBeStrictlySortedOn` \(i, _, _) ->
+                                                                       i
+                                    -- Half a second is a conservative minimum given pg_sleep(1) in each migration
+                                    let minTimeBetweenMigs =
+                                            secondsToNominalDiffTime 0.5
+                                        migsWithSleep = filter
+                                            (\(_, n, _) ->
+                                                "-create-database-mig.sql"
+                                                    `Text.isSuffixOf` Text.pack
+                                                                          n
+                                            )
+                                            runMigs
+                                    zipWith
+                                            (\(_, _, time1 :: UTCTime) (_, _, time2) ->
+                                                diffUTCTime time2 time1
+                                            )
+                                            migsWithSleep
+                                            (drop 1 migsWithSleep)
+                                        `shouldSatisfy` all
+                                                            (> minTimeBetweenMigs
+                                                            )
+
+
+-- | Concatenates two lists, generates a shuffle of that
+-- that does not change relative order of elements when compared
+-- to their original lists. The supplied function is called with 
+-- the final 0-based index of each element in the list and the
+-- element itself to form the final generated list.
+mergeShuffle :: [a] -> [a] -> (Int -> a -> b) -> Gen [b]
+mergeShuffle l1 l2 f = go l1 l2 f (0 :: Int)
+  where
+    go []          l2          f i = pure $ zipWith f [i ..] l2
+    go l1          []          f i = pure $ zipWith f [i ..] l1
+    go l1@(x : xs) l2@(y : ys) f i = do
+        yieldFirst <- arbitrary @Bool
+        if yieldFirst
+            then (f i x :) <$> go xs l2 f (i + 1)
+            else (f i y :) <$> go l1 ys f (i + 1)
+
+data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig | CreateDbCreationMig Int
 
 
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a

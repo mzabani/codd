@@ -28,6 +28,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , aroundTestDbInfo
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , shouldBeStrictlySortedOn
                                                 , testCoddSettings
                                                 , withDbAndDrop
                                                 )
@@ -60,10 +61,6 @@ lotsOfObjectsMigration = AddedSqlMigration
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 0)
-
-shouldBeStrictlySortedOn :: (Show a, Ord b) => [a] -> (a -> b) -> Expectation
-shouldBeStrictlySortedOn xs f =
-    zip xs (drop 1 xs) `shouldSatisfy` all (\(a1, a2) -> f a1 < f a2)
 
 spec :: Spec
 spec = do
