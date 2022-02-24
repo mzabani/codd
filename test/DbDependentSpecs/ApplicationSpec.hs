@@ -145,29 +145,25 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder =
             }
         (getIncreasingTimestamp 0)
 
-createCountCheckingMig :: Int -> AddedSqlMigration
-createCountCheckingMig expectedCount = AddedSqlMigration
-    SqlMigration
-        { migrationName           = "000"
-                                    <> show expectedCount
-                                    <> "-count-checking-mig.sql"
-        , migrationSql            =
-            Just
-            $  mkValidSql
-            $  "DO\
+createCountCheckingMig :: Int -> String -> SqlMigration
+createCountCheckingMig expectedCount migName = SqlMigration
+    { migrationName = "000" <> show expectedCount <> "-" <> migName <> ".sql"
+    , migrationSql            =
+        Just
+        $  mkValidSql
+        $  "DO\
 \\n$do$\
 \\nBEGIN\
 \\n   IF (SELECT COUNT(*) <> "
-            <> Text.pack (show expectedCount)
-            <> " FROM codd_schema.sql_migrations) THEN\
+        <> Text.pack (show expectedCount)
+        <> " FROM codd_schema.sql_migrations) THEN\
 \\n      RAISE 'Not the right count';\
 \\n   END IF;\
 \\nEND\
 \\n$do$;"
-        , migrationInTxn          = False
-        , migrationCustomConnInfo = Nothing
-        }
-    (getIncreasingTimestamp 0)
+    , migrationInTxn          = False
+    , migrationCustomConnInfo = Nothing
+    }
 
 spec :: Spec
 spec = do
@@ -643,24 +639,26 @@ spec = do
 
                           Right createCoddTestDbMigs =
                               sqlMigrations testSettings
-                          createDbMigs =
-                              [ createDatabaseMig
-                                    postgresCinfo
-                                        { DB.connectDatabase = previousDbName
-                                        }
-                                    ("new_database_" <> show i)
-                                    0 {- 0 sec pg_sleep -}
-                                    i
-                              | i              <- [0 .. 3]
-                              , previousDbName <- if i == 0
-                                  then ["postgres"]
-                                  else ["new_database_" <> show (i - 1)]
-                              ]
 
+                      -- This is important to ensure we're testing with a custom user
+                      -- but same database in some of our migrations.
+                      DB.connectUser defaultConnInfo `shouldBe` "postgres"
+
+                      -- A small list of count-checking migrations is *important*
+                      -- to ensure we have statistical diversity in terms of relative
+                      -- position between different types of migrations.
+                      -- Otherwise, we'd have count-checking migs as the last migrations
+                      -- and at the earliest position almost every time, for instance.
                       shuffledMigs0 <-
                           QC.generate $ (CreateCoddTestDb :) <$> QC.resize
-                              10
-                              (QC.listOf $ pure CreateCountCheckingMig)
+                              5
+                              (QC.listOf
+                                  (QC.elements
+                                      [ CreateCountCheckingMig
+                                      , CreateCountCheckingMigDifferentUser
+                                      ]
+                                  )
+                              )
                       shuffledMigs <-
                           fmap concat
                           $ QC.generate
@@ -682,7 +680,29 @@ spec = do
                                         else ["new_database_" <> show (i - 1)]
                                     ]
                                 CreateCountCheckingMig ->
-                                    [createCountCheckingMig migOrder]
+                                    [ AddedSqlMigration
+                                          (createCountCheckingMig
+                                              migOrder
+                                              "count-checking-mig"
+                                          )
+                                          (getIncreasingTimestamp 0)
+                                    ]
+
+                                CreateCountCheckingMigDifferentUser ->
+                                    [ AddedSqlMigration
+                                              (createCountCheckingMig
+                                                      migOrder
+                                                      "count-checking-custom-user-mig"
+                                                  )
+                                                  { migrationCustomConnInfo =
+                                                      Just defaultConnInfo
+                                                          { DB.connectUser =
+                                                              "codd-test-user"
+                                                          }
+                                                  }
+                                          $ getIncreasingTimestamp 0
+                                    ]
+
 
 -- Make sure timestamps of migrations are in order. They don't run
 -- in the order of the list.
@@ -692,10 +712,11 @@ spec = do
                                   AddedSqlMigration
                                       mig
                                       ( getIncreasingTimestamp
-                                      $ secondsToNominalDiffTime i
+                                      $ secondsToNominalDiffTime
+                                      $ fromIntegral i
                                       )
                               )
-                              [1, 2, 3, 4, 5, 6, 7]
+                              [(1 :: Int) ..]
                               shuffledMigs
                       finallyDrop "codd-test-db"
                           $ finallyDrop "new_database_0"
@@ -776,7 +797,7 @@ mergeShuffle l1 l2 f = go l1 l2 f (0 :: Int)
             then (f i x :) <$> go xs l2 f (i + 1)
             else (f i y :) <$> go l1 ys f (i + 1)
 
-data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig | CreateDbCreationMig Int
+data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig | CreateCountCheckingMigDifferentUser | CreateDbCreationMig Int
 
 
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
