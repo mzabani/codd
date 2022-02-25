@@ -14,7 +14,7 @@ With that in mind, with _codd_ you just have to add a migration like almost any 
 
 ````sql
 -- codd: no-txn
--- codd-connection: postgres://postgres@localhost:5433/postgres
+-- codd-connection: postgres://postgres@localhost:5432/postgres
 
 DO
 $do$
@@ -35,4 +35,4 @@ This can help you recreate your local DB as easily as `dropdb codd_experiments &
 
 ## Tips
 - The long `CREATE DATABASE` statement that specifies so many things might seem overkill, but it helps ensure the exact same database is created even in different installations of postgres. _Codd_ will checksum these attributes so it may accuse differences if you're not very specific here.
-- You can specify a custom `-- codd-connection` for _any_ migration. Of course, different connection strings break transactional guarantees created by only having single-connection in-txn migrations, so be use this carefully.
+- You can specify a custom `-- codd-connection` for _any_ migration. Of course, different connection strings break transactional guarantees created by only having single-connection in-txn migrations, so use this carefully.

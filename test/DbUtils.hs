@@ -33,6 +33,7 @@ import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( NominalDiffTime
                                                 , UTCTime(..)
                                                 , addUTCTime
+                                                , secondsToNominalDiffTime
                                                 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..)
                                                 , defaultConnectInfo
@@ -95,6 +96,22 @@ withDbAndDrop dbInfo@CoddSettings { migsConnString } f = bracket
                              (Text.pack $ connectDatabase migsConnString)
 
 
+-- | Runs an action and drops a database afterwards in a finally block.
+finallyDrop :: (MonadIO m, MonadUnliftIO m) => Text -> m a -> m a
+finallyDrop dbName f = f `finally` dropDb
+  where
+    dropDb = do
+        connInfo <- testConnInfo
+        withConnection connInfo { connectDatabase = "postgres"
+                                , connectUser     = "postgres"
+                                }
+            $ \conn ->
+                  void
+                      $  liftIO
+                      $  DB.execute_ conn
+                      $  "DROP DATABASE IF EXISTS "
+                      <> dbIdentifier dbName
+
 testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
 testCoddSettings migs = do
     connInfo <- testConnInfo
@@ -102,7 +119,7 @@ testCoddSettings migs = do
     let migTimestamp      = getIncreasingTimestamp (-1000)
         createTestUserMig = AddedSqlMigration
             SqlMigration
-                { migrationName = show migTimestamp <> "-create-test-user.sql"
+                { migrationName           = "bootstrap-test-db-and-user.sql"
                 , migrationSql            =
                     Just
                     $  mkValidSql
@@ -195,3 +212,18 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
 getIncreasingTimestamp :: NominalDiffTime -> DB.UTCTimestamp
 getIncreasingTimestamp n =
     DB.Finite $ addUTCTime n $ UTCTime (fromGregorian 2020 1 1) 0
+
+-- | Changes every added migrations's timestamp so they're applied in the order of the list.
+fixMigsOrder :: [AddedSqlMigration] -> [AddedSqlMigration]
+fixMigsOrder = zipWith
+    (\i (AddedSqlMigration mig _) ->
+        AddedSqlMigration mig
+            $ getIncreasingTimestamp
+            $ secondsToNominalDiffTime
+            $ fromIntegral i
+    )
+    [(0 :: Int) ..]
+
+shouldBeStrictlySortedOn :: (Show a, Ord b) => [a] -> (a -> b) -> Expectation
+shouldBeStrictlySortedOn xs f =
+    zip xs (drop 1 xs) `shouldSatisfy` all (\(a1, a2) -> f a1 < f a2)

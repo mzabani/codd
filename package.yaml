@@ -24,7 +24,6 @@ dependencies:
 - monad-logger
 - postgresql-simple
 - text
-- unliftio-core
 
 ghc-options:
   - -O2
@@ -59,7 +58,6 @@ library:
     - -Wall
     - -Wincomplete-uni-patterns
     - -Wpartial-fields
-    - -Wunused-packages
     - -Werror
   dependencies:
     - aeson
@@ -75,6 +73,7 @@ library:
     - text
     - time
     - unliftio
+    - unliftio-core
 
 executables:
   codd:
