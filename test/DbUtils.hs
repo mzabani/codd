@@ -119,7 +119,7 @@ testCoddSettings migs = do
     let migTimestamp      = getIncreasingTimestamp (-1000)
         createTestUserMig = AddedSqlMigration
             SqlMigration
-                { migrationName = show migTimestamp <> "-create-test-user.sql"
+                { migrationName           = "bootstrap-test-db-and-user.sql"
                 , migrationSql            =
                     Just
                     $  mkValidSql
