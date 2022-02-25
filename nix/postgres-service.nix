@@ -28,8 +28,6 @@ in utils.writeShellScriptInBinFolder "init-postgres" ''
         echo All good, initializing postgres.
         ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
         ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
-        ${pkgs.coreutils}/bin/sleep 10
-        ${postgres}/bin/psql -U postgres -d postgres -l
     fi
   '' else ''
     ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
