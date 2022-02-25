@@ -255,8 +255,7 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
                     -- Insert bootstrap migrations that already ran into the schema
                     beginCommitTxnBracket txnIsolationLvl conn
                         $ forM_ ranBootstrapMigs
-                        $ \(AddedSqlMigration sqlMig migTimestamp, timeFinished) -> do
-                              liftIO $ putStrLn "Registering mig"
+                        $ \(AddedSqlMigration sqlMig migTimestamp, timeFinished) ->
                               liftIO $ void $ DB.execute
                                   conn
                                   "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
@@ -467,8 +466,11 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
                       queryConn :: DB.ConnectInfo -> ResourceT m (Maybe DB.Connection)
                       queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
 
+                  -- One optimization: if we can update the schema it means the default connection string
+                  -- has been bootstrapped (is accessible) and codd_schema created.
+                  -- Keep the default connection open in that case.
+                  when (canUpdSchema == CanUpdateCoddSchema) $ void $ openConn defaultConnInfo
                   appliedMigs <- foldM (\appliedMigs block -> do
-                                liftIO $ putStrLn "NEW BLOCK"
                                 let cinfo = fromMaybe defaultConnInfo (blockCustomConnInfo block)
                                 (_, conn) <- openConn cinfo
                                 mDefaultConn <- queryConn defaultConnInfo
@@ -511,8 +513,7 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
             CanUpdateCoddSchema ->
                 liftIO $ forM_
                     [ (am, appliedAt) | (am, appliedAt, MigrationNotRegistered) <- appliedMigs ]
-                    (\(AddedSqlMigration mig ts, appliedAt) -> do
-                        putStrLn "Registering one mig"
+                    (\(AddedSqlMigration mig ts, appliedAt) ->
                         DB.execute defaultConn
                                 "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
                                 \                            VALUES (?, ?, ?)"
@@ -592,6 +593,7 @@ blockCustomConnInfo (AddedSqlMigration { addedSqlMig } :| _) =
     migrationCustomConnInfo addedSqlMig
 
 data CanUpdateCoddSchema = CanUpdateCoddSchema | CannotUpdateCoddSchema
+    deriving stock (Eq)
 
 -- | Applies a single migration and returns the time when it finished being applied.
 applySingleMigration
