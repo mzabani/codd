@@ -362,7 +362,8 @@ connStringParser = do
   usr <- idParser "username"
   pwd <- (char ':' *> idParser "password") <|> pure ""
   void $ char '@'
-  host <- idParser "host" -- TODO: IPv6 addresses such as ::1 ??
+  host <- ipv6Parser <|> idParser "host" <|> fail
+    "Failed parsing host in the connection string"
   void $ char ':' <|> fail "Missing colon after host"
   port <- Parsec.decimal
     <|> fail "Could not find a port in the connection string."
@@ -385,6 +386,14 @@ connStringParser = do
       <> idName
       <> " in the connection string."
     pure x
+
+  ipv6Parser :: Parser String
+  ipv6Parser = do
+    void $ char '['
+    x <- Text.unpack <$> parseWithEscapeCharProper (== ']')
+    void $ char ']'
+    pure x
+
 
 optionParser :: Parser SectionOption
 optionParser = do
@@ -492,7 +501,7 @@ extractCoddOpts ps =
           Left
             $ "The connection string '"
             <> Text.unpack badConn
-            <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape 'at' signs and colons."
+            <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
         (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
           Right (opts, Just conn)
         (Just (CoddCommentSuccess opts), Nothing) -> Right (opts, Nothing)

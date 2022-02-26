@@ -37,17 +37,15 @@ instance Arbitrary NonEmptyString where
 newtype HostString = HostString { unHostString :: String }
     deriving stock Show
 instance Arbitrary HostString where
-    arbitrary =
-        fmap (HostString . Text.unpack)
-            $          oneof
-                           [ pure "127.0.0.1"
-                           , pure "200.200.100.100"
-                           , pure "some.host.name"
-                           , pure "[::1]" -- TODO: IPv6 address still needs testing!
-                           -- Abuse genObjName because we don't want newlines or other strange chars here
-                           , unObjName <$> genObjName
-                           ]
-            `suchThat` (/= "")
+    arbitrary = HostString . Text.unpack <$> oneof
+        [ pure "127.0.0.1"
+        , pure "200.200.100.100"
+        , pure "hostnodots"
+        , pure "some.host.name"
+        , pure "::1"
+        , pure "2800:3f0:4001:822::200e"
+        , pure "2a03:2880:f105:283:face:b00c:0:25de"
+        ]
 
 getConnString
     :: ObjName -> PrintableString -> HostString -> Word16 -> ObjName -> Text
@@ -56,15 +54,21 @@ getConnString (unObjName -> usr) (Text.pack . getPrintableString -> pwd) (Text.p
         <> escapeConnStringPiece usr
         <> (if pwd == "" then "" else ":" <> escapeConnStringPiece pwd)
         <> "@"
-        <> escapeConnStringPiece host
+        <> escapeHost host
         <> ":"
         <> port
         <> "/"
         <> escapeConnStringPiece dbName
-
-escapeConnStringPiece :: Text -> Text
-escapeConnStringPiece =
-    Text.replace "@" "\\@" . Text.replace ":" "\\:" . Text.replace "\\" "\\\\"
+  where
+    escapeHost :: Text -> Text
+    escapeHost host =
+        -- bracket-escape IPv6 addresses
+        if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
+    escapeConnStringPiece :: Text -> Text
+    escapeConnStringPiece =
+        Text.replace "@" "\\@" . Text.replace ":" "\\:" . Text.replace
+            "\\"
+            "\\\\"
 
 data ConnStringGen = ConnStringGen Text ConnectInfo
     deriving stock Show
