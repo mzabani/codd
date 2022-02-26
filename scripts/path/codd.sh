@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-cabal run -O0 codd -- "$@"
+cabal run -v0 -O0 codd -- "$@"
