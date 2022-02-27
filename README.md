@@ -2,8 +2,78 @@
 
 _Codd_ is a tool to help teams of developers version-control their PostgreSQL databases locally and for deployment. It provides a few main features:
 
-- Plain SQL migrations that you can add by simply running `codd add migration-file.sql`
-- Schema equality checks to reduce the chances your production database's schema differs from your development schema. This check includes roles and permissions, among other things.
+<table>
+<tr>
+   <td>Plain SQL migrations</td>
+   <td>
+
+````bash
+$ cat create-animals-table.sql
+CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
+INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
+$ codd add create-animals-table.sql
+Migration applied and added to sql-migrations/all/2022-02-27T23:14:50Z-create-animals-table.sql
+$ psql -c "SELECT popular_name FROM animals"
+ popular_name
+--------------
+ Dog
+ Cat
+(2 rows)
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Extensive schema equality checks</td>
+<td>
+
+````bash
+$ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
+ALTER TABLE
+$ codd verify-checksums
+[Error] DB and expected checksums do not match. Differences are (Left is Database, Right is expected): {"schemas/public/tables/animals/cols/popular_name":"different-checksums"}
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Applies pending migrations in a single transaction*, optionally rolls back on schema mismatch before committing</td>
+<td>
+
+````bash
+$ codd up
+[Debug] Checking if Database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
+[Debug] Checking if Codd Schema exists and creating it if necessary...
+[Debug] Checking in the Database which SQL migrations have already been applied...
+[Debug] Parse-checking all pending SQL Migrations...
+[Debug] BEGINning transaction
+[Debug] Applying 2022-02-27T23:14:50Z-create-animals-table.sql
+[Debug] Applying 2022-02-27T23:30:41Z-create-people-table.sql
+[Info] Database and expected schemas match.
+[Debug] COMMITed transaction
+[Debug] All migrations applied to codd-experiments successfully
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Meaningful merge conflicts**</td>
+<td>
+
+
+</td>
+</tr>
+
+</table>
+
+
+* Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.
+** Two branches modifying e.g. the same column in their migrations will conflict, but two branches modifying different tables will not. There are some false positives and false negatives that can happen, however.
+
+- 
 - Running every pending deployed migration in a single transaction when possible, with the option to rollback if the expected schema does not match the schema during development.
 
 **It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
