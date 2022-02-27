@@ -27,6 +27,7 @@ import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( getIncreasingTimestamp
                                                 , mkValidSql
                                                 , testCoddSettings
+                                                , testConnTimeout
                                                 )
 import           LiftedExpectations             ( shouldThrow )
 import           System.Exit                    ( ExitCode )
@@ -70,9 +71,9 @@ doesNotCreateDB act = do
                                   `isInfixOf` show e
                           )
 
-    withConnection (migsConnString testSettings)
-            { DB.connectDatabase = "postgres"
-            }
+    withConnection
+            (migsConnString testSettings) { DB.connectDatabase = "postgres" }
+            testConnTimeout
         $ \conn -> do
               dbExists :: Int <- DB.fromOnly <$> unsafeQuery1
                   conn
@@ -94,16 +95,20 @@ doesNotModifyExistingDb act assert = do
             }
 
         getCounts =
-            withConnection (migsConnString vanillaTestSettings)
-                    { DB.connectDatabase = "postgres"
-                    }
+            withConnection
+                    (migsConnString vanillaTestSettings)
+                        { DB.connectDatabase = "postgres"
+                        }
+                    testConnTimeout
                 $ \conn -> unsafeQuery1 @(Int, Int, Int)
                       conn
                       "SELECT (SELECT COUNT(*) FROM pg_catalog.pg_namespace), (SELECT COUNT(*) FROM pg_catalog.pg_class), (SELECT COUNT(*) FROM pg_catalog.pg_roles)"
                       ()
-    withConnection (migsConnString vanillaTestSettings)
-            { DB.connectDatabase = "postgres"
-            }
+    withConnection
+            (migsConnString vanillaTestSettings)
+                { DB.connectDatabase = "postgres"
+                }
+            testConnTimeout
         $ \conn -> do
               execvoid_ conn "DROP DATABASE IF EXISTS new_checksums_test_db"
               execvoid_ conn "CREATE DATABASE new_checksums_test_db"
@@ -128,12 +133,8 @@ spec = do
 
             it "verify-checksums does not write to existing Database"
                 $ doesNotModifyExistingDb
-                      (\testSettings -> verifyChecksums testSettings False)
+                      (`verifyChecksums` False)
                       (-- Throws because expected hashes do not match
                        `shouldThrow` (\(_ :: ExitCode) -> True))
             it "write-checksums does not write to existing Database"
-                $ doesNotModifyExistingDb
-                      (\testSettings ->
-                          writeChecksums testSettings WriteToStdout
-                      )
-                      id
+                $ doesNotModifyExistingDb (`writeChecksums` WriteToStdout) id

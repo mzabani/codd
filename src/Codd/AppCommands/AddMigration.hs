@@ -24,6 +24,7 @@ import           Control.Monad                  ( forM_
 import           Control.Monad.Logger           ( MonadLoggerIO )
 import           Data.Maybe                     ( maybeToList )
 import qualified Data.Text.IO                  as Text
+import           Data.Time                      ( secondsToDiffTime )
 import           System.Exit                    ( ExitCode(..)
                                                 , exitWith
                                                 )
@@ -96,6 +97,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
                 -- when possible, since that's what "up" does.
                 databaseChecksums <- Codd.applyMigrationsNoCheck
                   dbInfo
+                  (secondsToDiffTime 5)
                   (readHashesFromDatabaseWithSettings dbInfo)
                 persistHashesToDisk databaseChecksums onDiskHashesDir
 

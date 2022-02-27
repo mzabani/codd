@@ -60,6 +60,7 @@ import qualified Database.PostgreSQL.Simple.Time
 import           DbUtils                        ( aroundFreshDatabase
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , testConnTimeout
                                                 )
 import           Test.Hspec
 import           Test.Hspec.QuickCheck          ( modifyMaxSuccess )
@@ -101,9 +102,7 @@ migrationsAndHashChange = zipWith
                (error "Could not parse SQL migration")
                id
                (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
-         in  mig {
-                                                                                                                                                                               -- Override name to avoid conflicts
-                   migrationName = show i <> "-migration.sql" }
+         in  mig { migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
       )
@@ -112,7 +111,7 @@ migrationsAndHashChange = zipWith
     )
   )
   migs
-  (map fromInteger [0 ..]) -- This would be a list of NominalDiffTime, which would have 10^-12s resolution and fail in the DB
+  (map fromInteger [0 ..]) -- This would be a list of DiffTime, which would have 10^-12s resolution and fail in the DB
  where
   migs = flip execState [] $ do
       -- MISSING:
@@ -997,6 +996,7 @@ spec = do
           (laxCollHashes, strictCollHashes) <-
             runStdoutLoggingT $ applyMigrationsNoCheck
               (emptyTestDbInfo { sqlMigrations = Right [createCollMig] })
+              testConnTimeout
               (\conn ->
                 (,)
                   <$> readHashesFromDatabaseWithSettings emptyTestDbInfo  conn
@@ -1028,6 +1028,7 @@ spec = do
           (laxRangeHashes, strictRangeHashes) <-
             runStdoutLoggingT $ applyMigrationsNoCheck
               (emptyTestDbInfo { sqlMigrations = Right [createMig] })
+              testConnTimeout
               (\conn ->
                 (,)
                   <$> readHashesFromDatabaseWithSettings emptyTestDbInfo   conn
@@ -1072,6 +1073,7 @@ spec = do
               }
           initialHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
             ignColOrderDbInfo
+            testConnTimeout
             (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
 
           let dropCol1Mig = AddedSqlMigration
@@ -1087,6 +1089,7 @@ spec = do
 
           afterDropHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
             ignColOrderDbInfo { sqlMigrations = Right [createMig, dropCol1Mig] }
+            testConnTimeout
             (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
 
           -- Only the removed column should have its checksum file removed.
@@ -1107,6 +1110,7 @@ spec = do
                 connInfo    = migsConnString emptyDbInfo
                 getHashes sett = runStdoutLoggingT $ withConnection
                   connInfo
+                  testConnTimeout
                   (readHashesFromDatabaseWithSettings sett)
             hashBeforeEverything <- getHashes emptyDbInfo
             (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
@@ -1132,11 +1136,13 @@ spec = do
                 $ \(expectedHashesAfterUndo, mUndoSql) -> case mUndoSql of
                     Nothing      -> pure expectedHashesAfterUndo
                     Just undoSql -> do
-                      runStdoutLoggingT $ withConnection connInfo $ \conn ->
-                        multiQueryStatement_
-                            (NotInTransaction singleTryPolicy)
-                            conn
-                          $ mkValidSql undoSql
+                      runStdoutLoggingT
+                        $ withConnection connInfo testConnTimeout
+                        $ \conn ->
+                            multiQueryStatement_
+                                (NotInTransaction singleTryPolicy)
+                                conn
+                              $ mkValidSql undoSql
                       hashesAfterUndo <- getHashes emptyDbInfo
                       let
                         diff = hashDifferences hashesAfterUndo
@@ -1148,6 +1154,7 @@ spec = do
                       pure hashesAfterUndo
             void $ withConnection
               connInfo
+              testConnTimeout
               (\conn -> DB.execute
                 conn
                 "WITH reversedMigs (name) AS (SELECT name FROM codd_schema.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd_schema.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
@@ -1176,6 +1183,7 @@ spec = do
               dbInfo      = emptyDbInfo { sqlMigrations = Right newMigs }
           dbHashesAfterMig <- runStdoutLoggingT $ applyMigrationsNoCheck
             dbInfo
+            testConnTimeout
             (readHashesFromDatabaseWithSettings dbInfo)
           let migText = parsedSqlText <$> migrationSql (addedSqlMig nextMig)
               diff    = hashDifferences hashSoFar dbHashesAfterMig
@@ -1204,6 +1212,7 @@ spec = do
   ensureMarceloExists connInfo =
     withConnection
         connInfo
+        testConnTimeout
         (\conn -> unsafeQuery1
           conn
           "SELECT COUNT(*) employee_name FROM employee WHERE employee_name='Marcelo'"

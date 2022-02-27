@@ -58,7 +58,7 @@ import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
-import           Data.Time                      ( UTCTime )
+import           Data.Time                      ( UTCTime, DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>) )
@@ -83,19 +83,23 @@ import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 
--- | Tries to connect until a connection succeeds or until a timeout, executes the supplied action and disposes of the opened Connection.
+-- | Tries to connect until a connection succeeds or until a timeout,
+--   executes the supplied action and disposes of the opened Connection.
 withConnection
     :: (MonadUnliftIO m, MonadIO m)
     => DB.ConnectInfo
+    -> DiffTime
     -> (DB.Connection -> m a)
     -> m a
-withConnection connStr action = go (50 :: Int) -- At most 50 * 100ms = 5 seconds
+withConnection connStr connectTimeout action = go connectTimeout
   where
     wrappedAction n eitherConn = do
         case eitherConn of
             Left e -> if n <= 0
                 then throwIO e
-                else threadDelay (1000 * 100) >> go (n - 1)
+                else 
+                    -- Retries every 100ms
+                    threadDelay (1000 * 100) >> go (n - realToFrac @Double 0.1)
             Right conn -> action conn
     go n = bracket (tryConnectError $ liftIO $ DB.connect connStr)
                    (either (const $ pure ()) (liftIO . DB.close))
@@ -147,9 +151,10 @@ createEmptyDbIfNecessary
     :: forall m n
      . (MonadUnliftIO m, MonadIO m, n ~ NoLoggingT m)
     => CoddSettings
+    -> DiffTime
     -> m ()
-createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl }
-    = runNoLoggingT $ applyMigrationsInternal applyZeroMigs settings
+createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl } connectTimeout
+    = runNoLoggingT $ applyMigrationsInternal applyZeroMigs settings connectTimeout
     -- Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
     -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
   where
@@ -157,7 +162,7 @@ createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl
         :: CanUpdateCoddSchema
         -> [NonEmpty AddedSqlMigration]
         -> n (ApplyMigsResult ())
-    applyZeroMigs canUpdSchema _ = baseApplyMigsBlock migsConnString
+    applyZeroMigs canUpdSchema _ = baseApplyMigsBlock migsConnString connectTimeout
                                                       singleTryPolicy
                                                       (\_ _ -> pure ())
                                                       txnIsolationLvl
@@ -165,14 +170,17 @@ createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl
                                                       []
 
 -- | Returns True on any libpq connection error with the
--- supplied connection string.
+-- supplied connection string as long as it's not caused
+-- by postgres simply not being up until the time limit.
+-- Waits at most the supplied time for connectivity before
+-- throwing an exception.
 checkNeedsBootstrapping
-    :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> m Bool
-checkNeedsBootstrapping connInfo =
+    :: (MonadUnliftIO m, MonadIO m) => DB.ConnectInfo -> DiffTime -> m Bool
+checkNeedsBootstrapping connInfo connectTimeout =
     -- brittany-disable-next-identifier
     handleJust
             (\e ->
-                -- 1. No server available is a big "No". Bootstrapping will very likely not fix this.
+                -- 1. No server available is a big "No".
                 if isServerNotAvailableError e
                     then Nothing
 
@@ -189,7 +197,7 @@ checkNeedsBootstrapping connInfo =
                 else Nothing
             )
             pure
-        $ withConnection connInfo (const $ pure False)
+        $ withConnection connInfo connectTimeout (const $ pure False)
   where
     isLibPqError :: IOException -> Bool
     isLibPqError e =
@@ -199,24 +207,28 @@ applyMigrationsInternal
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => (CanUpdateCoddSchema -> [BlockOfMigrations] -> m (ApplyMigsResult a))
     -> CoddSettings
+    -> DiffTime
     -> m a
-applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retryPolicy, sqlMigrations, txnIsolationLvl }
+applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retryPolicy, sqlMigrations, txnIsolationLvl } connectTimeout
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
+        let waitTimeInSecs :: Double = realToFrac connectTimeout
         logDebugN
             $  "Checking if Database '"
             <> dbName
-            <> "' is accessible with the configured connection string..."
-        needsBootstrapping <- checkNeedsBootstrapping migsConnString
+            <> "' is accessible with the configured connection string... (waiting up to "
+            <> Text.pack (show @Int $ truncate waitTimeInSecs)
+            <> "sec)"
+        needsBootstrapping <- checkNeedsBootstrapping migsConnString connectTimeout
 
         if not needsBootstrapping
             then do
                 logDebugN
                     "Checking if Codd Schema exists and creating it if necessary..."
 
-                withConnection migsConnString $ createCoddSchema txnIsolationLvl
+                withConnection migsConnString connectTimeout $ createCoddSchema txnIsolationLvl
 
-                blocksOfMigsToRun <- collectPendingMigrations coddSettings
+                blocksOfMigsToRun <- collectPendingMigrations coddSettings connectTimeout
                 ApplyMigsResult _ actionAfterResult <- txnApp
                     CanUpdateCoddSchema
                     blocksOfMigsToRun
@@ -238,9 +250,9 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
                         "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
                     liftIO exitFailure
 
-                let applyBootstrapMigsFunc = baseApplyMigsBlock migsConnString retryPolicy (\_ _ -> pure ()) txnIsolationLvl CannotUpdateCoddSchema
+                let applyBootstrapMigsFunc = baseApplyMigsBlock migsConnString connectTimeout retryPolicy (\_ _ -> pure ()) txnIsolationLvl CannotUpdateCoddSchema
                 ApplyMigsResult ranBootstrapMigs _ <- applyBootstrapMigsFunc bootstrapMigBlocks
-                stillNeedsBootstrapping <- checkNeedsBootstrapping migsConnString
+                stillNeedsBootstrapping <- checkNeedsBootstrapping migsConnString connectTimeout
                 when stillNeedsBootstrapping $ do
                     logErrorN
                         $  "It was not possible to connect to database '"
@@ -248,7 +260,7 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
                         <> "' after running bootstrap migrations. Exiting."
                     liftIO exitFailure
 
-                withConnection migsConnString $ \conn -> do
+                withConnection migsConnString connectTimeout $ \conn -> do
                     logInfoN "Creating Codd Schema..."
                     createCoddSchema txnIsolationLvl conn
 
@@ -322,10 +334,11 @@ collectBootstrapMigrations defaultConnInfo sqlMigrations =
 collectPendingMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
+    -> DiffTime
     -> m [BlockOfMigrations]
-collectPendingMigrations CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl }
+collectPendingMigrations CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl } connectTimeout
     = do
-        withConnection migsConnString $ \conn -> do
+        withConnection migsConnString connectTimeout $ \conn -> do
             -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
             logDebugN
                 "Checking in the Database which SQL migrations have already been applied..."
@@ -423,13 +436,14 @@ baseApplyMigsBlock
     :: forall m a
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => DB.ConnectInfo
+    -> DiffTime
     -> RetryPolicy
     -> ([BlockOfMigrations] -> DB.Connection -> m a)
     -> TxnIsolationLvl
     -> CanUpdateCoddSchema
     -> [BlockOfMigrations]
     -> m (ApplyMigsResult a)
-baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blocksOfMigs
+baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl canUpdSchema blocksOfMigs
     =
         -- This function is complex because:
         -- 1. There are 3 major cases (no migrations, one in-txn default-conn-string block of migrations, all others).
@@ -441,11 +455,11 @@ baseApplyMigsBlock defaultConnInfo retryPol actionAfter isolLvl canUpdSchema blo
         -- and make sure to test the third code path very well.
         case blocksOfMigs of
             [] ->
-                withConnection defaultConnInfo $ fmap (ApplyMigsResult []) . actionAfter blocksOfMigs
+                withConnection defaultConnInfo connectTimeout $ fmap (ApplyMigsResult []) . actionAfter blocksOfMigs
             [block] | blockInTxn block && fromMaybe defaultConnInfo (blockCustomConnInfo block) == defaultConnInfo ->
                     -- Our very "special" and most common case case:
                     -- all migs being in-txn in the default connection-string
-                    withConnection defaultConnInfo $ \defaultConn ->
+                    withConnection defaultConnInfo connectTimeout $ \defaultConn ->
                         let runAfterMig = getAfterMigRunFunc defaultConn (blockInTxn block)
                         in
                         runBlock (actionAfter blocksOfMigs) defaultConn block runAfterMig

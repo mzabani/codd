@@ -34,7 +34,6 @@ import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Time                      ( secondsToNominalDiffTime )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           UnliftIO                       ( MonadIO(..) )
 import           UnliftIO.Environment           ( lookupEnv )
@@ -92,11 +91,11 @@ retryPolicyParser = do
             *>  pure ExponentialBackoff
             <|> fail "Backoff must be constant or exponential"
     timeParser =
-        secondsToNominalDiffTime
-            <$> (Parsec.rational <* char 's')
-            <|> secondsToNominalDiffTime
+        realToFrac
+            <$> (Parsec.rational @Double <* char 's')
+            <|> realToFrac
             .   (/ 1000)
-            <$> (Parsec.rational <* string "ms")
+            <$> (Parsec.rational @Double <* string "ms")
 
 txnIsolationLvlParser :: Parser TxnIsolationLvl
 txnIsolationLvlParser =

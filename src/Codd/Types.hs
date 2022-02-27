@@ -15,15 +15,15 @@ module Codd.Types
 
 import           Data.String                    ( IsString )
 import           Data.Text                      ( Text )
-import           Data.Time                      ( NominalDiffTime
-                                                , secondsToNominalDiffTime
+import           Data.Time                      ( DiffTime
+                                                , secondsToDiffTime
                                                 )
 import           Database.PostgreSQL.Simple.ToField
                                                 ( ToField )
 
 newtype SqlFilePath = SqlFilePath { unSqlFilePath :: FilePath } deriving newtype (Eq, Ord, Show)
 
-data RetryBackoffPolicy = ExponentialBackoff NominalDiffTime | ConstantBackoff NominalDiffTime deriving stock (Show, Eq)
+data RetryBackoffPolicy = ExponentialBackoff DiffTime | ConstantBackoff DiffTime deriving stock (Show, Eq)
 data RetryPolicy = RetryPolicy Int RetryBackoffPolicy
     deriving stock (Show, Eq)
 
@@ -39,8 +39,7 @@ data ChecksumAlgo = ChecksumAlgo
 -- base time of 1 second. It needs not be a reasonable policy for any workload,
 -- it just needs not be absurd.
 defaultRetryPolicy :: RetryPolicy
-defaultRetryPolicy =
-    RetryPolicy 2 (ExponentialBackoff $ secondsToNominalDiffTime 1)
+defaultRetryPolicy = RetryPolicy 2 (ExponentialBackoff $ secondsToDiffTime 1)
 
 -- | A Policy that only tries once - never retries.
 singleTryPolicy :: RetryPolicy
@@ -49,7 +48,7 @@ singleTryPolicy = RetryPolicy 0 (ConstantBackoff 0)
 -- | When trying an action that fails, this returns how much time to wait until the next try,
 -- or Nothing if there are no more retries.
 -- It also returns an updated RetryPolicy for the next attempt.
-retryPolicyIterate :: RetryPolicy -> Maybe (NominalDiffTime, RetryPolicy)
+retryPolicyIterate :: RetryPolicy -> Maybe (DiffTime, RetryPolicy)
 retryPolicyIterate (RetryPolicy maxRetries backoff)
     | maxRetries <= 0 = Nothing
     | otherwise = case backoff of
