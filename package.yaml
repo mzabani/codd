@@ -91,6 +91,7 @@ executables:
     - codd
     - optparse-applicative
     - text
+    - time
 
 tests:
   codd-test: 

@@ -30,6 +30,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , mkValidSql
                                                 , shouldBeStrictlySortedOn
                                                 , testCoddSettings
+                                                , testConnTimeout
                                                 , withDbAndDrop
                                                 )
 import           Test.Hspec
@@ -104,48 +105,54 @@ spec = do
                                   veryCloseUtcTimes
                       in
                           do
-                              withConnection migsConnString $ \conn -> do
-                                  void $ DB.executeMany
-                                      conn
-                                      "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)"
-                                      migTimes
-                                  timesFromDb1 :: [(Int, UTCTime, UTCTime)] <-
-                                      DB.query
-                                          conn
-                                          "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
-                                          ()
-                                  timesFromDb2 :: [ ( Int
-                                        , UTCTime
-                                        , DB.UTCTimestamp
-                                        )
-                                      ]                               <-
-                                      DB.query
-                                          conn
-                                          "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
-                                          ()
-                                  timesFromDb2 `shouldBe` migTimes
-                                  map
-                                          (\(n, t1, t2) -> (n, t1, DB.Finite t2)
-                                          )
-                                          timesFromDb1
-                                      `shouldBe` timesFromDb2
-                                  timesFromDb1
-                                      `shouldBeStrictlySortedOn` (\(v, _, _) ->
-                                                                     v
-                                                                 )
-                                  timesFromDb1
-                                      `shouldBeStrictlySortedOn` (\(_, t1, _) ->
-                                                                     t1
-                                                                 )
-                                  timesFromDb1
-                                      `shouldBeStrictlySortedOn` (\(_, _, t2) ->
-                                                                     t2
-                                                                 )
-                                  timesFromDb2
-                                      `shouldBeStrictlySortedOn` (\(_, _, t2) ->
-                                                                     t2
-                                                                 )
-                                  putStrLn "All tests passed!"
+                              withConnection migsConnString testConnTimeout
+                                  $ \conn -> do
+                                        void $ DB.executeMany
+                                            conn
+                                            "INSERT INTO timestamps (seq_number, tm1, tm2) VALUES (?, ?, ?)"
+                                            migTimes
+                                        timesFromDb1 :: [ ( Int
+                                              , UTCTime
+                                              , UTCTime
+                                              )
+                                            ]                       <-
+                                            DB.query
+                                                conn
+                                                "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
+                                                ()
+                                        timesFromDb2 :: [ ( Int
+                                              , UTCTime
+                                              , DB.UTCTimestamp
+                                              )
+                                            ]                               <-
+                                            DB.query
+                                                conn
+                                                "SELECT seq_number, tm1, tm2 FROM timestamps ORDER BY tm1"
+                                                ()
+                                        timesFromDb2 `shouldBe` migTimes
+                                        map
+                                                (\(n, t1, t2) ->
+                                                    (n, t1, DB.Finite t2)
+                                                )
+                                                timesFromDb1
+                                            `shouldBe` timesFromDb2
+                                        timesFromDb1
+                                            `shouldBeStrictlySortedOn` (\(v, _, _) ->
+                                                                           v
+                                                                       )
+                                        timesFromDb1
+                                            `shouldBeStrictlySortedOn` (\(_, t1, _) ->
+                                                                           t1
+                                                                       )
+                                        timesFromDb1
+                                            `shouldBeStrictlySortedOn` (\(_, _, t2) ->
+                                                                           t2
+                                                                       )
+                                        timesFromDb2
+                                            `shouldBeStrictlySortedOn` (\(_, _, t2) ->
+                                                                           t2
+                                                                       )
+                                        putStrLn "All tests passed!"
 
             it "Timing does not affect hashing" $ do
                     -- One possible impurity is the time certain objects are added to the Database. So we apply our migrations with a few seconds
@@ -153,9 +160,13 @@ spec = do
                 dbInfo    <- testCoddSettings [lotsOfObjectsMigration]
                 dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
                     dbInfo
-                    (`withConnection` readHashesFromDatabaseWithSettings dbInfo)
+                    (\cinfo -> withConnection cinfo testConnTimeout
+                        $ readHashesFromDatabaseWithSettings dbInfo
+                    )
                 threadDelay (5 * 1000 * 1000)
                 dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
                     dbInfo
-                    (`withConnection` readHashesFromDatabaseWithSettings dbInfo)
+                    (\cinfo -> withConnection cinfo testConnTimeout
+                        $ readHashesFromDatabaseWithSettings dbInfo
+                    )
                 dbHashes1 `shouldBe` dbHashes2

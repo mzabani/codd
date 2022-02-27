@@ -18,7 +18,7 @@ import           Data.Attoparsec.Text           ( endOfInput
 import           Data.Either                    ( isLeft )
 import qualified Data.Text                     as Text
 import           Data.Text                      ( Text )
-import           Data.Time                      ( secondsToNominalDiffTime )
+import           Data.Time                      ( secondsToDiffTime )
 import           Data.Word                      ( Word16 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           Test.Hspec
@@ -117,8 +117,7 @@ spec = do
                     `shouldBe` Right
                                    (RetryPolicy
                                        0
-                                       (ExponentialBackoff
-                                           (secondsToNominalDiffTime 2)
+                                       (ExponentialBackoff (secondsToDiffTime 2)
                                        )
                                    )
 
@@ -127,9 +126,7 @@ spec = do
                     `shouldBe` Right
                                    (RetryPolicy
                                        2
-                                       (ExponentialBackoff
-                                           (secondsToNominalDiffTime 2.5)
-                                       )
+                                       (ExponentialBackoff (realToFrac 2.5))
                                    )
 
                 parseOnly (retryPolicyParser <* endOfInput)
@@ -137,7 +134,5 @@ spec = do
                     `shouldBe` Right
                                    (RetryPolicy
                                        7
-                                       (ConstantBackoff
-                                           (secondsToNominalDiffTime 1.25)
-                                       )
+                                       (ConstantBackoff (realToFrac 1.25))
                                    )

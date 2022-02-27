@@ -16,6 +16,7 @@ import           Control.Monad.Logger           ( MonadLoggerIO
 import           Data.Aeson                     ( decode )
 import           Data.ByteString.Lazy           ( hGetContents )
 import           Data.Maybe                     ( fromMaybe )
+import           Data.Time                      ( secondsToDiffTime )
 import           System.Exit                    ( ExitCode(..)
                                                 , exitWith
                                                 )
@@ -44,6 +45,7 @@ verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes, migsConnString } 
       else either readHashesFromDisk pure onDiskHashes
     dbHashes <- withConnection
       migsConnString
+      (secondsToDiffTime 5)
       (readHashesFromDatabaseWithSettings dbInfoDontApplyAnything)
     when (dbHashes /= expectedChecksums) $ do
       logChecksumsComparison dbHashes expectedChecksums

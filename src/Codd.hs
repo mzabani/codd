@@ -19,10 +19,13 @@ import           Codd.Internal                  ( applyMigrationsInternal
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
+import           Data.Time                      ( DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
 
 data CheckHashes = LaxCheck | StrictCheck
+    deriving stock (Show)
+
 data ChecksumsPair = ChecksumsPair
     { expectedChecksums :: DbHashes
     , databaseChecksums :: DbHashes
@@ -35,29 +38,34 @@ data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | Che
 applyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
+    -> DiffTime
     -> CheckHashes
     -> m ApplyResult
-applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy, txnIsolationLvl } checkHashes
+applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy, txnIsolationLvl } connectTimeout checkHashes
     = case checkHashes of
         StrictCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
             applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
+                                    connectTimeout
                                     retryPolicy
                                     (strictCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
                 dbInfo
+                connectTimeout
             pure $ ChecksumsMatch eh
         LaxCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
             dbCksums <- applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
+                                    connectTimeout
                                     retryPolicy
                                     (laxCheckLastAction dbInfo eh)
                                     txnIsolationLvl
                 )
                 dbInfo
+                connectTimeout
 
             if dbCksums /= eh
                 then pure $ ChecksumsDiffer $ ChecksumsPair
@@ -74,14 +82,17 @@ applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy,
 applyMigrationsNoCheck
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
+    -> DiffTime
     -> (DB.Connection -> m a)
     -> m a
-applyMigrationsNoCheck dbInfo@CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } finalFunc
+applyMigrationsNoCheck dbInfo@CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } connectTimeout finalFunc
     = applyMigrationsInternal
         (baseApplyMigsBlock migsConnString
+                            connectTimeout
                             retryPolicy
                             (\_migBlocks conn -> finalFunc conn)
                             txnIsolationLvl
         )
         dbInfo
+        connectTimeout
 

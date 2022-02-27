@@ -16,6 +16,7 @@ import           Data.Aeson                     ( encode )
 import           Data.ByteString.Lazy           ( toStrict )
 import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
+import           Data.Time                      ( secondsToDiffTime )
 
 data WriteChecksumsOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 
@@ -25,6 +26,7 @@ writeChecksums dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToDisk mdest -> runStdoutLoggingT $ do
     checksum <- Codd.withConnection
       migsConnString
+      (secondsToDiffTime 5)
       (Codd.readHashesFromDatabaseWithSettings dbInfo)
     let
       dirToSave = case mdest of
@@ -39,6 +41,7 @@ writeChecksums dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToStdout -> runErrorsOnlyLogger $ do
     checksums <- Codd.withConnection
       migsConnString
+      (secondsToDiffTime 5)
       (Codd.readHashesFromDatabaseWithSettings dbInfo)
 
     -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..

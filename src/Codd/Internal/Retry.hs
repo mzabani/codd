@@ -9,7 +9,6 @@ import           Control.Monad.Logger           ( MonadLogger
                                                 , logWarnN
                                                 )
 import qualified Data.Text                     as Text
-import           Data.Time                      ( nominalDiffTimeToSeconds )
 import           UnliftIO                       ( MonadUnliftIO )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Exception             ( catchAny )
@@ -20,7 +19,7 @@ retry rpol f = case retryPolicyIterate rpol of
     Just (waitIfFail, nextPol) -> do
         catchAny f $ \e -> do
             let waitTimeMS :: Int =
-                    truncate $ nominalDiffTimeToSeconds waitIfFail * 1000
+                    truncate $ (realToFrac waitIfFail :: Float) * 1000
             logWarnN $ "Got SQL Error: " <> Text.pack (show e)
             logWarnN
                 $  "Waiting "

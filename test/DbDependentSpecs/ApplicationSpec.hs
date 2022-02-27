@@ -48,6 +48,7 @@ import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
 import           Data.Time                      ( UTCTime
                                                 , diffUTCTime
+                                                , secondsToDiffTime
                                                 , secondsToNominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -60,6 +61,7 @@ import           DbUtils                        ( aroundFreshDatabase
                                                 , shouldBeStrictlySortedOn
                                                 , testCoddSettings
                                                 , testConnInfo
+                                                , testConnTimeout
                                                 )
 import           Test.Hspec
 import           Test.Hspec.Expectations
@@ -178,6 +180,7 @@ spec = do
                                                   [placeHoldersMig]
                                               }
                                           )
+                                          testConnTimeout
                                           (const $ pure ())
 
                       it "Rows-returning function works for no-txn migrations"
@@ -190,6 +193,7 @@ spec = do
                                                                     [selectMig]
                                               }
                                           )
+                                          testConnTimeout
                                           (const $ pure ())
 
                       it "Rows-returning function works for in-txn migrations"
@@ -205,6 +209,7 @@ spec = do
                                               { sqlMigrations = Right [inTxnMig]
                                               }
                                           )
+                                          testConnTimeout
                                           (const $ pure ())
 
                       it "COPY FROM STDIN works" $ \emptyTestDbInfo -> do
@@ -212,6 +217,7 @@ spec = do
                               (emptyTestDbInfo { sqlMigrations = Right [copyMig]
                                                }
                               )
+                              testConnTimeout
                               (const $ pure ())
 
                       forM_
@@ -246,6 +252,7 @@ spec = do
                                                             (migsConnString
                                                                 modifiedSettings
                                                             )
+                                                            testConnTimeout
                                                             (retryPolicy
                                                                 modifiedSettings
                                                             )
@@ -263,6 +270,7 @@ spec = do
                                                             isolLvl
                                                         )
                                                         modifiedSettings
+                                                        testConnTimeout
 
                                           DB.fromOnly actualTxnReadOnly
                                               `shouldBe` "off"
@@ -289,6 +297,7 @@ spec = do
                                 void @IO
                                     $ withConnection
                                           (migsConnString emptyTestDbInfo)
+                                          testConnTimeout
                                     $ \conn -> do
 
                                       -- Strict checking will not apply the migration and therefore will not
@@ -314,6 +323,7 @@ spec = do
                                                               bogusDbHashes
                                                           }
                                                       )
+                                                      testConnTimeout
                                                       StrictCheck
                                                   )
                                               `shouldThrow` anyIOException
@@ -340,6 +350,7 @@ spec = do
                                                           bogusDbHashes
                                                       }
                                                   )
+                                                  testConnTimeout
                                                   LaxCheck
                                               )
                                           DB.query_
@@ -373,6 +384,7 @@ spec = do
                                                         (migsConnString
                                                             emptyTestDbInfo
                                                         )
+                                                        testConnTimeout
                                                   $ \conn -> do
                                                         runStdoutLoggingT
                                                                 (applyMigrations
@@ -395,6 +407,7 @@ spec = do
                                                                                 bogusDbHashes
                                                                         }
                                                                     )
+                                                                    testConnTimeout
                                                                     StrictCheck
                                                                 )
                                                             `shouldThrow` anyIOException
@@ -500,8 +513,11 @@ spec = do
                                               { sqlMigrations = Right migs
                                               }
                                           )
+                                          testConnTimeout
                                           (const $ pure ())
-                                withConnection (migsConnString emptyTestDbInfo)
+                                withConnection
+                                        (migsConnString emptyTestDbInfo)
+                                        testConnTimeout
                                     $ \conn -> do
                                           (countTxIds :: Int, countInterns :: Int, totalRows :: Int) <-
                                               unsafeQuery1
@@ -537,12 +553,13 @@ spec = do
                                                             RetryPolicy
                                                                 7
                                                                 (ExponentialBackoff
-                                                                    (secondsToNominalDiffTime
+                                                                    (realToFrac
                                                                         0.001
                                                                     )
                                                                 )
                                                         }
                                                     )
+                                                    testConnTimeout
                                                     (const $ pure ())
                                                 )
                                             `shouldThrow` (\(e :: SqlStatementException) ->
@@ -651,54 +668,59 @@ spec = do
                                             { sqlMigrations = Right allMigs
                                             }
                                         )
+                                        testConnTimeout
                                         (const $ pure ())
-                                    withConnection defaultConnInfo $ \conn -> do
+                                    withConnection defaultConnInfo
+                                                   testConnTimeout
+                                        $ \conn -> do
                                         -- 1. Check that migrations ran
-                                        map DB.fromOnly
-                                            <$> DB.query
-                                                    conn
-                                                    "SELECT datname FROM pg_database WHERE datname LIKE 'new_database_%' ORDER BY datname"
-                                                    ()
+                                              map DB.fromOnly
+                                                  <$> DB.query
+                                                          conn
+                                                          "SELECT datname FROM pg_database WHERE datname LIKE 'new_database_%' ORDER BY datname"
+                                                          ()
 
-                                            `shouldReturn` [ "new_database_0" :: String
-                                                           , "new_database_1"
-                                                           , "new_database_2"
-                                                           , "new_database_3"
-                                                           ]
+                                                  `shouldReturn` [ "new_database_0" :: String
+                                                                 , "new_database_1"
+                                                                 , "new_database_2"
+                                                                 , "new_database_3"
+                                                                 ]
 
-                                        -- 2. Check applied_at is not the time we insert into codd_schema.sql_migrations,
-                                        -- but the time when migrations are effectively applied.
-                                        runMigs :: [(FilePath, UTCTime)] <-
-                                            DB.query
-                                                conn
-                                                "SELECT name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at, id"
-                                                ()
-                                        map fst runMigs
-                                            `shouldBe` map
-                                                           ( migrationName
-                                                           . addedSqlMig
-                                                           )
-                                                           allMigs
+                                              -- 2. Check applied_at is not the time we insert into codd_schema.sql_migrations,
+                                              -- but the time when migrations are effectively applied.
+                                              runMigs :: [(FilePath, UTCTime)] <-
+                                                  DB.query
+                                                      conn
+                                                      "SELECT name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                      ()
+                                              map fst runMigs
+                                                  `shouldBe` map
+                                                                 ( migrationName
+                                                                 . addedSqlMig
+                                                                 )
+                                                                 allMigs
 
-                                        -- Half a second is a conservative minimum given pg_sleep(1) in each migration
-                                        let minTimeBetweenMigs =
-                                                secondsToNominalDiffTime 0.5
-                                            migsWithSleep = filter
-                                                (\(n, _) ->
-                                                    "-create-database-mig.sql"
-                                                        `Text.isSuffixOf` Text.pack
-                                                                              n
-                                                )
-                                                runMigs
-                                        zipWith
-                                                (\(_, time1 :: UTCTime) (_, time2) ->
-                                                    diffUTCTime time2 time1
-                                                )
-                                                migsWithSleep
-                                                (drop 1 migsWithSleep)
-                                            `shouldSatisfy` all
-                                                                (> minTimeBetweenMigs
-                                                                )
+                                              -- Half a second is a conservative minimum given pg_sleep(1) in each migration
+                                              let minTimeBetweenMigs =
+                                                      secondsToNominalDiffTime
+                                                          0.5
+                                                  migsWithSleep = filter
+                                                      (\(n, _) ->
+                                                          "-create-database-mig.sql"
+                                                              `Text.isSuffixOf` Text.pack
+                                                                                    n
+                                                      )
+                                                      runMigs
+                                              zipWith
+                                                      (\(_, time1 :: UTCTime) (_, time2) ->
+                                                          diffUTCTime time2
+                                                                      time1
+                                                      )
+                                                      migsWithSleep
+                                                      (drop 1 migsWithSleep)
+                                                  `shouldSatisfy` all
+                                                                      (> minTimeBetweenMigs
+                                                                      )
                 it "Diversified order of different types of migrations"
                     $ QC.property
                     $ \() -> do
@@ -823,20 +845,25 @@ spec = do
                                             { sqlMigrations = Right allMigs
                                             }
                                         )
+                                        testConnTimeout
                                         (const $ pure ())
-                                    withConnection defaultConnInfo $ \conn -> do
+                                    withConnection defaultConnInfo
+                                                   testConnTimeout
+                                        $ \conn -> do
                                         -- Check all migrations were applied in order
-                                        runMigs :: [(Int, FilePath)] <- DB.query
-                                            conn
-                                            "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
-                                            ()
-                                        map snd runMigs
-                                            `shouldBe` map
-                                                           ( migrationName
-                                                           . addedSqlMig
-                                                           )
-                                                           allMigs
-                                        runMigs `shouldBeStrictlySortedOn` fst
+                                              runMigs :: [(Int, FilePath)] <-
+                                                  DB.query
+                                                      conn
+                                                      "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                      ()
+                                              map snd runMigs
+                                                  `shouldBe` map
+                                                                 ( migrationName
+                                                                 . addedSqlMig
+                                                                 )
+                                                                 allMigs
+                                              runMigs
+                                                  `shouldBeStrictlySortedOn` fst
 
 
 -- | Concatenates two lists, generates a shuffle of that

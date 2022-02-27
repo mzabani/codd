@@ -30,10 +30,10 @@ import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time.Calendar             ( fromGregorian )
-import           Data.Time.Clock                ( NominalDiffTime
+import           Data.Time.Clock                ( DiffTime
                                                 , UTCTime(..)
                                                 , addUTCTime
-                                                , secondsToNominalDiffTime
+                                                , secondsToDiffTime
                                                 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..)
                                                 , defaultConnectInfo
@@ -61,6 +61,11 @@ testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
     , connectPort     = read portStr
     }
 
+-- | A default connection timeout of 5 seconds.
+--   It serves tests well.
+testConnTimeout :: DiffTime
+testConnTimeout = secondsToDiffTime 5
+
 aroundConnInfo :: SpecWith ConnectInfo -> Spec
 aroundConnInfo = around $ \act -> do
     cinfo <- testConnInfo
@@ -79,14 +84,16 @@ withDbAndDrop
     -> (ConnectInfo -> m a)
     -> m a
 withDbAndDrop dbInfo@CoddSettings { migsConnString } f = bracket
-    (applyMigrationsNoCheck dbInfo (const $ pure ()))
+    (applyMigrationsNoCheck dbInfo testConnTimeout (const $ pure ()))
     dropDb
     (const $ f migsConnString)
   where
     dropDb _ = do
-        withConnection migsConnString { connectDatabase = "postgres"
-                                      , connectUser     = "postgres"
-                                      }
+        withConnection
+                migsConnString { connectDatabase = "postgres"
+                               , connectUser     = "postgres"
+                               }
+                testConnTimeout
             $ \conn ->
                   void
                       $  liftIO
@@ -102,9 +109,11 @@ finallyDrop dbName f = f `finally` dropDb
   where
     dropDb = do
         connInfo <- testConnInfo
-        withConnection connInfo { connectDatabase = "postgres"
-                                , connectUser     = "postgres"
-                                }
+        withConnection
+                connInfo { connectDatabase = "postgres"
+                         , connectUser     = "postgres"
+                         }
+                testConnTimeout
             $ \conn ->
                   void
                       $  liftIO
@@ -168,13 +177,14 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
         startingMigs
 
     runStdoutLoggingT
-        $         (  applyMigrationsNoCheck coddSettings (const $ pure ())
-                  >> liftIO (act coddSettings)
-                  )
+        $ (applyMigrationsNoCheck coddSettings testConnTimeout (const $ pure ())
+          >> liftIO (act coddSettings)
+          )
         `finally` withConnection
                       migsConnString { connectUser     = "postgres"
                                      , connectDatabase = "postgres"
                                      }
+                      testConnTimeout
                         -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB/postgres instance.
                         -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
                         -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
@@ -209,9 +219,9 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
                       )
 
 -- | Returns a Postgres UTC Timestamp that increases with its input parameter.
-getIncreasingTimestamp :: NominalDiffTime -> DB.UTCTimestamp
+getIncreasingTimestamp :: DiffTime -> DB.UTCTimestamp
 getIncreasingTimestamp n =
-    DB.Finite $ addUTCTime n $ UTCTime (fromGregorian 2020 1 1) 0
+    DB.Finite $ addUTCTime (realToFrac n) $ UTCTime (fromGregorian 2020 1 1) 0
 
 -- | Changes every added migrations's timestamp so they're applied in the order of the list.
 fixMigsOrder :: [AddedSqlMigration] -> [AddedSqlMigration]
@@ -219,7 +229,7 @@ fixMigsOrder = zipWith
     (\i (AddedSqlMigration mig _) ->
         AddedSqlMigration mig
             $ getIncreasingTimestamp
-            $ secondsToNominalDiffTime
+            $ secondsToDiffTime
             $ fromIntegral i
     )
     [(0 :: Int) ..]

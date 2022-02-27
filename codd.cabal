@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a68aeebf0e7356a05fbed8d1cd96bfcf6072447c1d7b5d19ab3e5b0bc5572ab2
+-- hash: e6b8d58bfaad853ec60e127bb86cc0179b511d071b4452df2bb0ad7a3af2d5f2
 
 name:           codd
 version:        0.1.0.0
@@ -136,6 +136,7 @@ executable codd
     , optparse-applicative
     , postgresql-simple
     , text
+    , time
   default-language: Haskell2010
 
 test-suite codd-test
