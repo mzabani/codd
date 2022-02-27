@@ -313,17 +313,20 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         in
             hq
                 { checksumCols = checksumCols hq
-                                     ++ [ "pg_seq_type.typname"
-                                        , "seqstart"
-                                        , "seqincrement"
-                                        , "seqmax"
-                                        , "seqmin"
-                                        , "seqcache"
-                                        , "seqcycle"
-                                        , "owner_column.tablename"
-                                        , "owner_col_order.colorder" -- Num instead of name doesn't touch the sequence if the column's renamed,
-                                                                     -- but touches it if the column changes positions (which is probably better)
-                                        ]
+                                 ++ [ "pg_seq_type.typname"
+                                    , "seqstart"
+                                    , "seqincrement"
+                                    , "seqmax"
+                                    , "seqmin"
+                                    , "seqcache"
+                                    , "seqcycle"
+                                    , "owner_column.tablename"
+                                    ]
+                                        -- Num instead of name doesn't touch the sequence if the column's renamed,
+                                        -- but touches it if the column changes positions (which is probably better)
+                                 ++ [ "owner_col_order.colorder"
+                                    | not (ignoreColumnOrder checksumAlgo)
+                                    ]
                 , joins        =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_sequence pg_sequence ON seqrelid=pg_class.oid \
@@ -397,21 +400,24 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         { objNameCol    = "attname"
         , checksumCols  =
             [ "pg_type.typname"
-            , "attnotnull"
-            , "atthasdef"
-            , "pg_catalog.pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid)"
-            , "attidentity"
-            , "attislocal"
-            , "attinhcount"
-            , "pg_collation.collname"
-            , "collation_namespace.nspname"
-            -- We're not sure yet what attoptions and attfdwoptions represent, so we're not including them yet
+                , "attnotnull"
+                , "atthasdef"
+                , "pg_catalog.pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid)"
+                , "attidentity"
+                , "attislocal"
+                , "attinhcount"
+                , "pg_collation.collname"
+                , "collation_namespace.nspname"
+                , "_codd_roles.permissions"
+            -- It's not clear what attoptions and attfdwoptions represent, so we're not including them yet
             -- , sortArrayExpr "attoptions" 
             -- , sortArrayExpr "attfdwoptions"
             -- , "attnum" -- We use a window function instead of attnum because the latter is affected by dropped columns!
-            , "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
-            , "_codd_roles.permissions"
-            ]
+            --               But only if ignore-column-order is not set
+                ]
+                ++ [ "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
+                   | not (ignoreColumnOrder checksumAlgo)
+                   ]
         , fromTable     = "pg_catalog.pg_attribute"
         , joins         =
             "JOIN pg_catalog.pg_class ON pg_class.oid=attrelid"

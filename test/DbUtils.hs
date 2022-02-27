@@ -149,7 +149,7 @@ testCoddSettings migs = do
         , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
         , retryPolicy      = singleTryPolicy
         , txnIsolationLvl  = DbDefault
-        , checksumAlgo     = ChecksumAlgo False False
+        , checksumAlgo     = ChecksumAlgo False False False
         , hashedChecksums  = True
         }
 

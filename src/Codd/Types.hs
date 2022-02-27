@@ -32,6 +32,7 @@ data TxnIsolationLvl = DbDefault | Serializable | RepeatableRead | ReadCommitted
 data ChecksumAlgo = ChecksumAlgo
     { strictCollations         :: Bool
     , strictRangeCtorOwnership :: Bool
+    , ignoreColumnOrder        :: Bool
     }
 
 -- | A Retry Policy that tries at most 3 times (at most 2 retries) with an exponential backoff with
