@@ -117,12 +117,17 @@ checksumAlgoParser = do
     pure ChecksumAlgo
         { strictCollations         = collations `elem` modifiers
         , strictRangeCtorOwnership = rangeCtorOwnership `elem` modifiers
+        , ignoreColumnOrder        = ignoreColOrder `elem` modifiers
         }
 
   where
     collations         = "strict-collations"
     rangeCtorOwnership = "strict-range-ctor-ownership"
-    validModifier      = string collations <|> string rangeCtorOwnership
+    ignoreColOrder     = "ignore-column-order"
+    validModifier =
+        string collations
+            <|> string rangeCtorOwnership
+            <|> string ignoreColOrder
 
 readEnv :: MonadIO m => String -> m Text
 readEnv var =
@@ -179,7 +184,7 @@ getCoddSettings = do
     txnIsolationLvl <- parseEnv DbDefault
                                 (parseVar txnIsolationLvlParser)
                                 "CODD_TXN_ISOLATION"
-    checksumAlgo <- parseEnv (ChecksumAlgo False False)
+    checksumAlgo <- parseEnv (ChecksumAlgo False False False)
                              (parseVar checksumAlgoParser)
                              "CODD_CHECKSUM_ALGO"
     pure CoddSettings { migsConnString   = adminConnInfo

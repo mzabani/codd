@@ -7,6 +7,7 @@ This is not currently the case, may not be entirely possible and some decisions 
 <!-- vscode-markdown-toc -->
 - [Database equality implementation](#database-equality-implementation)
   - [What does codd checksum?](#what-does-codd-checksum)
+  - [Customizing the checksumming algorithm](#customizing-the-checksumming-algorithm)
   - [Details and gotchas](#details-and-gotchas)
     - [Delayed effect in pg_catalog](#delayed-effect-in-pg_catalog)
     - [System-dependent collations in the System Catalog Schema](#system-dependent-collations-in-the-system-catalog-schema)
@@ -50,6 +51,20 @@ In contrast, an **incomplete** list of things that are **not currently checksumm
 
 Checksumming every possible object is a top priority of _codd_, so if something's missing or not behaving as intended, please file a bug report.  
 
+## Customizing the checksumming algorithm
+
+In order to remain useful in a world of Cloud installs, docker images and distribution-dependent postgres installations, _codd_ tries to strike a balance between correctness/strictness and usability/looseness. We want checksums to match across different postgres installations if they have the same DB schema, but in some cases that is just _too hard_ to do right for everyone.
+
+So _codd_ currently provides 3 settings you can enable that will make your algorithm **more strict** in some cases or **more lax** in others. They're customizable through the `CODD_CHECKSUM_ALGO` environment variable, which is a space separated list containg any of these values:
+
+- **strict-collations**: _codd_ will include even the _libc_ and _icu_ native libraries' versions postgres was compiled with in its checksums, which it does not do by default.
+- **strict-range-ctor-ownership**: _codd_ will include ownership of constructors of custom range types in its checksums. Different installations of postgres seem to have different opinions on who the owner of such functions is, so _codd_ does not set this by default.
+- **ignore-column-order**: By default _codd_ includes column order in its checksums. This means possibly _a lot_ of files touched when columns are removed from tables with lots of columns. For shops with enough discipline to not rely on column order, this more lax setting can be helpful.
+
+So if you want _codd_ in the strictest possible setting, for example, you can set `CODD_CHECKSUM_ALGO=strict-collations strict-range-ctor-ownership`.
+
+These first two settings, along other interesting details, are described in more detail in the sections that follow.
+
 ## Details and gotchas
 
 ### Delayed effect in pg_catalog
@@ -81,7 +96,7 @@ For an example look at _psql's_ `\dOS+`, pick a collation from `pg_catalog` and 
 SELECT 'abc' < 'abd' COLLATE "chr-x-icu";
 ```
 
-The collation might exist in the development database but might not in the production server, which can make checksums match but queries fail in one server and work in another, since the `pg_catalog` namespace is not checksummed.
+The collation might exist in the development database but might not in the production server, which can make checksums match but queries fail in one server and work in another, since typically you don't want to checksum the `pg_catalog` namespace.
 
 One could think including `pg_catalog` in the list of namespaces to be checksummed would fix this, but even if development databases contain a subset of production's collations, _codd_ only does equality checks at the moment.
 
@@ -114,13 +129,13 @@ The decision made in _codd_ with **strict-collations** enabled is to checksum bo
 When range types are created, postgres automatically creates two homonymous functions that build values of the newly created type. Let's call these the two constructors of the range type. For example:
 
 ````sql
-    $ CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff     = float8mi);
-    $ SELECT floatrange(0.0, 10.0); -- Creates a range closed on     both ends
+    $ CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);
+    $ SELECT floatrange(0.0, 10.0); -- Creates a range closed on both ends
      floatrange
     ------------
      [0,10)
     (1 row)
-    $ SELECT floatrange(0.0, 10.0, '()'); -- Creates a range open on     both ends
+    $ SELECT floatrange(0.0, 10.0, '()'); -- Creates a range open on both ends
      floatrange
     ------------
      [0,10)
@@ -129,7 +144,7 @@ When range types are created, postgres automatically creates two homonymous func
 
 For some unknown reason - and I couldn't find this documented anywhere - it seems possible that the _owner_ of these constructors varies from one server to another. On my machine I get `postgres` - my local superuser - as the owner of these functions but on AWS RDS I get the user who created the range type, which is what I would've expected locally as well.
 
-So by default _codd_ does not checksum owner of range constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_CHECKSUM_ALGO` environment variable.
+So by default _codd_ does not checksum ownership of range constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_CHECKSUM_ALGO` environment variable.
 
 ## Interesting stuff
 

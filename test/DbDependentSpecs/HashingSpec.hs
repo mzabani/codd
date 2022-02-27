@@ -102,7 +102,7 @@ migrationsAndHashChange = zipWith
                id
                (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
          in  mig {
-                                                                                                                           -- Override name to avoid conflicts
+                                                                                                                                                                               -- Override name to avoid conflicts
                    migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -981,6 +981,7 @@ spec = do
             strictCollDbInfo = emptyTestDbInfo
               { checksumAlgo = ChecksumAlgo { strictCollations         = True
                                             , strictRangeCtorOwnership = False
+                                            , ignoreColumnOrder        = False
                                             }
               }
             createCollMig = AddedSqlMigration
@@ -1010,6 +1011,7 @@ spec = do
             strictRangeDbInfo = emptyTestDbInfo
               { checksumAlgo = ChecksumAlgo { strictCollations         = False
                                             , strictRangeCtorOwnership = True
+                                            , ignoreColumnOrder        = False
                                             }
               }
             createMig = AddedSqlMigration
@@ -1043,6 +1045,56 @@ spec = do
                            , BothButDifferent
                            )
                          ]
+
+    aroundFreshDatabase
+      $ it "ignore-column-order setting"
+      $ \emptyTestDbInfo -> do
+          let
+            createMig = AddedSqlMigration
+              (either
+                (error "Could not parse SQL migration")
+                id
+                (parseSqlMigration
+                  "1900-01-01T00:00:00Z-ignore-col-order-1.sql"
+                  "CREATE TABLE othertbl(col2 INT PRIMARY KEY);\
+                    \CREATE TABLE tbl(col1 INT, col2 SERIAL PRIMARY KEY CHECK (col2 > 0) REFERENCES othertbl(col2));\
+                    \CREATE UNIQUE INDEX someidx ON tbl(col2);"
+                    -- TODO: Other dependent objects like triggers, custom locales and whatnot
+                )
+              )
+              (getIncreasingTimestamp 0)
+            ignColOrderDbInfo = emptyTestDbInfo
+              { checksumAlgo  = ChecksumAlgo { strictCollations         = False
+                                             , strictRangeCtorOwnership = False
+                                             , ignoreColumnOrder        = True
+                                             }
+              , sqlMigrations = Right [createMig]
+              }
+          initialHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
+            ignColOrderDbInfo
+            (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
+
+          let dropCol1Mig = AddedSqlMigration
+                (either
+                  (error "Could not parse SQL migration 2")
+                  id
+                  (parseSqlMigration
+                    "1900-01-01T00:00:01Z-ignore-col-order-2.sql"
+                    "ALTER TABLE tbl DROP COLUMN col1;"
+                  )
+                )
+                (getIncreasingTimestamp 1)
+
+          afterDropHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
+            ignColOrderDbInfo { sqlMigrations = Right [createMig, dropCol1Mig] }
+            (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
+
+          -- Only the removed column should have its checksum file removed.
+          -- The other column and all dependent objects should not change one bit.
+          afterDropHashes
+            `hashDifferences` initialHashes
+            `shouldBe`        Map.fromList
+                                [("schemas/public/tables/tbl/cols/col1", OnlyRight)]
 
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
