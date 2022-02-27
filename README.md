@@ -7,7 +7,7 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
    <td>Plain SQL migrations</td>
    <td>
 
-````bash
+````shell
 $ cat create-animals-table.sql
 CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
 INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
@@ -28,7 +28,7 @@ $ psql -c "SELECT popular_name FROM animals"
 <td>Extensive schema equality checks</td>
 <td>
 
-````bash
+````shell
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
 $ codd verify-checksums
@@ -39,10 +39,10 @@ $ codd verify-checksums
 </tr>
 
 <tr>
-<td>Applies pending migrations in a single transaction*, optionally rolls back on schema mismatch before committing</td>
+<td>Applies pending migrations in a single transaction, optionally rolls back on schema mismatch before committing¹</td>
 <td>
 
-````bash
+````shell
 $ codd up
 [Debug] Checking if Database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
 [Debug] Checking if Codd Schema exists and creating it if necessary...
@@ -60,21 +60,23 @@ $ codd up
 </tr>
 
 <tr>
-<td>Meaningful merge conflicts**</td>
+<td>Meaningful merge conflicts²</td>
 <td>
 
+````shell
+$ git merge branch-with-conflicting-db-migration
+Auto-merging sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
+CONFLICT (content): Merge conflict in sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
+Automatic merge failed; fix conflicts and then commit the result.
+````
 
 </td>
 </tr>
 
 </table>
 
-
-* Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.
-** Two branches modifying e.g. the same column in their migrations will conflict, but two branches modifying different tables will not. There are some false positives and false negatives that can happen, however.
-
-- 
-- Running every pending deployed migration in a single transaction when possible, with the option to rollback if the expected schema does not match the schema during development.
+¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.
+² There can be false positives and false negatives in some cases.
 
 **It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
 
