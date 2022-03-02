@@ -137,16 +137,17 @@ CODD_CHECKSUM_DIR=sql-migrations/on-disk-cksums
 # Space separated schemas to checksum
 CODD_SCHEMAS=public
 
-# Space separated roles other than the ones specified above that must also be considered
+# Optional, space separated roles other than the ones specified above that must also be considered.
 CODD_EXTRA_ROLES=codd-user
 
 # Codd uses the default isolation level in READ WRITE mode, but you can override
 # that with the (optional) environment below.
 # Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
+# or leave blank because this is optional.
 CODD_TXN_ISOLATION=db-default
 
 # Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
-# when migrations fail, but you can control that with this variable.
+# when migrations fail, but you can control that with this variable. This variable is optional.
 # Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
 CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
