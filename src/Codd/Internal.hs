@@ -73,7 +73,7 @@ import           UnliftIO.Exception             ( IOException
                                                 , handleJust
                                                 , onException
                                                 , throwIO
-                                                , tryJust
+                                                , tryJust, catchJust
                                                 )
 import qualified Database.PostgreSQL.Simple.Time as DB
 import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release)
@@ -121,6 +121,10 @@ isServerNotAvailableError e =
                 `Text.isInfixOf` err
             || "the database system is starting up"
                 `Text.isInfixOf` err)
+
+-- | Returns true for errors such as "permission denied for database xxx"
+isPermissionDeniedError :: DB.SqlError -> Bool
+isPermissionDeniedError e = DB.sqlState e == "42501"
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
@@ -226,7 +230,9 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
                 logDebugN
                     "Checking if Codd Schema exists and creating it if necessary..."
 
-                withConnection migsConnString connectTimeout $ createCoddSchema txnIsolationLvl
+                liftIO $ void $ withConnection migsConnString connectTimeout $ \conn -> DB.query_ @(Int, Int) conn "SELECT 1, 2"
+
+                withConnection migsConnString connectTimeout $  createCoddSchema txnIsolationLvl
 
                 blocksOfMigsToRun <- collectPendingMigrations coddSettings connectTimeout
                 ApplyMigsResult _ actionAfterResult <- txnApp
@@ -289,9 +295,10 @@ isSingleTrue v = v == [DB.Only True]
 _noErrors :: MonadUnliftIO m => m () -> m ()
 _noErrors f = catchAny f (const (pure ()))
 
-createCoddSchema :: MonadIO m => TxnIsolationLvl -> DB.Connection -> m ()
-createCoddSchema txnIsolationLvl conn =
-    liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ do
+createCoddSchema :: (MonadUnliftIO m, MonadIO m) => TxnIsolationLvl -> DB.Connection -> m ()
+createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedError e then Just () else Nothing) go (\() -> throwIO $ userError "Not enough permissions to create codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions.")
+    where
+      go = liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ do
         schemaAlreadyExists <- isSingleTrue <$> query
             conn
             "SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = ?"

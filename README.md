@@ -85,10 +85,9 @@ Automatic merge failed; fix conflicts and then commit the result.
 	* [1. Nix (preferred)](#1-nix-preferred)
 	* [2. Docker](#2-docker)
 * [Configuring Codd](#configuring-codd)
-* [Starting out](#starting-out)
-* [Adding a SQL Migration](#adding-a-sql-migration)
+* [Try codd starting with a SQL Migration](#try-codd-starting-with-a-sql-migration)
 	* [no-txn migrations and more](#no-txn-migrations-and-more)
-* [Start using Codd in an existing database](#start-using-codd-in-an-existing-database)
+* [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
 * [Safety considerations](#safety-considerations)
 * [Frequently Asked Questions](#frequently-asked-questions)
 
@@ -120,7 +119,7 @@ _Codd_ will checksum DB objects to ensure database-equality between different en
 
 Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.  
 
-````.env
+````bash
 # A connection string in the format postgres://username[:password]@host:port/database_name
 # This connection string will be used to apply migrations. You can specify
 # custom connection strings on a per-migration basis too.
@@ -152,21 +151,7 @@ CODD_TXN_ISOLATION=db-default
 CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
 
-## Starting out
-
-After having configured your environment variables and making sure Postgres is reachable run one of these:
-
-````bash
-# With docker
-$ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up
-
-# .. or with Nix (make sure env vars are all exported)
-$ codd up
-````
-
-After this, you should be able to connect to your newly created Database, "codd_experiments".
-
-## Adding a SQL Migration
+## Try codd starting with a SQL Migration
 
 Here's a super quick way to experiment with _codd_. Let's create a table of employees with one employee inside by writing the following SQL to a file:
 
@@ -182,7 +167,7 @@ INSERT INTO employee (employee_name) VALUES ('John Doe');
 2. Make sure the connection string configured in `CODD_CONNECTION` works¹.
 3. Run 
    
-   ````bash
+   ````shell
    # With docker
    $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-user-and-employee-table.sql
 
@@ -193,7 +178,7 @@ INSERT INTO employee (employee_name) VALUES ('John Doe');
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
 
-¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md).
+¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md). For now use `createdb` or some other method.
 
 ### no-txn migrations and more
 
@@ -206,11 +191,11 @@ ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
 UPDATE employee SET employee_experience='intern';
 ````
 
-_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction.  
+_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction. You can also add a `-- codd-connection` comment to specify custom connection strings on a per-migration basis.
 
-Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
+But using `no-txn` or custom-connection migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
-## Start using codd
+## Start using codd with an existing database
 
 If you already have a database and want to start using _codd_ without losing it, read [START-USING.md](docs/START-USING.md).
 If you want to have a process where `codd up` will even create your database if necessary, read [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).
