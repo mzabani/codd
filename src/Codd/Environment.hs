@@ -172,9 +172,7 @@ getCoddSettings = do
         (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
         "CODD_SCHEMAS"
     extraRolesToHash <- parseEnv
-        (error
-            "Please define the CODD_EXTRA_ROLES environment variable with a space separated list of extra roles"
-        )
+        (Include [])
         (fmap (Include . map SqlRole) . parseVar spaceSeparatedObjNameParser)
         "CODD_EXTRA_ROLES"
     retryPolicy <- parseEnv defaultRetryPolicy

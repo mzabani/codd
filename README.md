@@ -163,16 +163,16 @@ CREATE TABLE employee (
 INSERT INTO employee (employee_name) VALUES ('John Doe');
 ````
 
-1. Now save this file in your project's root folder with a name such as `create-user-and-employee-table.sql`.
+1. Now save this file in your project's root folder with a name such as `create-employees-table.sql`.
 2. Make sure the connection string configured in `CODD_CONNECTION` works¹.
 3. Run 
    
    ````shell
    # With docker
-   $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-user-and-employee-table.sql
+   $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-employees-table.sql
 
    # .. or with Nix
-   $ codd add create-user-and-employee-table.sql
+   $ codd add create-employees-table.sql
    ````
 4. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
 
