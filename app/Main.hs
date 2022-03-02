@@ -23,6 +23,7 @@ import qualified Data.List                     as List
 import           Data.String                    ( IsString )
 import           Data.Time                      ( DiffTime )
 import           Options.Applicative
+import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
 
 data Cmd = Up (Maybe Codd.CheckHashes) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
@@ -189,6 +190,9 @@ quietSwitch =
 
 main :: IO ()
 main = do
+  IO.hSetBuffering IO.stdout IO.NoBuffering
+  IO.hSetBuffering IO.stderr IO.NoBuffering
+
   parsedCmd <- execParser opts
   dbVcsInfo <- Codd.getCoddSettings
   doWork dbVcsInfo parsedCmd

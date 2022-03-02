@@ -45,7 +45,6 @@ In contrast, an **incomplete** list of things that are **not currently checksumm
 - Extensions
 - Partitioning
 - Foreign Servers
-- Others
 
 **The final word** on what _codd_ checksums can be found in an automated test at _HashingSpec.hs_ and in the implementation in the _Pg10.hs_, _Pg11.hs_, _Pg12.hs_, _..._ files.
 
@@ -53,7 +52,7 @@ Checksumming every possible object is a top priority of _codd_, so if something'
 
 ## Customizing the checksumming algorithm
 
-In order to remain useful in a world of Cloud installs, docker images and distribution-dependent postgres installations, _codd_ tries to strike a balance between correctness/strictness and usability/looseness. We want checksums to match across different postgres installations if they have the same DB schema, but in some cases that is just _too hard_ to do right for everyone.
+In order to remain useful in a world of Cloud databases, docker images and distribution-dependent postgres installations, _codd_ tries to strike a balance between correctness/strictness and usability/looseness. We want checksums to match across different postgres installations if they have the same DB schema, but in some cases that is just _too hard_ to do right for everyone.
 
 So _codd_ currently provides 3 settings you can enable that will make your algorithm **more strict** in some cases or **more lax** in others. They're customizable through the `CODD_CHECKSUM_ALGO` environment variable, which is a space separated list containg any of these values:
 

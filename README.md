@@ -2,9 +2,81 @@
 
 _Codd_ is a tool to help teams of developers version-control their PostgreSQL databases locally and for deployment. It provides a few main features:
 
-- Plain SQL migrations that you can add by simply running `codd add migration-file.sql`
-- Schema equality checks to reduce the chances your production database's schema differs from your development schema. This check includes roles and permissions, among other things.
-- Running every pending deployed migration in a single transaction when possible, with the option to rollback if the expected schema does not match the schema during development.
+<table>
+<tr>
+   <td>Plain SQL migrations</td>
+   <td>
+
+````shell
+$ cat create-animals-table.sql
+CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
+INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
+$ codd add create-animals-table.sql
+Migration applied and added to sql-migrations/all/2022-02-27T23:14:50Z-create-animals-table.sql
+$ psql -c "SELECT popular_name FROM animals"
+ popular_name
+--------------
+ Dog
+ Cat
+(2 rows)
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Extensive schema equality checks</td>
+<td>
+
+````shell
+$ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
+ALTER TABLE
+$ codd verify-checksums
+[Error] DB and expected checksums do not match. Differences are (Left is Database, Right is expected): {"schemas/public/tables/animals/cols/popular_name":"different-checksums"}
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Applies pending migrations in a single transaction, optionally rolls back on schema mismatch before committing¹</td>
+<td>
+
+````shell
+$ codd up
+[Debug] Checking if Database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
+[Debug] Checking if Codd Schema exists and creating it if necessary...
+[Debug] Checking in the Database which SQL migrations have already been applied...
+[Debug] Parse-checking all pending SQL Migrations...
+[Debug] BEGINning transaction
+[Debug] Applying 2022-02-27T23:14:50Z-create-animals-table.sql
+[Debug] Applying 2022-02-27T23:30:41Z-create-people-table.sql
+[Info] Database and expected schemas match.
+[Debug] COMMITed transaction
+[Debug] All migrations applied to codd-experiments successfully
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Meaningful merge conflicts²</td>
+<td>
+
+````shell
+$ git merge branch-with-conflicting-db-migration
+Auto-merging sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
+CONFLICT (content): Merge conflict in sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
+Automatic merge failed; fix conflicts and then commit the result.
+````
+
+</td>
+</tr>
+
+</table>
+
+¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.
+² There can be false positives and false negatives in some cases.
 
 **It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
 
@@ -13,10 +85,9 @@ _Codd_ is a tool to help teams of developers version-control their PostgreSQL da
 	* [1. Nix (preferred)](#1-nix-preferred)
 	* [2. Docker](#2-docker)
 * [Configuring Codd](#configuring-codd)
-* [Starting out](#starting-out)
-* [Adding a SQL Migration](#adding-a-sql-migration)
+* [Try codd starting with a SQL Migration](#try-codd-starting-with-a-sql-migration)
 	* [no-txn migrations and more](#no-txn-migrations-and-more)
-* [Start using Codd in an existing database](#start-using-codd-in-an-existing-database)
+* [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
 * [Safety considerations](#safety-considerations)
 * [Frequently Asked Questions](#frequently-asked-questions)
 
@@ -48,7 +119,7 @@ _Codd_ will checksum DB objects to ensure database-equality between different en
 
 Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.  
 
-````.env
+````bash
 # A connection string in the format postgres://username[:password]@host:port/database_name
 # This connection string will be used to apply migrations. You can specify
 # custom connection strings on a per-migration basis too.
@@ -66,35 +137,22 @@ CODD_CHECKSUM_DIR=sql-migrations/on-disk-cksums
 # Space separated schemas to checksum
 CODD_SCHEMAS=public
 
-# Space separated roles other than the ones specified above that must also be considered
+# Optional, space separated roles other than the ones specified above that must also be considered.
 CODD_EXTRA_ROLES=codd-user
 
 # Codd uses the default isolation level in READ WRITE mode, but you can override
 # that with the (optional) environment below.
 # Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
+# or leave blank because this is optional.
 CODD_TXN_ISOLATION=db-default
 
 # Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
-# when migrations fail, but you can control that with this variable.
+# when migrations fail, but you can control that with this variable. This variable is optional.
 # Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
 CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````
 
-## Starting out
-
-After having configured your environment variables and making sure Postgres is reachable run one of these:
-
-````bash
-# With docker
-$ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd up
-
-# .. or with Nix (make sure env vars are all exported)
-$ codd up
-````
-
-After this, you should be able to connect to your newly created Database, "codd_experiments".
-
-## Adding a SQL Migration
+## Try codd starting with a SQL Migration
 
 Here's a super quick way to experiment with _codd_. Let's create a table of employees with one employee inside by writing the following SQL to a file:
 
@@ -106,22 +164,22 @@ CREATE TABLE employee (
 INSERT INTO employee (employee_name) VALUES ('John Doe');
 ````
 
-1. Now save this file in your project's root folder with a name such as `create-user-and-employee-table.sql`.
+1. Now save this file in your project's root folder with a name such as `create-employees-table.sql`.
 2. Make sure the connection string configured in `CODD_CONNECTION` works¹.
 3. Run 
    
-   ````bash
+   ````shell
    # With docker
-   $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-user-and-employee-table.sql
+   $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-employees-table.sql
 
    # .. or with Nix
-   $ codd add create-user-and-employee-table.sql
+   $ codd add create-employees-table.sql
    ````
 4. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
 
 After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
 
-¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md).
+¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md). For now use `createdb` or some other method.
 
 ### no-txn migrations and more
 
@@ -134,11 +192,11 @@ ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
 UPDATE employee SET employee_experience='intern';
 ````
 
-_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction.  
+_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction. You can also add a `-- codd-connection` comment to specify custom connection strings on a per-migration basis.
 
-Using `no-txn` migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
+But using `no-txn` or custom-connection migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
 
-## Start using codd
+## Start using codd with an existing database
 
 If you already have a database and want to start using _codd_ without losing it, read [START-USING.md](docs/START-USING.md).
 If you want to have a process where `codd up` will even create your database if necessary, read [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).

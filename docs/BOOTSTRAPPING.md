@@ -1,13 +1,13 @@
 # Bootstrapping
 
-_Codd_ is really good at applying migrations but it needs an existing database to apply them on.
+_Codd_ is good at applying migrations but it needs an existing database to apply them on.
 Custom scripts can help with that initial phase, but _codd_ has its own solution to that, helping save
 a few keystrokes and making the entire process more streamlined; it's called bootstrapping.
 
 ## How does it work?
 
-Creating a database usually involves first connecting to the database and issuing a `CREATE DATABASE my_database` statement, followed by many other statements that only privileged users can run.
-After that migrations can usually be applied by either the same privileged user on the target database, but the very first statements must at least run on a non-target database such as `postgres`, or others that already existed.
+Creating a database usually involves first connecting to an existing database and issuing a `CREATE DATABASE my_database` statement, followed by many other statements that only privileged users can run.
+After that migrations can usually be applied by either the same privileged user or some other role on the target database, but the very first statements must at least run on a non-target database such as `postgres`, or others that already existed.
 
 With that in mind, with _codd_ you just have to add a migration like almost any other, except you want it to have a custom connection string, e.g.:
 
@@ -29,7 +29,7 @@ $do$;
 CREATE DATABASE codd_experiments TEMPLATE template0 OWNER codd_admin ENCODING UTF8 LC_COLLATE "en_GB.UTF8" LC_CTYPE "en_GB.UTF8";
 ````
 
-Now just make sure this is the very first migration to run - you can move it to your "dev-only" folder of migrations (the one you'd run in a Production server would likely be very different) with a very early date. One suitable named would be something like `1900-01-01T00:00:00Z-bootstrap-db.sql`, for example.
+Now just make sure this is the very first migration to run - you can move it to your "dev-only" folder of migrations (the one you'd run in a Production server would likely be very different) with a very early date. One suitable named would be something like `1900-01-01T00:00:00Z-bootstrap-db.sql`, for example. For now you'll need to manually rename this migration, _codd_ won't help you with that.
 
 This can help you recreate your local DB as easily as `dropdb codd_experiments && codd up`, and keeps all necessary statements to create it in folders familiar to you.
 
