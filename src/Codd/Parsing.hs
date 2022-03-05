@@ -36,7 +36,6 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , many'
                                                 , many1
                                                 , manyTill
-                                                , match
                                                 , parseOnly
                                                 , peekChar
                                                 , sepBy1
@@ -50,7 +49,6 @@ import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -63,7 +61,9 @@ import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
-import           Streaming                      ( Of )
+import           Streaming                      ( Of(..)
+                                                , runIdentity
+                                                )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 
@@ -99,8 +99,49 @@ data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece 
 parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
 parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
 
-parseSqlPiecesStreaming :: Monad m => Text -> Stream (Of SqlPiece) m ()
-parseSqlPiecesStreaming _ = Streaming.each []
+parseSqlPiecesStreaming
+  :: forall m . Monad m => Stream (Of Text) m () -> Stream (Of SqlPiece) m ()
+parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
+ where
+    -- Important question: will the unconsumed Text remainders in the parsing Results
+    -- be allocated and take a lot of memory? This probably depends on how lazily these are
+    -- allocated by attoparsec and by Text's internal implementation. We might want to test this
+    -- with very small chunks of Text coming from the input stream to compare.
+    -- NOTE: It's unlikely Text's internal implementation
+    -- copies byte arrays for new instances. It most likely references existing byte arrays
+    -- with some offset and length integers to follow. Double-check just in case.
+  parseOneInc :: Text -> ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece))
+  parseOneInc t = if t == ""
+    then ([], Nothing)
+    else case Parsec.parse sqlPieceParser t of
+      Parsec.Fail _ _ errorMsg ->
+        error $ "Codd internal parsing error: " <> errorMsg
+      Parsec.Done unconsumedInput sqlPiece ->
+        first (sqlPiece :) $ parseOneInc unconsumedInput
+      Parsec.Partial continue -> ([], Just continue)
+
+  parseResultsStream :: Stream (Of [SqlPiece]) m ()
+  parseResultsStream =
+    Streaming.scan
+        (\(_, !mContinue) !textPiece -> case mContinue of
+          Nothing       -> parseOneInc textPiece
+          Just continue -> case continue textPiece of
+            Parsec.Fail _ _ errorMsg ->
+              error $ "Codd internal parsing error: " <> errorMsg
+            Parsec.Done unconsumedInput sqlPiece ->
+              first (sqlPiece :) $ parseOneInc unconsumedInput
+            Parsec.Partial nextContinue -> ([], Just nextContinue)
+        )
+        (([], Nothing) :: ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece)))
+        fst
+    -- SQL files' last statement don't need to end with a semi-colon, and because of
+    -- that they could end up as a partial match in those cases.
+    -- When applying parsing continuations the empty string is used to signal/match
+    -- endOfInput. So we append a final empty string to the original stream to
+    -- parse the last SQL statement properly regardless of semi-colon.
+    -- Also, because empty strings are so special, we filter them out just in case.
+      $  Streaming.filter (/= "") contents
+      <> Streaming.each [""]
 
 parsedSqlText :: ParsedSql -> Text
 parsedSqlText (ParseFailSqlText t) = t
@@ -121,19 +162,21 @@ sqlPiecesParser = do
   case pcs of
     []       -> fail "SQL migration is empty"
     (p : ps) -> pure (p :| ps)
+
+sqlPieceParser :: Parser SqlPiece
+sqlPieceParser =
+  CommentPiece
+    <$> commentParser
+    <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace)
+    <|> copyFromStdinParser
+    <|> BeginTransaction
+    <$> beginTransactionParser
+    <|> RollbackTransaction
+    <$> rollbackTransactionParser
+    <|> CommitTransaction
+    <$> commitTransactionParser
+    <|> (OtherSqlPiece <$> anySqlPieceParser)
  where
-  sqlPieceParser =
-    CommentPiece
-      <$> commentParser
-      <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace)
-      <|> copyFromStdinParser
-      <|> BeginTransaction
-      <$> beginTransactionParser
-      <|> RollbackTransaction
-      <$> rollbackTransactionParser
-      <|> CommitTransaction
-      <$> commitTransactionParser
-      <|> (OtherSqlPiece <$> anySqlPieceParser)
   beginTransactionParser =
     spaceSeparatedTokensToParser [CITextToken "BEGIN", AllUntilEndOfStatement]
       <|> spaceSeparatedTokensToParser
@@ -522,21 +565,25 @@ piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
 migrationParserSimpleWorkflow
-  :: Parser ([SectionOption], Maybe ConnectInfo, ParsedSql)
-migrationParserSimpleWorkflow = do
-  (text, sqlPieces) <- match sqlPiecesParser
-  when (text /= piecesToText sqlPieces)
-    $ fail
+  :: Text -> Either String ([SectionOption], Maybe ConnectInfo, ParsedSql)
+migrationParserSimpleWorkflow t = do
+  let sqlPieces :> () =
+        runIdentity $ Streaming.toList $ parseSqlPiecesStreaming
+          (Streaming.each [t])
+      text = piecesToText sqlPieces
+  when (text /= t)
+    $ Left
         "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
-  case extractCoddOpts (NE.toList sqlPieces) of
-    Left err -> fail err
-    Right (opts, customConnStr) ->
-      pure (opts, customConnStr, WellParsedSql text sqlPieces)
+  case extractCoddOpts sqlPieces of
+    Left  err                   -> Left err
+    Right (opts, customConnStr) -> case sqlPieces of
+      []       -> Left "Is this an empty migration?"
+      (x : xs) -> pure (opts, customConnStr, WellParsedSql text $ x :| xs)
 
 parseSqlMigration :: String -> Text -> Either Text SqlMigration
 parseSqlMigration name t = first Text.pack migE >>= toMig
  where
-  migE = parseOnly (migrationParserSimpleWorkflow <* endOfInput) t
+  migE = migrationParserSimpleWorkflow t
   dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe Text
   checkOpts opts
