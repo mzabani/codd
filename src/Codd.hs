@@ -19,9 +19,11 @@ import           Codd.Internal                  ( applyMigrationsInternal
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
+import           Control.Monad.Trans            ( lift )
 import           Data.Time                      ( DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
+import           UnliftIO.Resource              ( runResourceT )
 
 data CheckHashes = LaxCheck | StrictCheck
     deriving stock (Show)
@@ -45,7 +47,7 @@ applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy,
     = case checkHashes of
         StrictCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
-            applyMigrationsInternal
+            runResourceT $ applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
                                     connectTimeout
                                     retryPolicy
@@ -57,7 +59,7 @@ applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy,
             pure $ ChecksumsMatch eh
         LaxCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
-            dbCksums <- applyMigrationsInternal
+            dbCksums <- runResourceT $ applyMigrationsInternal
                 (baseApplyMigsBlock migsConnString
                                     connectTimeout
                                     retryPolicy
@@ -86,11 +88,11 @@ applyMigrationsNoCheck
     -> (DB.Connection -> m a)
     -> m a
 applyMigrationsNoCheck dbInfo@CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } connectTimeout finalFunc
-    = applyMigrationsInternal
+    = runResourceT $ applyMigrationsInternal
         (baseApplyMigsBlock migsConnString
                             connectTimeout
                             retryPolicy
-                            (\_migBlocks conn -> finalFunc conn)
+                            (\_migBlocks conn -> lift $ finalFunc conn)
                             txnIsolationLvl
         )
         dbInfo

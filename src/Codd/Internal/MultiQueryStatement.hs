@@ -82,8 +82,8 @@ multiQueryStatement_
   -> ParsedSql
   -> m ()
 multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
-  (ParseFailSqlText t, InTransaction) -> singleStatement_ conn t
-  (ParseFailSqlText t, NotInTransaction retryPol) ->
+  (UnparsedSql t, InTransaction) -> singleStatement_ conn t
+  (UnparsedSql t, NotInTransaction retryPol) ->
     retry retryPol $ singleStatement_ conn t
   (WellParsedSql _ stms, NotInTransaction retryPol) ->
     forM_ stms $ \stm -> retry retryPol $ runSingleStatementInternal_ conn stm

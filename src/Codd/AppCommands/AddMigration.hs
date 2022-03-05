@@ -13,6 +13,7 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
+import           Codd.Internal                  ( streamingReadFile )
 import           Codd.Parsing                   ( ParsingOptions(..)
                                                 , parseSqlMigrationOpts
                                                 )
@@ -38,6 +39,7 @@ import           UnliftIO.Directory             ( copyFile
                                                 , removeFile
                                                 )
 import           UnliftIO.Exception             ( bracketOnError )
+import           UnliftIO.Resource              ( runResourceT )
 
 data AddMigrationOptions = AddMigrationOptions
   { dontApply :: Bool
@@ -70,11 +72,11 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
       onDiskHashes
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
-    sqlMigContents <- liftIO $ Text.readFile fp
-    let parsedSqlMigE = parseSqlMigrationOpts
-          (if noParse then NoParse else DoParse)
-          (takeFileName fp)
-          sqlMigContents
+    parsedSqlMigE <- runResourceT $ do
+      sqlMigContents <- streamingReadFile fp
+      parseSqlMigrationOpts (if noParse then NoParse else DoParse)
+                            (takeFileName fp)
+                            sqlMigContents
     case parsedSqlMigE of
       Left err ->
         error $ "There was an error parsing this SQL Migration: " ++ show err

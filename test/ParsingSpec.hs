@@ -352,7 +352,7 @@ spec = do
         `shouldBe` Right SqlMigration
                      { migrationName           = "failed-parsing-migration.sql"
                      , migrationSql            = Just
-                       $ ParseFailSqlText "-- SQL with comments only!"
+                       $ UnparsedSql "-- SQL with comments only!"
                      , migrationInTxn          = True
                      , migrationCustomConnInfo = Nothing
                      }

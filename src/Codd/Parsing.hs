@@ -59,16 +59,15 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
+import           Debug.Trace
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
-import           Streaming                      ( Of(..)
-                                                , runIdentity
-                                                )
+import           Streaming                      ( Of(..) )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 
 
-data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
+data ParsedSql = UnparsedSql !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
   deriving stock (Eq, Show)
 
 data SqlMigration = SqlMigration
@@ -144,8 +143,8 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
       <> Streaming.each [""]
 
 parsedSqlText :: ParsedSql -> Text
-parsedSqlText (ParseFailSqlText t) = t
-parsedSqlText (WellParsedSql t _ ) = t
+parsedSqlText (UnparsedSql t    ) = t
+parsedSqlText (WellParsedSql t _) = t
 
 sqlPieceText :: SqlPiece -> Text
 sqlPieceText (CommentPiece        s      ) = s
@@ -564,26 +563,26 @@ extractCoddOpts ps =
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
-migrationParserSimpleWorkflow
-  :: Text -> Either String ([SectionOption], Maybe ConnectInfo, ParsedSql)
-migrationParserSimpleWorkflow t = do
-  let sqlPieces :> () =
-        runIdentity $ Streaming.toList $ parseSqlPiecesStreaming
-          (Streaming.each [t])
-      text = piecesToText sqlPieces
-  when (text /= t)
-    $ Left
-        "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
+parseAndClassifyMigration
+  :: Monad m
+  => Stream (Of Text) m ()
+  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql))
+parseAndClassifyMigration t = do
+  sqlPieces :> () <- Streaming.toList $ parseSqlPiecesStreaming t
+  let text = piecesToText sqlPieces
   case extractCoddOpts sqlPieces of
-    Left  err                   -> Left err
+    Left  err                   -> traceShow err $ pure $ Left err
     Right (opts, customConnStr) -> case sqlPieces of
-      []       -> Left "Is this an empty migration?"
-      (x : xs) -> pure (opts, customConnStr, WellParsedSql text $ x :| xs)
+      [] -> pure $ Left "Is this an empty migration?"
+      (x : xs) ->
+        pure $ Right (opts, customConnStr, WellParsedSql text $ x :| xs)
 
-parseSqlMigration :: String -> Text -> Either Text SqlMigration
-parseSqlMigration name t = first Text.pack migE >>= toMig
+parseSqlMigration
+  :: Monad m => String -> Stream (Of Text) m () -> m (Either Text SqlMigration)
+parseSqlMigration name t = do
+  migE <- parseAndClassifyMigration t
+  pure $ first Text.pack migE >>= toMig
  where
-  migE = migrationParserSimpleWorkflow t
   dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe Text
   checkOpts opts
@@ -613,25 +612,33 @@ data ParsingOptions = NoParse | DoParse
   deriving stock (Eq)
 
 parseSqlMigrationOpts
-  :: ParsingOptions -> String -> Text -> Either Text SqlMigration
+  :: Monad m
+  => ParsingOptions
+  -> String
+  -> Stream (Of Text) m ()
+  -> m (Either Text SqlMigration)
 parseSqlMigrationOpts popts name sql = case popts of
-  NoParse ->
-    Right $ SqlMigration name (Just $ ParseFailSqlText sql) True Nothing
+  NoParse -> do
+    fullSql :> () <- Streaming.fold (<>) "" id sql
+    pure $ Right $ SqlMigration name (Just $ UnparsedSql fullSql) True Nothing
   _ -> parseSqlMigration name sql
 
 parseAddedSqlMigration
-  :: ParsingOptions -> String -> Text -> Either Text AddedSqlMigration
-parseAddedSqlMigration popts name t =
-  AddedSqlMigration
-    <$> parseSqlMigrationOpts popts name t
-    <*> parseMigrationTimestamp name
+  :: Monad m
+  => ParsingOptions
+  -> String
+  -> Stream (Of Text) m ()
+  -> m (Either Text AddedSqlMigration)
+parseAddedSqlMigration popts name t = do
+  sqlMig <- parseSqlMigrationOpts popts name t
+  pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 
 -- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
 -- we find a way to remove it.
 nothingIfEmptyQuery :: Text -> Maybe ParsedSql
 nothingIfEmptyQuery t = case (parseSqlPieces t, t) of
   (Left  _  , "") -> Nothing
-  (Left  _  , _ ) -> Just $ ParseFailSqlText t
+  (Left  _  , _ ) -> Just $ UnparsedSql t
   (Right pcs, _ ) -> if all (\x -> isWhiteSpacePiece x || isCommentPiece x) pcs
     then Nothing
     else Just (WellParsedSql t pcs)

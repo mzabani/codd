@@ -34,16 +34,12 @@ import           Control.Monad                  ( forM
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Logger           ( MonadLogger
-                                                , NoLoggingT
                                                 , logDebugN
                                                 , logErrorN
                                                 , logInfoN
                                                 , logWarnN
-                                                , runNoLoggingT
                                                 )
-import           Data.ByteString                ( ByteString
-                                                , readFile
-                                                )
+import Control.Monad.Trans (MonadTrans(..))
 import           Data.Either                    ( isLeft )
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
@@ -57,13 +53,12 @@ import           Data.Maybe                     ( mapMaybe, fromMaybe
 import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Text.Encoding             ( decodeUtf8 )
 import           Data.Time                      ( UTCTime, DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>) )
 import           UnliftIO                       ( MonadUnliftIO
-                                                , toIO
+                                                , toIO, hClose
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -76,9 +71,14 @@ import           UnliftIO.Exception             ( IOException
                                                 , tryJust, catchJust
                                                 )
 import qualified Database.PostgreSQL.Simple.Time as DB
-import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release)
-import Control.Monad.Trans (MonadTrans(lift))
+import Streaming (Stream, Of)
+import qualified Streaming.Prelude as Streaming
+import qualified System.IO as IO
+import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release, MonadResource)
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
+import UnliftIO.IO (openFile, IOMode (ReadMode))
+
+
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -150,29 +150,6 @@ beginCommitTxnBracket isolLvl conn f = do
         DB.commit conn
         pure v
 
--- | Creates the App's Database and Codd's schema if it does not yet exist.
-createEmptyDbIfNecessary
-    :: forall m n
-     . (MonadUnliftIO m, MonadIO m, n ~ NoLoggingT m)
-    => CoddSettings
-    -> DiffTime
-    -> m ()
-createEmptyDbIfNecessary settings@CoddSettings { migsConnString, txnIsolationLvl } connectTimeout
-    = runNoLoggingT $ applyMigrationsInternal applyZeroMigs settings connectTimeout
-    -- Very special case: it's probably not very interesting to print database and Codd schema creation too many times.
-    -- Since this function gets called a lot for "just-in-case" parts of the App, let's hide its output.
-  where
-    applyZeroMigs
-        :: CanUpdateCoddSchema
-        -> [NonEmpty AddedSqlMigration]
-        -> n (ApplyMigsResult ())
-    applyZeroMigs canUpdSchema _ = baseApplyMigsBlock migsConnString connectTimeout
-                                                      singleTryPolicy
-                                                      (\_ _ -> pure ())
-                                                      txnIsolationLvl
-                                                      canUpdSchema
-                                                      []
-
 -- | Returns True on any libpq connection error with the
 -- supplied connection string as long as it's not caused
 -- by postgres simply not being up until the time limit.
@@ -208,7 +185,7 @@ checkNeedsBootstrapping connInfo connectTimeout =
         let err = Text.pack $ show e in "libpq: failed" `Text.isInfixOf` err
 
 applyMigrationsInternal
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => (CanUpdateCoddSchema -> [BlockOfMigrations] -> m (ApplyMigsResult a))
     -> CoddSettings
     -> DiffTime
@@ -324,7 +301,7 @@ createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedEr
 -- some custom connection string that do not connect to the default database, grouped by connection
 -- string and in-txn/no-txn. Also returns as second element in the tuple all other migrations in their blocks.
 collectBootstrapMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => DB.ConnectInfo
     -> Either [FilePath] [AddedSqlMigration]
     -> m ([BlockOfMigrations], [BlockOfMigrations])
@@ -339,7 +316,7 @@ collectBootstrapMigrations defaultConnInfo sqlMigrations =
 -- | Parses on-disk migrations and checks for destructive SQL sections of migrations on the Database to collect which migrations must run,
 -- grouped by in-txn/no-txn. The Database must already exist and Codd's schema must have been created.
 collectPendingMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => CoddSettings
     -> DiffTime
     -> m [BlockOfMigrations]
@@ -361,8 +338,27 @@ collectPendingMigrations CoddSettings { migsConnString, sqlMigrations, txnIsolat
             logDebugN "Parse-checking all pending SQL Migrations..."
             parseMigrationFiles migsAlreadyApplied sqlMigrations
 
+-- | Streams a UTF-8 file.
+-- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
+-- reads, but does not append '\n' to the Strings it returns, making it impossible to know if
+-- the last line had a '\n' at the end or an EOF.
+-- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
+-- So we copy streaming's implementation and modify it slightly.
+streamingReadFile :: MonadResource m => FilePath -> m (Stream (Of Text) m ())
+streamingReadFile filePath = Streaming.map Text.pack . go . snd <$> allocate (openFile filePath ReadMode) hClose
+  where
+    go h = do
+        eof <- liftIO $ IO.hIsEOF h
+        unless eof $ do
+            str <- liftIO $ IO.hGetLine h
+            eof2 <- liftIO $ IO.hIsEOF h
+            if eof2 then
+                Streaming.yield str
+            else Streaming.yield $ str <> "\n"
+            go h
+
 parseMigrationFiles
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+    :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => [FilePath]
     -> Either [FilePath] [AddedSqlMigration]
     -> m [BlockOfMigrations]
@@ -380,14 +376,16 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                                 `notElem`         migsCompleted
                         )
                         filesInDir
-            sqlMigrationsContents :: [(FilePath, ByteString)] <-
-                liftIO
-                $      pendingSqlMigrationFiles
-                `forM` (\(fn, fp) -> (,) fn <$> readFile fp)
-            -- TODO: decodeUtf8Lenient ?
+            
+            sqlMigrationsContents :: [(FilePath, Stream (Of Text) m ())] <-
+                pendingSqlMigrationFiles
+                `forM` (\(fn, fp) -> (,) fn <$> streamingReadFile fp)
             parsedMigs <-
-                forM sqlMigrationsContents $ \(fn, decodeUtf8 -> sql) -> do
-                    let parsedMigGood = parseAddedSqlMigration DoParse fn sql
+                forM sqlMigrationsContents $ \(fn, sqlStream) -> do
+                    -- error "parseAddedSqlMigrations should not receive DoParse/NoParse. \
+                    --      \ It should return the full sql contents in the Left branch if it fails instead. \
+                    --      \ Then we logWarn if that happens"
+                    parsedMigGood <- parseAddedSqlMigration DoParse fn sqlStream
                     parsedMigFinal <- do
                         case parsedMigGood of
                             Right _ -> pure parsedMigGood
@@ -395,7 +393,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                                 logWarnN
                                     $ Text.pack fn
                                     <> " could not be parsed and thus will be considered in is entirety as in-txn"
-                                pure $ parseAddedSqlMigration NoParse fn sql
+                                parseAddedSqlMigration NoParse fn sqlStream
                     pure (fn, parsedMigFinal)
             case find (\(_, m) -> isLeft m) parsedMigs of
                 Just (fn, Left e) ->

@@ -8,7 +8,7 @@ module Codd.Analysis
     ) where
 
 import           Codd.Parsing                   ( ParsedSql
-                                                    ( ParseFailSqlText
+                                                    ( UnparsedSql
                                                     , WellParsedSql
                                                     )
                                                 , SqlMigration(..)
@@ -32,7 +32,7 @@ checkMigration mig = MigrationCheck <$> migEndsTransaction
   where
     migEndsTransaction = case (migrationSql mig, migrationInTxn mig) of
         (Nothing, _) -> Left "Empty migration"
-        (Just (ParseFailSqlText _), _) ->
+        (Just (UnparsedSql _), _) ->
             Left "Error parsing migration so checking is not possible"
         (Just (WellParsedSql _ pieces), True) ->
             Right $ if any isTransactionEndingPiece pieces
