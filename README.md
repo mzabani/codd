@@ -75,10 +75,8 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 </table>
 
-¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.
-² There can be false positives and false negatives in some cases.
-
-**It is only compatible with PostgreSQL version 10 to 13. No other databases are currently supported.**
+¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.  
+² There can be false positives and false negatives in some cases.  
 
 <!-- vscode-markdown-toc -->
 * [Installing Codd](#installing-codd)
@@ -106,18 +104,18 @@ We currently provide two installation methods.
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would.
 
 1. Install Nix if you don't have it yet by using your package manager or running `sh <(curl -L https://nixos.org/nix/install) --daemon` and following its instructions.
-2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _Codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
+2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
 
 ### 2. Docker
 
-We keep up-to-date images of _Codd_ in DockerHub. To run _Codd_ through docker just run `docker run --rm mzabani/codd --help`.
-Invoking _Codd_ this way will require mounting volumes and is certainly more bureaucratic than other installation methods.
+We keep up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
+Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than other installation methods.
 
 ## Configuring Codd
 
 _Codd_ will checksum DB objects to ensure database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects — such as schemas and roles — it will consider, and connection strings for it to connect.
 
-Let's take a look at an example `.env` file for _Codd_. These environment variables must be defined when running the `codd` executable.  
+Let's take a look at an example `.env` file for _codd_. These environment variables must be defined when running the `codd` executable.  
 
 ````bash
 # A connection string in the format postgres://username[:password]@host:port/database_name
