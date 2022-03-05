@@ -70,6 +70,7 @@ library:
     - mtl
     - postgresql-libpq
     - resourcet
+    - streaming
     - text
     - time
     - unliftio

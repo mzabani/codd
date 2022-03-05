@@ -63,6 +63,9 @@ import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Prelude                 hiding ( takeWhile )
 import qualified Prelude
+import           Streaming                      ( Of )
+import qualified Streaming.Prelude             as Streaming
+import           Streaming.Prelude              ( Stream )
 
 
 data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
@@ -95,6 +98,9 @@ data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece 
 
 parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
 parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
+
+parseSqlPiecesStreaming :: Monad m => Text -> Stream (Of SqlPiece) m ()
+parseSqlPiecesStreaming _ = Streaming.each []
 
 parsedSqlText :: ParsedSql -> Text
 parsedSqlText (ParseFailSqlText t) = t

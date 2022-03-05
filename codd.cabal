@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e6b8d58bfaad853ec60e127bb86cc0179b511d071b4452df2bb0ad7a3af2d5f2
+-- hash: a2c03319d8e75dfe2a1506ecfd0a54c83b0d12f9b368141e6c151e2876558489
 
 name:           codd
 version:        0.1.0.0
@@ -93,6 +93,7 @@ library
     , postgresql-libpq
     , postgresql-simple
     , resourcet
+    , streaming
     , text
     , time
     , unliftio
