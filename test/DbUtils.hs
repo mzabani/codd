@@ -122,7 +122,7 @@ finallyDrop dbName f = f `finally` dropDb
                       <> dbIdentifier dbName
 
 testCoddSettings :: MonadIO m => [AddedSqlMigration] -> m CoddSettings
-testCoddSettings migs = do
+testCoddSettingsigs = do
     connInfo <- testConnInfo
     -- In all our tests, we simulate a scenario where one App User already exists
     let migTimestamp      = getIncreasingTimestamp (-1000)

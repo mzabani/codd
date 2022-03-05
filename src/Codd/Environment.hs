@@ -41,7 +41,7 @@ import           UnliftIO.Environment           ( lookupEnv )
 data CoddSettings = CoddSettings
     { migsConnString   :: ConnectInfo
     -- ^ The Connection String which will be used to run migrations.
-    , sqlMigrations    :: Either [FilePath] [AddedSqlMigration]
+    , sqlMigrations    :: forall m . Either [FilePath] [AddedSqlMigration m]
     -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
     --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
     , onDiskHashes     :: Either FilePath DbHashes

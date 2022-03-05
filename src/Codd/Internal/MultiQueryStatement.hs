@@ -10,12 +10,10 @@ import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
 import           Codd.Types                     ( RetryPolicy )
-import           Control.Monad                  ( forM_
-                                                , void
+import           Control.Monad                  ( void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLogger )
-import qualified Data.List.NonEmpty            as NE
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
@@ -27,6 +25,7 @@ import qualified Database.PostgreSQL.Simple.Internal
 import qualified Database.PostgreSQL.Simple.Types
                                                as DB
 import           Prelude                 hiding ( takeWhile )
+import qualified Streaming.Prelude             as Streaming
 import           UnliftIO                       ( Exception
                                                 , MonadIO
                                                 , MonadUnliftIO
@@ -72,26 +71,29 @@ singleStatement_ conn sql = do
 data InTransaction = InTransaction | NotInTransaction RetryPolicy deriving stock (Eq)
 
 -- | A bit like singleStatement_, but following these criteria:
---   1. If already in a transaction, then this will only execute statements one-by-one only if there's at least one COPY FROM STDIN.. statement.
---   2. If not in a transaction, then this will execute statements one-by-one.
---   Also, statements are never retried if in a transaction, since exceptions force us to rollback the transaction anyway.
+--   1. If already in a transaction, then statements will be executed one-by-one.
+--   2. If not in a transaction, then statements will be executed one-by-one and
+--      will be retried according to the retry policy.
 multiQueryStatement_
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
   => InTransaction
   -> DB.Connection
-  -> ParsedSql
+  -> ParsedSql m
   -> m ()
 multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
-  (UnparsedSql t, InTransaction) -> singleStatement_ conn t
-  (UnparsedSql t, NotInTransaction retryPol) ->
+  (UnparsedSql _ t, InTransaction) -> singleStatement_ conn t
+  (UnparsedSql _ t, NotInTransaction retryPol) ->
     retry retryPol $ singleStatement_ conn t
-  (WellParsedSql _ stms, NotInTransaction retryPol) ->
-    forM_ stms $ \stm -> retry retryPol $ runSingleStatementInternal_ conn stm
-  (WellParsedSql t stms, InTransaction) -> if hasCopyFromStdin stms
-    then forM_ stms $ \stm -> runSingleStatementInternal_ conn stm
-    else singleStatement_ conn t
- where
-  hasCopyFromStdin xs = or [ True | CopyFromStdinPiece{} <- NE.toList xs ]
+  (WellParsedSql stms, NotInTransaction retryPol) ->
+    -- We retry individual statements in no-txn migrations
+    flip Streaming.mapM_ stms $ \stm -> do
+      liftIO $ print stm
+      retry retryPol $ runSingleStatementInternal_ conn stm
+  (WellParsedSql stms, InTransaction) ->
+    -- We don't retry individual statements in in-txn migrations
+                                         flip Streaming.mapM_ stms $ \stm -> do
+    liftIO $ print stm
+    runSingleStatementInternal_ conn stm
 
 runSingleStatementInternal_ :: MonadIO m => DB.Connection -> SqlPiece -> m ()
 runSingleStatementInternal_ _    (CommentPiece     _) = pure ()
@@ -106,6 +108,6 @@ runSingleStatementInternal_ conn (CopyFromStdinPiece copyStm copyData _terminato
   = liftIO $ do
     DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
     when (copyData /= "") $ do
-      DB.putCopyData conn $ encodeUtf8 $ copyData
+      DB.putCopyData conn $ encodeUtf8 copyData
       DB.putCopyData conn $ encodeUtf8 "\n"
     void $ DB.putCopyEnd conn

@@ -14,16 +14,20 @@ import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( streamingReadFile )
-import           Codd.Parsing                   ( ParsingOptions(..)
-                                                , parseSqlMigrationOpts
+import           Codd.Parsing                   ( ParsedSql(..)
+                                                , SqlMigration(..)
+                                                , parseSqlMigration
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
                                                 , unless
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( MonadLoggerIO )
+import           Control.Monad.Logger           ( MonadLoggerIO
+                                                , logErrorN
+                                                )
 import           Data.Maybe                     ( maybeToList )
+import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
 import           System.Exit                    ( ExitCode(..)
@@ -72,46 +76,54 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
       onDiskHashes
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
-    parsedSqlMigE <- runResourceT $ do
+    runResourceT $ do
       sqlMigContents <- streamingReadFile fp
-      parseSqlMigrationOpts (if noParse then NoParse else DoParse)
-                            (takeFileName fp)
-                            sqlMigContents
-    case parsedSqlMigE of
-      Left err ->
-        error $ "There was an error parsing this SQL Migration: " ++ show err
-      Right sqlMig -> do
-        migErrors <-
-          either (pure . (: []))
-                 (pure . maybeToList . transactionManagementProblem)
-            $ checkMigration sqlMig
+      parsedSqlMigE  <- parseSqlMigration (takeFileName fp) sqlMigContents
+      case parsedSqlMigE of
+        Left err ->
+          error
+            $  "There was a fatal error parsing this SQL Migration: "
+            ++ show err
+        Right sqlMig -> do
+          case migrationSql sqlMig of
+            Just (UnparsedSql parseError _) -> unless noParse $ do
+              logErrorN
+                "There was an error parsing this migration. If you want to consider it in-txn and without support for COPY, add it with the --no-parse option."
+              logErrorN "Also please report this as a bug."
+              logErrorN $ "Parsing error: " <> Text.pack parseError
+            _ -> pure ()
+          migCheck  <- checkMigration sqlMig
+          migErrors <- either
+            (pure . (: []))
+            (pure . maybeToList . transactionManagementProblem)
+            migCheck
 
-        when (migErrors /= []) $ liftIO $ do
-          forM_ migErrors (Text.hPutStrLn stderr)
-          exitWith (ExitFailure 1)
+          when (migErrors /= []) $ liftIO $ do
+            forM_ migErrors (Text.hPutStrLn stderr)
+            exitWith (ExitFailure 1)
 
-        bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
-                       moveMigrationBack
-          $ \finalMigFile -> do
-              unless dontApply $ do
-                -- Important, and we don't have a test for this:
-                -- fetch hashes in the same transaction as migrations
-                -- when possible, since that's what "up" does.
-                databaseChecksums <- Codd.applyMigrationsNoCheck
-                  dbInfo
-                  (secondsToDiffTime 5)
-                  (readHashesFromDatabaseWithSettings dbInfo)
-                persistHashesToDisk databaseChecksums onDiskHashesDir
+    bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
+                   moveMigrationBack
+      $ \finalMigFile -> do
+          unless dontApply $ do
+            -- Important, and we don't have a test for this:
+            -- fetch hashes in the same transaction as migrations
+            -- when possible, since that's what "up" does.
+            databaseChecksums <- Codd.applyMigrationsNoCheck
+              dbInfo
+              (secondsToDiffTime 5)
+              (readHashesFromDatabaseWithSettings dbInfo)
+            persistHashesToDisk databaseChecksums onDiskHashesDir
 
-                liftIO
-                  $  putStrLn
-                  $  "Migration applied and added to "
-                  <> finalMigFile
-              when dontApply
-                $  liftIO
-                $  putStrLn
-                $  "Migration was NOT applied, but was added to "
-                <> finalMigFile
+            liftIO
+              $  putStrLn
+              $  "Migration applied and added to "
+              <> finalMigFile
+          when dontApply
+            $  liftIO
+            $  putStrLn
+            $  "Migration was NOT applied, but was added to "
+            <> finalMigFile
 
  where
   moveMigrationBack :: FilePath -> m ()

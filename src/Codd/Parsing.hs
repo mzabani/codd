@@ -4,7 +4,6 @@ module Codd.Parsing
   , CoddCommentParseResult(..)
   , SqlPiece(..)
   , ParsedSql(..)
-  , ParsingOptions(..)
   , connStringParser
   , isTransactionEndingPiece
   , mapSqlMigration
@@ -13,7 +12,6 @@ module Codd.Parsing
   , sqlPieceText
   , parsedSqlText
   , parseSqlMigration
-  , parseSqlMigrationOpts
   , parseWithEscapeCharProper
   , parseAddedSqlMigration
   , parseMigrationTimestamp
@@ -49,6 +47,7 @@ import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
+import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -59,33 +58,36 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
-import           Debug.Trace
 import           Prelude                 hiding ( takeWhile )
-import qualified Prelude
 import           Streaming                      ( Of(..) )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 
 
-data ParsedSql = UnparsedSql !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
-  deriving stock (Eq, Show)
+data ParsedSql m =
+  UnparsedSql
+  !String
+  -- ^ The error when parsing
+  !Text
+  -- ^ The full file contents
+  | WellParsedSql (Stream (Of SqlPiece) m ())
 
-data SqlMigration = SqlMigration
+data SqlMigration m = SqlMigration
   { migrationName           :: FilePath
-  , migrationSql            :: Maybe ParsedSql
+  , migrationSql            :: Maybe (ParsedSql m)
   , migrationInTxn          :: Bool
   , migrationCustomConnInfo :: Maybe ConnectInfo
   }
-  deriving stock (Eq, Show)
 
-data AddedSqlMigration = AddedSqlMigration
-  { addedSqlMig       :: SqlMigration
+data AddedSqlMigration m = AddedSqlMigration
+  { addedSqlMig       :: SqlMigration m
   , addedSqlTimestamp :: DB.UTCTimestamp
   }
-  deriving stock Show
 
 mapSqlMigration
-  :: (SqlMigration -> SqlMigration) -> AddedSqlMigration -> AddedSqlMigration
+  :: (SqlMigration m -> SqlMigration m)
+  -> AddedSqlMigration m
+  -> AddedSqlMigration m
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
@@ -142,9 +144,10 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
       $  Streaming.filter (/= "") contents
       <> Streaming.each [""]
 
-parsedSqlText :: ParsedSql -> Text
-parsedSqlText (UnparsedSql t    ) = t
-parsedSqlText (WellParsedSql t _) = t
+parsedSqlText :: Monad m => ParsedSql m -> m Text
+parsedSqlText (UnparsedSql _ t) = pure t
+parsedSqlText (WellParsedSql s) =
+  Streaming.fold_ (<>) "" id $ Streaming.map sqlPieceText s
 
 sqlPieceText :: SqlPiece -> Text
 sqlPieceText (CommentPiece        s      ) = s
@@ -508,55 +511,63 @@ isTransactionEndingPiece _                       = False
 -- | Looks only at comments that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
+-- Also returns the consumed SqlPieces as the second in the pair.
 extractCoddOpts
-  :: [SqlPiece] -> Either String ([SectionOption], Maybe ConnectInfo)
-extractCoddOpts ps =
-  let
-    firstComments = filter isCommentPiece
-      $ Prelude.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
-    allOptSections = mapMaybe
-      ( (\case
-          Left  _    -> Nothing
-          Right opts -> Just opts
+  :: Monad m
+  => Stream (Of SqlPiece) m ()
+  -> m (Either String ([SectionOption], Maybe ConnectInfo), [SqlPiece])
+extractCoddOpts ps = do
+  consumedPieces <- Streaming.toList_
+    $ Streaming.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
+  let firstComments  = filter isCommentPiece consumedPieces
+      allOptSections = mapMaybe
+        ( (\case
+            Left  _    -> Nothing
+            Right opts -> Just opts
+          )
+        . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
         )
-      . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
-      )
-      firstComments
-    customConnString = mapMaybe
-      ( (\case
-          Left  _        -> Nothing
-          Right connInfo -> Just connInfo
+        firstComments
+      customConnString = mapMaybe
+        ( (\case
+            Left  _        -> Nothing
+            Right connInfo -> Just connInfo
+          )
+        . ( parseOnly (coddConnStringCommentParser <* endOfInput)
+          . sqlPieceText
+          )
         )
-      . (parseOnly (coddConnStringCommentParser <* endOfInput) . sqlPieceText)
-      )
-      firstComments
-    headMay []      = Nothing
-    headMay (x : _) = Just x
-  in
-    -- Urgh.. is there no better way of pattern matching the stuff below?
-    case (allOptSections, customConnString) of
-      (_ : _ : _, _) ->
-        Left
-          "There must be at most one '-- codd:' comment in the first lines of a migration"
-      (_, _ : _ : _) ->
-        Left
-          "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
-      _ -> case (headMay allOptSections, headMay customConnString) of
-        (Just (CoddCommentWithGibberish badOptions), _) ->
-          Left
-            $ "The options '"
-            <> Text.unpack badOptions
-            <> "' are invalid. Valid options are a comma-separated list of 'in-txn', 'no-txn', 'force'"
-        (_, Just (CoddCommentWithGibberish badConn)) ->
-          Left
-            $ "The connection string '"
-            <> Text.unpack badConn
-            <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
-        (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
-          Right (opts, Just conn)
-        (Just (CoddCommentSuccess opts), Nothing) -> Right (opts, Nothing)
-        (Nothing, Just (CoddCommentSuccess conn)) -> Right ([], Just conn)
-        (Nothing, Nothing) -> Right ([], Nothing)
+        firstComments
+      headMay []      = Nothing
+      headMay (x : _) = Just x
+  -- Urgh.. is there no better way of pattern matching the stuff below?
+  (, consumedPieces) <$> case (allOptSections, customConnString) of
+    (_ : _ : _, _) ->
+      pure
+        $ Left
+            "There must be at most one '-- codd:' comment in the first lines of a migration"
+    (_, _ : _ : _) ->
+      pure
+        $ Left
+            "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+    _ -> case (headMay allOptSections, headMay customConnString) of
+      (Just (CoddCommentWithGibberish badOptions), _) ->
+        pure
+          $  Left
+          $  "The options '"
+          <> Text.unpack badOptions
+          <> "' are invalid. Valid options are a comma-separated list of 'in-txn', 'no-txn', 'force'"
+      (_, Just (CoddCommentWithGibberish badConn)) ->
+        pure
+          $  Left
+          $  "The connection string '"
+          <> Text.unpack badConn
+          <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
+      (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
+        pure $ Right (opts, Just conn)
+      (Just (CoddCommentSuccess opts), Nothing) -> pure $ Right (opts, Nothing)
+      (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
+      (Nothing, Nothing) -> pure $ Right ([], Nothing)
 
 
 
@@ -566,25 +577,39 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 parseAndClassifyMigration
   :: Monad m
   => Stream (Of Text) m ()
-  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql))
+  -> m ([SectionOption], Maybe ConnectInfo, ParsedSql m)
 parseAndClassifyMigration t = do
-  sqlPieces :> () <- Streaming.toList $ parseSqlPiecesStreaming t
-  let text = piecesToText sqlPieces
-  case extractCoddOpts sqlPieces of
-    Left  err                   -> traceShow err $ pure $ Left err
-    Right (opts, customConnStr) -> case sqlPieces of
-      [] -> pure $ Left "Is this an empty migration?"
-      (x : xs) ->
-        pure $ Right (opts, customConnStr, WellParsedSql text $ x :| xs)
+  let sqlPiecesStream = parseSqlPiecesStreaming t
+  (eOpts, consumedPieces) <- extractCoddOpts sqlPiecesStream
+  case eOpts of
+    -- We'll have to put it all in memory if parsing failed at some point. We do that now.
+    Left err -> do
+      let consumedSql = mconcat $ map sqlPieceText consumedPieces
+      remainderOfFile <- Streaming.fold_ (<>) "" id
+        $ Streaming.map sqlPieceText sqlPiecesStream
+      pure ([], Nothing, UnparsedSql err $ consumedSql <> remainderOfFile)
+    Right (opts, customConnStr) ->
+      -- We wouldn't need to include white-space and comments here,
+      -- but this preserves the property that all written SQL is parsed
+      -- and run. It is a relatively nice invariant and mental model.
+                                   pure
+      ( opts
+      , customConnStr
+      , WellParsedSql $ Streaming.each consumedPieces <> sqlPiecesStream
+      )
 
 parseSqlMigration
-  :: Monad m => String -> Stream (Of Text) m () -> m (Either Text SqlMigration)
+  :: forall m
+   . Monad m
+  => String
+  -> Stream (Of Text) m ()
+  -> m (Either String (SqlMigration m))
 parseSqlMigration name t = do
-  migE <- parseAndClassifyMigration t
-  pure $ first Text.pack migE >>= toMig
+  mig <- parseAndClassifyMigration t
+  pure $ toMig mig
  where
   dupOpts opts = length (nub opts) < length opts
-  checkOpts :: [SectionOption] -> Maybe Text
+  checkOpts :: [SectionOption] -> Maybe String
   checkOpts opts
     | inTxn opts && noTxn opts = Just
       "Choose either in-txn, no-txn or leave blank for the default of in-txn"
@@ -593,7 +618,7 @@ parseSqlMigration name t = do
   inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
   noTxn opts = OptInTxn False `elem` opts
 
-  mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql) -> SqlMigration
+  mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql m) -> SqlMigration m
   mkMig (opts, customConnString, sql) = SqlMigration
     { migrationName           = name
     , migrationSql            = Just sql
@@ -602,46 +627,30 @@ parseSqlMigration name t = do
     }
 
   toMig
-    :: ([SectionOption], Maybe ConnectInfo, ParsedSql)
-    -> Either Text SqlMigration
+    :: ([SectionOption], Maybe ConnectInfo, ParsedSql m)
+    -> Either String (SqlMigration m)
   toMig x@(ops, _, _) = case checkOpts ops of
     Just err -> Left err
     _        -> Right $ mkMig x
 
-data ParsingOptions = NoParse | DoParse
-  deriving stock (Eq)
-
-parseSqlMigrationOpts
-  :: Monad m
-  => ParsingOptions
-  -> String
-  -> Stream (Of Text) m ()
-  -> m (Either Text SqlMigration)
-parseSqlMigrationOpts popts name sql = case popts of
-  NoParse -> do
-    fullSql :> () <- Streaming.fold (<>) "" id sql
-    pure $ Right $ SqlMigration name (Just $ UnparsedSql fullSql) True Nothing
-  _ -> parseSqlMigration name sql
-
 parseAddedSqlMigration
   :: Monad m
-  => ParsingOptions
-  -> String
+  => String
   -> Stream (Of Text) m ()
-  -> m (Either Text AddedSqlMigration)
-parseAddedSqlMigration popts name t = do
-  sqlMig <- parseSqlMigrationOpts popts name t
+  -> m (Either String (AddedSqlMigration m))
+parseAddedSqlMigration name t = do
+  sqlMig <- parseSqlMigration name t
   pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 
 -- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
 -- we find a way to remove it.
-nothingIfEmptyQuery :: Text -> Maybe ParsedSql
+nothingIfEmptyQuery :: Monad m => Text -> Maybe (ParsedSql m)
 nothingIfEmptyQuery t = case (parseSqlPieces t, t) of
   (Left  _  , "") -> Nothing
-  (Left  _  , _ ) -> Just $ UnparsedSql t
+  (Left  err, _ ) -> Just $ UnparsedSql err t
   (Right pcs, _ ) -> if all (\x -> isWhiteSpacePiece x || isCommentPiece x) pcs
     then Nothing
-    else Just (WellParsedSql t pcs)
+    else Just (WellParsedSql $ Streaming.each $ NE.toList pcs)
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
 -- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime
@@ -651,8 +660,8 @@ toMigrationTimestamp (UTCTime day diffTime) =
   let t = UTCTime day (fromInteger $ round diffTime) in (t, DB.Finite t)
 
 -- | Parses the UTC timestamp from a migration's name.
-parseMigrationTimestamp :: String -> Either Text DB.UTCTimestamp
-parseMigrationTimestamp name = first Text.pack $ parseOnly
+parseMigrationTimestamp :: String -> Either String DB.UTCTimestamp
+parseMigrationTimestamp name = parseOnly
   (migTimestampParser <|> fail
     ("Could not find migration timestamp from its name: '" <> name <> "'")
   )
