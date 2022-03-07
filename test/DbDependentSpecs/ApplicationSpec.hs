@@ -14,9 +14,9 @@ import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
 import           Codd.Internal                  ( CanUpdateCoddSchema(..)
-                                                , applyMigrationsInternal
                                                 , baseApplyMigsBlock
                                                 , beginCommitTxnBracket
+                                                , collectAndApplyMigrations
                                                 , withConnection
                                                 )
 import           Codd.Internal.MultiQueryStatement
@@ -247,7 +247,7 @@ spec = do
                                           (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
                                                   String) <-
                                               runStdoutLoggingT @IO
-                                                  $ applyMigrationsInternal
+                                                  $ collectAndApplyMigrations
                                                         (baseApplyMigsBlock
                                                             (migsConnString
                                                                 modifiedSettings

@@ -14,7 +14,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Internal.Retry            ( retry )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
-                                                
+
                                                 , SqlMigration(..)
                                                 , parseAddedSqlMigration, ParsedSql (UnparsedSql)
                                                 )
@@ -62,7 +62,6 @@ import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
 import           UnliftIO.Exception             ( IOException
                                                 , bracket
-                                                , catchAny
                                                 , handleJust
                                                 , onException
                                                 , throwIO
@@ -75,8 +74,6 @@ import qualified System.IO as IO
 import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release, MonadResource)
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 import UnliftIO.IO (openFile, IOMode (ReadMode))
-
-
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -95,7 +92,7 @@ withConnection connStr connectTimeout action = go connectTimeout
         case eitherConn of
             Left e -> if n <= 0
                 then throwIO e
-                else 
+                else
                     -- Retries every 100ms
                     threadDelay (1000 * 100) >> go (n - realToFrac @Double 0.1)
             Right conn -> action conn
@@ -182,13 +179,22 @@ checkNeedsBootstrapping connInfo connectTimeout =
     isLibPqError e =
         let err = Text.pack $ show e in "libpq: failed" `Text.isInfixOf` err
 
-applyMigrationsInternal
+data PendingMigrations m = PendingMigrations {
+    bootstrapMigs :: [BlockOfMigrations m]
+    -- ^ If the default connection string is inaccessible and therefore
+    -- custom-connection-string migrations need to run for the codd
+    -- schema to be created, the necessary bootstrap migrations will
+    -- be here.
+    , otherMigs :: [BlockOfMigrations m]
+}
+
+collectAndApplyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
-    => (CanUpdateCoddSchema -> [BlockOfMigrations m] -> m (ApplyMigsResult m a))
+    => ([BlockOfMigrations m] -> DB.Connection -> m a)
     -> CoddSettings
     -> DiffTime
     -> m a
-applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retryPolicy, sqlMigrations, txnIsolationLvl } connectTimeout
+collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl } connectTimeout
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         let waitTimeInSecs :: Double = realToFrac connectTimeout
@@ -198,39 +204,43 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
             <> "' is accessible with the configured connection string... (waiting up to "
             <> Text.pack (show @Int $ truncate waitTimeInSecs)
             <> "sec)"
-        needsBootstrapping <- checkNeedsBootstrapping migsConnString connectTimeout
 
-        if not needsBootstrapping
+        pendingMigs <- collectPendingMigrations migsConnString (Left sqlMigrations) txnIsolationLvl connectTimeout
+        applyCollectedMigrations lastAction settings pendingMigs connectTimeout
+
+applyCollectedMigrations
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+    => ([BlockOfMigrations m] -> DB.Connection -> m a)
+    -> CoddSettings
+    -> PendingMigrations m
+    -> DiffTime
+    -> m a
+applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } pendingMigs connectTimeout = do
+        let dbName = Text.pack $ DB.connectDatabase migsConnString
+            PendingMigrations bootstrapMigBlocks otherMigBlocks = pendingMigs
+            txnApp = baseApplyMigsBlock migsConnString
+                                    connectTimeout
+                                    retryPolicy
+                                    lastAction
+                                    txnIsolationLvl
+
+        if null bootstrapMigBlocks
             then do
                 logDebugN
                     "Checking if Codd Schema exists and creating it if necessary..."
 
-                liftIO $ void $ withConnection migsConnString connectTimeout $ \conn -> DB.query_ @(Int, Int) conn "SELECT 1, 2"
+                withConnection migsConnString connectTimeout $ createCoddSchema txnIsolationLvl
 
-                withConnection migsConnString connectTimeout $  createCoddSchema txnIsolationLvl
-
-                blocksOfMigsToRun <- collectPendingMigrations coddSettings connectTimeout
                 ApplyMigsResult _ actionAfterResult <- txnApp
                     CanUpdateCoddSchema
-                    blocksOfMigsToRun
+                    otherMigBlocks
 
-                logDebugN
+                logInfoN
                     $  "All migrations applied to "
                     <> dbName
                     <> " successfully"
                 return actionAfterResult
             else do
-                logWarnN
-                    "Default connection string is not accessible. Codd will run in bootstrap mode, expecting the first migrations will contain custom connection strings and will create/bootstrap the database."
-
-                (bootstrapMigBlocks, otherMigBlocks) <-
-                    collectBootstrapMigrations migsConnString sqlMigrations
-
-                when (null bootstrapMigBlocks) $ do
-                    logErrorN
-                        "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
-                    liftIO exitFailure
-
                 let applyBootstrapMigsFunc = baseApplyMigsBlock migsConnString connectTimeout retryPolicy (\_ _ -> pure ()) txnIsolationLvl CannotUpdateCoddSchema
                 ApplyMigsResult ranBootstrapMigs _ <- applyBootstrapMigsFunc bootstrapMigBlocks
                 stillNeedsBootstrapping <- checkNeedsBootstrapping migsConnString connectTimeout
@@ -267,9 +277,6 @@ applyMigrationsInternal txnApp coddSettings@CoddSettings { migsConnString, retry
 isSingleTrue :: [DB.Only Bool] -> Bool
 isSingleTrue v = v == [DB.Only True]
 
-_noErrors :: MonadUnliftIO m => m () -> m ()
-_noErrors f = catchAny f (const (pure ()))
-
 createCoddSchema :: (MonadUnliftIO m, MonadIO m) => TxnIsolationLvl -> DB.Connection -> m ()
 createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedError e then Just () else Nothing) go (\() -> throwIO $ userError "Not enough permissions to create codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions.")
     where
@@ -295,46 +302,65 @@ createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedEr
                    "GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
                    \GRANT USAGE ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
 
--- | Assumes no migrations have ever run and returns only the first blocks of migrations that contain
--- some custom connection string that do not connect to the default database, grouped by connection
--- string and in-txn/no-txn. Also returns as second element in the tuple all other migrations in their blocks.
-collectBootstrapMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+-- | Collects pending migrations and separates them according to being bootstrap
+--   or not. Also creates the codd_schema in some cases.
+-- TODO: Only check if codd_schema exists. If it doesn't, consider all migrations
+-- to be pending. Schema creation is very surprising in a function like this.
+collectPendingMigrations :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => DB.ConnectInfo
     -> Either [FilePath] [AddedSqlMigration m]
-    -> m ([BlockOfMigrations m], [BlockOfMigrations m])
-collectBootstrapMigrations defaultConnInfo sqlMigrations =
-    parseMigrationFiles [] sqlMigrations <&> span isBootstrapMigBlock
-    where
-        isBootstrapMigBlock (m1 :| _) = case migrationCustomConnInfo $ addedSqlMig m1 of
-            Nothing -> False
-            Just connInfo -> DB.connectDatabase defaultConnInfo /= DB.connectDatabase connInfo
-
-
--- | Parses on-disk migrations and checks for destructive SQL sections of migrations on the Database to collect which migrations must run,
--- grouped by in-txn/no-txn. The Database must already exist and Codd's schema must have been created.
-collectPendingMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
-    => CoddSettings
+    -> TxnIsolationLvl
     -> DiffTime
-    -> m [BlockOfMigrations m]
-collectPendingMigrations CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl } connectTimeout
-    = do
-        withConnection migsConnString connectTimeout $ \conn -> do
-            -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
-            logDebugN
-                "Checking in the Database which SQL migrations have already been applied..."
-            migsAlreadyApplied :: [FilePath] <-
-                liftIO
-                $   beginCommitTxnBracket txnIsolationLvl conn
-                $   map DB.fromOnly
-                <$> query
-                        conn
-                        "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
-                        ()
+    -> m (PendingMigrations m)
+collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connectTimeout = do
+    needsBootstrapping <- checkNeedsBootstrapping defaultConnString connectTimeout
 
-            logDebugN "Parse-checking all pending SQL Migrations..."
-            parseMigrationFiles migsAlreadyApplied sqlMigrations
+    if needsBootstrapping
+        then do
+            logWarnN
+                    "Default connection string is not accessible. Codd will run in bootstrap mode, expecting the first migrations will contain custom connection strings and will create/bootstrap the database."
+
+            (bootstrapMigBlocks, otherMigBlocks) <-
+                collectBootstrapMigrations
+
+            when (null bootstrapMigBlocks) $ do
+                logErrorN
+                    "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
+                liftIO exitFailure
+
+            pure $ PendingMigrations bootstrapMigBlocks otherMigBlocks
+        else do
+            logDebugN
+                "Checking if Codd Schema exists and creating it if necessary..."
+
+            withConnection defaultConnString connectTimeout $ createCoddSchema txnIsolationLvl
+
+            blocksOfMigsToRun <- collectOtherMigrations
+            pure $ PendingMigrations [] blocksOfMigsToRun
+    where
+        collectBootstrapMigrations =
+            parseMigrationFiles [] sqlMigrations <&> span isBootstrapMigBlock
+            where
+                isBootstrapMigBlock (m1 :| _) = case migrationCustomConnInfo $ addedSqlMig m1 of
+                    Nothing -> False
+                    Just connInfo -> DB.connectDatabase defaultConnString /= DB.connectDatabase connInfo
+
+        collectOtherMigrations = do
+                withConnection defaultConnString connectTimeout $ \conn -> do
+                    -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
+                    logDebugN
+                        "Checking in the Database which SQL migrations have already been applied..."
+                    migsAlreadyApplied :: [FilePath] <-
+                        liftIO
+                        $   beginCommitTxnBracket txnIsolationLvl conn
+                        $   map DB.fromOnly
+                        <$> query
+                                conn
+                                "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
+                                ()
+
+                    logDebugN "Parse-checking all pending SQL Migrations..."
+                    parseMigrationFiles migsAlreadyApplied sqlMigrations
 
 -- | Streams a UTF-8 file.
 -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
@@ -374,11 +400,11 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                                 `notElem`         migsCompleted
                         )
                         filesInDir
-            
+
             sqlMigrationsContents :: [(FilePath, Stream (Of Text) m ())] <-
                 pendingSqlMigrationFiles
                 `forM` (\(fn, fp) -> (,) fn <$> streamingReadFile fp)
-            
+
             forM sqlMigrationsContents $ \(fn, sqlStream) -> do
                     parsedMig <- parseAddedSqlMigration fn sqlStream
                     case parsedMig of
@@ -493,25 +519,25 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl c
                                                 pure $ getAfterMigRunFunc defaultConn (blockInTxn block)
                                             _ ->
                                                 pure $ \_ _ -> DB.fromOnly <$> unsafeQuery1 conn "SELECT now()" ()
-                                            
+
 
                                 ApplyMigsResult newMigs () <- lift $ runBlock
                                                                         (const (pure ()))
                                                                         conn
                                                                         block
                                                                         runAfterMig
-                                
+
                                 case mDefaultConn of
                                     Nothing -> pure $ appliedMigs ++ [ (am, t, MigrationNotRegistered) | (am, t) <- newMigs ]
                                     Just _ -> pure $ [ (am, t, MigrationRegistered) | (am, t, _) <- appliedMigs ] ++ [ (am, t, MigrationRegistered) | (am, t) <- newMigs]
                         ) ([] :: [(AddedSqlMigration m, UTCTime, MigrationRegistered)]) blocksOfMigs
-                  
+
                   -- Register any unregistered migrations and run "actionAfter"
                   (releaseDefaultConn, defaultConn) <- openConn defaultConnInfo
                   lift $ registerPendingMigrations defaultConn appliedMigs
                   actAfterResult <- lift (actionAfter blocksOfMigs defaultConn)
                   release releaseDefaultConn
-                  
+
                   pure $ ApplyMigsResult (map (\(am, t, _) -> (am, t)) appliedMigs) actAfterResult
 
   where

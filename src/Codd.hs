@@ -11,8 +11,7 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes
                                                 , readHashesFromDisk
                                                 )
-import           Codd.Internal                  ( applyMigrationsInternal
-                                                , baseApplyMigsBlock
+import           Codd.Internal                  ( collectAndApplyMigrations
                                                 , laxCheckLastAction
                                                 , strictCheckLastAction
                                                 )
@@ -34,7 +33,7 @@ data ChecksumsPair = ChecksumsPair
     }
 data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | ChecksumsNotVerified
 
--- | Creates the new Database if it doesn't yet exist and applies every single migration, returning
+-- | Collects pending migrations from disk and applies them all, returning
 -- the Database's checksums if they're not the ones expected or a success result otherwise.
 -- Throws an exception if a migration fails or if checksums mismatch and strict-checking is enabled.
 applyMigrations
@@ -43,29 +42,19 @@ applyMigrations
     -> DiffTime
     -> CheckHashes
     -> m ApplyResult
-applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy, txnIsolationLvl } connectTimeout checkHashes
+applyMigrations dbInfo@CoddSettings { onDiskHashes } connectTimeout checkHashes
     = case checkHashes of
         StrictCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
-            runResourceT $ applyMigrationsInternal
-                (baseApplyMigsBlock migsConnString
-                                    connectTimeout
-                                    retryPolicy
-                                    (strictCheckLastAction dbInfo eh)
-                                    txnIsolationLvl
-                )
+            runResourceT $ collectAndApplyMigrations
+                (strictCheckLastAction dbInfo eh)
                 dbInfo
                 connectTimeout
             pure $ ChecksumsMatch eh
         LaxCheck -> do
             eh       <- either readHashesFromDisk pure onDiskHashes
-            dbCksums <- runResourceT $ applyMigrationsInternal
-                (baseApplyMigsBlock migsConnString
-                                    connectTimeout
-                                    retryPolicy
-                                    (laxCheckLastAction dbInfo eh)
-                                    txnIsolationLvl
-                )
+            dbCksums <- runResourceT $ collectAndApplyMigrations
+                (laxCheckLastAction dbInfo eh)
                 dbInfo
                 connectTimeout
 
@@ -76,7 +65,7 @@ applyMigrations dbInfo@CoddSettings { migsConnString, onDiskHashes, retryPolicy,
                     }
                 else pure $ ChecksumsMatch eh
 
--- | Creates the new Database if it doesn't yet exist and applies every single migration.
+-- | Collects pending migrations from disk and applies them all.
 -- Does not verify checksums but allows a function that runs in the same transaction as the last migrations
 -- iff all migrations are in-txn or separately after the last migration and not in an explicit transaction
 -- otherwise.
@@ -87,14 +76,9 @@ applyMigrationsNoCheck
     -> DiffTime
     -> (DB.Connection -> m a)
     -> m a
-applyMigrationsNoCheck dbInfo@CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } connectTimeout finalFunc
-    = runResourceT $ applyMigrationsInternal
-        (baseApplyMigsBlock migsConnString
-                            connectTimeout
-                            retryPolicy
-                            (\_migBlocks conn -> lift $ finalFunc conn)
-                            txnIsolationLvl
-        )
+applyMigrationsNoCheck dbInfo connectTimeout finalFunc =
+    runResourceT $ collectAndApplyMigrations
+        (\_migBlocks conn -> lift $ finalFunc conn)
         dbInfo
         connectTimeout
 

@@ -30,8 +30,7 @@ verifyChecksums
   :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> m ()
 verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes, migsConnString } fromStdin
   = do
-    let dbInfoDontApplyAnything =
-          dbInfoWithAllMigs { sqlMigrations = Right [] }
+    let dbInfoDontApplyAnything = dbInfoWithAllMigs { sqlMigrations = [] }
     expectedChecksums :: DbHashes <- if fromStdin
       then do
         liftIO $ hSetBinaryMode stdin True

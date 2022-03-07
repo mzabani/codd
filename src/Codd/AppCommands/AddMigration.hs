@@ -62,12 +62,10 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
   = do
     finalDir <- case (destFolder, sqlMigrations) of
       (Just f, _) -> pure f
-      (Nothing, Left []) ->
+      (Nothing, []) ->
         error
           "Please specify '--dest-folder' or add at least one path to the CODD_MIGRATION_DIRS environment variable."
-      (Nothing, Left (f : _)) -> pure f
-      (Nothing, Right _) ->
-        error "This is a bug in the add command. Please report it."
+      (Nothing, f : _) -> pure f
     onDiskHashesDir <- either
       pure
       (error
