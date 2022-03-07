@@ -166,9 +166,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         in
             HashQuery
                 { objNameCol    = "datname"
-                , checksumCols  = [ "pg_encoding_to_char(encoding)"
-                                  , "datcollate"
-                                  , "datctype"
+                , checksumCols  = [ "LOWER(pg_encoding_to_char(encoding))"
+                                  , "LOWER(datcollate)"
+                                  , "LOWER(datctype)"
                                   , sortArrayExpr
                                   $  "ARRAY_AGG("
                                   <> safeStringConcat
@@ -555,9 +555,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
         { objNameCol    = "collname"
         , checksumCols  =
             [ "collprovider"
-                , "pg_catalog.pg_encoding_to_char(pg_collation.collencoding)"
-                , "collcollate"
-                , "collctype"
+                , "LOWER(pg_catalog.pg_encoding_to_char(pg_collation.collencoding))"
+                , "LOWER(collcollate)"
+                , "LOWER(collctype)"
                 , "coll_owner_role.rolname"
                 ]
                 ++ if strictCollations checksumAlgo
