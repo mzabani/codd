@@ -101,7 +101,7 @@ migrationsAndHashChange = zipWith
         (let mig = either
                (error "Could not parse SQL migration")
                id
-               (parseSqlMigration "1900-01-01T00:00:00Z-migration.sql" doSql)
+               (parseSqlMigration "1900-01-01-00-00-00-migration.sql" doSql)
          in  mig { migrationName = show i <> "-migration.sql" }
         )
         (getIncreasingTimestamp i)
@@ -988,7 +988,7 @@ spec = do
                 (error "Could not parse SQL migration")
                 id
                 (parseSqlMigration
-                  "1900-01-01T00:00:00Z-create-coll.sql"
+                  "1900-01-01-00-00-00-create-coll.sql"
                   "CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
                 )
               )
@@ -1019,7 +1019,7 @@ spec = do
                 (error "Could not parse SQL migration")
                 id
                 (parseSqlMigration
-                  "1900-01-01T00:00:00Z-create-range-and-other-function.sql"
+                  "1900-01-01-00-00-00-create-range-and-other-function.sql"
                   "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi); \
                \\n CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
                 )
@@ -1056,7 +1056,7 @@ spec = do
                 (error "Could not parse SQL migration")
                 id
                 (parseSqlMigration
-                  "1900-01-01T00:00:00Z-ignore-col-order-1.sql"
+                  "1900-01-01-00-00-00-ignore-col-order-1.sql"
                   "CREATE TABLE othertbl(col2 INT PRIMARY KEY);\
                     \CREATE TABLE tbl(col1 INT, col2 SERIAL PRIMARY KEY CHECK (col2 > 0) REFERENCES othertbl(col2));\
                     \CREATE UNIQUE INDEX someidx ON tbl(col2);"
@@ -1081,7 +1081,7 @@ spec = do
                   (error "Could not parse SQL migration 2")
                   id
                   (parseSqlMigration
-                    "1900-01-01T00:00:01Z-ignore-col-order-2.sql"
+                    "1900-01-01-00-00-01-ignore-col-order-2.sql"
                     "ALTER TABLE tbl DROP COLUMN col1;"
                   )
                 )
