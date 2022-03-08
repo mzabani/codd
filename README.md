@@ -12,7 +12,7 @@ $ cat create-animals-table.sql
 CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
 INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
 $ codd add create-animals-table.sql
-Migration applied and added to sql-migrations/all/2022-02-27T23:14:50Z-create-animals-table.sql
+Migration applied and added to sql-migrations/all/2022-02-27-23-14-50-create-animals-table.sql
 $ psql -c "SELECT popular_name FROM animals"
  popular_name
 --------------
@@ -49,8 +49,8 @@ $ codd up
 [Debug] Checking in the Database which SQL migrations have already been applied...
 [Debug] Parse-checking all pending SQL Migrations...
 [Debug] BEGINning transaction
-[Debug] Applying 2022-02-27T23:14:50Z-create-animals-table.sql
-[Debug] Applying 2022-02-27T23:30:41Z-create-people-table.sql
+[Debug] Applying 2022-02-27-23-14-50-create-animals-table.sql
+[Debug] Applying 2022-02-27-23-30-41-create-people-table.sql
 [Info] Database and expected schemas match.
 [Debug] COMMITed transaction
 [Debug] All migrations applied to codd-experiments successfully
