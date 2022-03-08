@@ -1,12 +1,10 @@
 module ParsingSpec where
 
 import           Codd.Parsing                   ( ParsedSql(..)
-                                                , ParsingOptions(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
                                                 , nothingIfEmptyQuery
                                                 , parseSqlMigration
-                                                , parseSqlMigrationOpts
                                                 , parseSqlPieces
                                                 , piecesToText
                                                 , sqlPieceText
@@ -16,6 +14,7 @@ import           Control.Monad                  ( forM_
                                                 )
 import qualified Data.Char                     as Char
 import           Data.Either                    ( isLeft )
+import qualified Data.List                     as List
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( fromMaybe
@@ -25,6 +24,7 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           DbUtils                        ( mkValidSql )
 import           EnvironmentSpec                ( ConnStringGen(..) )
+import qualified Streaming.Prelude             as Streaming
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
@@ -36,9 +36,6 @@ newtype SyntacticallyValidRandomSql = SyntacticallyValidRandomSql {unSyntRandomS
 
 genSingleSqlStatement :: Gen SqlPiece
 genSingleSqlStatement = elements validSqlStatements
-
-piecesToParsedSql :: NonEmpty SqlPiece -> ParsedSql
-piecesToParsedSql pcs = WellParsedSql (piecesToText pcs) pcs
 
 validSqlStatements :: [SqlPiece]
 validSqlStatements =
@@ -237,7 +234,8 @@ spec = do
       context "Valid SQL Migrations" $ do
         it "Plain Sql Migration, missing optional options" $ do
           property $ \(unSyntRandomSql -> plainSql) -> do
-            let parsedMig = parseSqlMigration "any-name.sql" plainSql
+            parsedMig <- parseSqlMigration "any-name.sql"
+              $ Streaming.each [plainSql]
             parsedMig `shouldBe` Right SqlMigration
               { migrationName           = "any-name.sql"
               , migrationSql            = Just $ mkValidSql plainSql
@@ -246,12 +244,13 @@ spec = do
               }
         it "Sql Migration options parsed correctly"
           $ let sql = "-- codd: no-txn\nSOME SQL"
-            in  parseSqlMigration "any-name.sql" sql `shouldBe` Right
-                  SqlMigration { migrationName           = "any-name.sql"
-                               , migrationSql            = Just $ mkValidSql sql
-                               , migrationInTxn          = False
-                               , migrationCustomConnInfo = Nothing
-                               }
+            in  parseSqlMigration "any-name.sql" (Streaming.each [sql])
+                  `shouldReturn` Right SqlMigration
+                                   { migrationName           = "any-name.sql"
+                                   , migrationSql = Just $ mkValidSql sql
+                                   , migrationInTxn          = False
+                                   , migrationCustomConnInfo = Nothing
+                                   }
 
         it "Sql Migration connection and custom options"
           $ property
@@ -267,19 +266,21 @@ spec = do
                     <> connStr
                     <> "\n-- codd: in-txn\n"
                     <> "SOME SQL"
-              parseSqlMigration "any-name.sql" sql1 `shouldBe` Right
-                SqlMigration { migrationName           = "any-name.sql"
-                             , migrationSql            = Just $ mkValidSql sql1
-                             , migrationInTxn          = False
-                             , migrationCustomConnInfo = Just connInfo
-                             }
+              parseSqlMigration "any-name.sql" (Streaming.each [sql1])
+                `shouldReturn` Right SqlMigration
+                                 { migrationName           = "any-name.sql"
+                                 , migrationSql = Just $ mkValidSql sql1
+                                 , migrationInTxn          = False
+                                 , migrationCustomConnInfo = Just connInfo
+                                 }
 
-              parseSqlMigration "any-name.sql" sql2 `shouldBe` Right
-                SqlMigration { migrationName           = "any-name.sql"
-                             , migrationSql            = Just $ mkValidSql sql2
-                             , migrationInTxn          = True
-                             , migrationCustomConnInfo = Just connInfo
-                             }
+              parseSqlMigration "any-name.sql" (Streaming.each [sql2])
+                `shouldReturn` Right SqlMigration
+                                 { migrationName           = "any-name.sql"
+                                 , migrationSql = Just $ mkValidSql sql2
+                                 , migrationInTxn          = True
+                                 , migrationCustomConnInfo = Just connInfo
+                                 }
 
         it "Sql Migration connection option alone"
           $ property
@@ -289,12 +290,13 @@ spec = do
                   "-- random comment\n-- codd-connection: "
                     <> connStr
                     <> "\nSOME SQL"
-              in  parseSqlMigration "any-name.sql" sql `shouldBe` Right
-                    SqlMigration { migrationName           = "any-name.sql"
-                                 , migrationSql = Just $ mkValidSql sql
-                                 , migrationInTxn          = True
-                                 , migrationCustomConnInfo = Just connInfo
-                                 }
+              in  parseSqlMigration "any-name.sql" (Streaming.each [sql])
+                    `shouldReturn` Right SqlMigration
+                                     { migrationName           = "any-name.sql"
+                                     , migrationSql = Just $ mkValidSql sql
+                                     , migrationInTxn          = True
+                                     , migrationCustomConnInfo = Just connInfo
+                                     }
 
 
         it "in-txn and no-txn are mutually exclusive"
@@ -305,15 +307,16 @@ spec = do
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
         property $ \(unRandomSql -> anyText) -> do
-          parseSqlMigration "any-name.sql" anyText
-            `shouldSatisfy` \p -> seq p True
+          parseSqlMigration "any-name.sql" (Streaming.each [anyText])
+            >>= (`shouldSatisfy` (`seq` True))
 
-      it "Gibberish after -- codd:"
-        $ let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
-          in
-            parseSqlMigration "any-name.sql" sql `shouldSatisfy` \(Left err) ->
-                                                                      -- Error message is specific about what is wrong
-              "complete gibberish" `Text.isInfixOf` err
+      it "Gibberish after -- codd:" $ do
+        let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
+        parseSqlMigration "any-name.sql" sql
+          `shouldReturn` (\(Left err) ->
+                          -- Error message is specific about what is wrong
+                           "complete gibberish" `List.isInfixOf` err
+                         )
 
       it "Duplicate options"
         $ let sql = "-- codd: in-txn, in-txn\n" <> "ANY SQL HERE"
@@ -346,16 +349,16 @@ spec = do
           in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
 
       it "--no-parse forcefully returns a SqlMigration"
-        $          parseSqlMigrationOpts NoParse
-                                         "failed-parsing-migration.sql"
+        $              parseSqlMigration "failed-parsing-migration.sql"
                                          "-- SQL with comments only!"
-        `shouldBe` Right SqlMigration
-                     { migrationName           = "failed-parsing-migration.sql"
-                     , migrationSql            = Just
-                       $ UnparsedSql "-- SQL with comments only!"
-                     , migrationInTxn          = True
-                     , migrationCustomConnInfo = Nothing
-                     }
+        `shouldReturn` Right SqlMigration
+                         { migrationName = "failed-parsing-migration.sql"
+                         , migrationSql            = Just $ UnparsedSql
+                           "-- SQL with comments only!"
+                           "ERROR-MESSAGE-FOR-MIGRATION-WITH-NO-SQL-HERE"
+                         , migrationInTxn          = True
+                         , migrationCustomConnInfo = Nothing
+                         }
 
       it "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith
@@ -403,5 +406,5 @@ spec = do
           $ \q -> (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
         forM_ (nonEmptyQueries ++ map sqlPieceText validSqlStatements) $ \q ->
           nothingIfEmptyQuery q `shouldSatisfy` \case
-            Just (WellParsedSql _ _) -> True
-            _                        -> False
+            Just (WellParsedSql _) -> True
+            _                      -> False

@@ -192,9 +192,11 @@ collectAndApplyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
     => ([BlockOfMigrations m] -> DB.Connection -> m a)
     -> CoddSettings
+    -> Maybe [AddedSqlMigration m]
+    -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
     -> DiffTime
     -> m a
-collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl } connectTimeout
+collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sqlMigrations, txnIsolationLvl } mOverrideMigs connectTimeout
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         let waitTimeInSecs :: Double = realToFrac connectTimeout
@@ -205,7 +207,8 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
             <> Text.pack (show @Int $ truncate waitTimeInSecs)
             <> "sec)"
 
-        pendingMigs <- collectPendingMigrations migsConnString (Left sqlMigrations) txnIsolationLvl connectTimeout
+        let migsToUse = maybe (Left sqlMigrations) Right mOverrideMigs
+        pendingMigs <- collectPendingMigrations migsConnString migsToUse txnIsolationLvl connectTimeout
         applyCollectedMigrations lastAction settings pendingMigs connectTimeout
 
 applyCollectedMigrations

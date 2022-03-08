@@ -5,6 +5,7 @@ module Codd.Parsing
   , SqlPiece(..)
   , ParsedSql(..)
   , connStringParser
+  , hoistAddedSqlMigration
   , isTransactionEndingPiece
   , mapSqlMigration
   , nothingIfEmptyQuery
@@ -59,7 +60,9 @@ import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Prelude                 hiding ( takeWhile )
-import           Streaming                      ( Of(..) )
+import           Streaming                      ( MFunctor(hoist)
+                                                , Of(..)
+                                                )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 
@@ -83,6 +86,20 @@ data AddedSqlMigration m = AddedSqlMigration
   { addedSqlMig       :: SqlMigration m
   , addedSqlTimestamp :: DB.UTCTimestamp
   }
+
+-- TODO: This should probably not be in Parsing.hs
+hoistAddedSqlMigration
+  :: (Monad m, Monad n)
+  => (forall x . m x -> n x)
+  -> AddedSqlMigration m
+  -> AddedSqlMigration n
+hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) = AddedSqlMigration
+  (hoistSqlMig sqlMig)
+  tst
+ where
+  hoistSqlMig mig = mig { migrationSql = hoistParsedSql <$> migrationSql mig }
+  hoistParsedSql (UnparsedSql err t   ) = UnparsedSql err t
+  hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
 mapSqlMigration
   :: (SqlMigration m -> SqlMigration m)

@@ -4,7 +4,10 @@ import           Codd                           ( applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( dbIdentifier
+import           Codd.Internal                  ( PendingMigrations
+                                                , applyCollectedMigrations
+                                                , collectPendingMigrations
+                                                , dbIdentifier
                                                 , withConnection
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
@@ -23,7 +26,8 @@ import           Codd.Types                     ( ChecksumAlgo(..)
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Control.Monad.Logger           ( MonadLogger
+import           Control.Monad.Logger           ( LoggingT
+                                                , MonadLogger
                                                 , runStdoutLoggingT
                                                 )
 import           Data.String                    ( fromString )
@@ -50,6 +54,9 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , liftIO
                                                 )
 import           UnliftIO.Environment           ( getEnv )
+import           UnliftIO.Resource              ( ResourceT
+                                                , runResourceT
+                                                )
 
 testConnInfo :: MonadIO m => m ConnectInfo
 testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
@@ -79,17 +86,26 @@ mkValidSql t = case parseSqlPieces t of
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
-withDbAndDrop
+withCoddDbAndDrop
     :: (MonadUnliftIO m, MonadLogger m)
-    => CoddSettings
+    => [AddedSqlMigration m]
     -> (ConnectInfo -> m a)
     -> m a
-withDbAndDrop dbInfo@CoddSettings { migsConnString } f = bracket
-    (applyMigrationsNoCheck dbInfo testConnTimeout (const $ pure ()))
-    dropDb
-    (const $ f migsConnString)
+withCoddDbAndDrop migs f = do
+    coddSettings@CoddSettings { migsConnString, txnIsolationLvl } <-
+        testCoddSettings
+    bracket
+        (do
+            bootstrapMig <- createTestUserMig
+            applyMigrationsNoCheck coddSettings
+                                   (Just $ bootstrapMig : migs)
+                                   testConnTimeout
+                                   (const $ pure ())
+        )
+        (dropDb migsConnString)
+        (const $ f migsConnString)
   where
-    dropDb _ = do
+    dropDb migsConnString _ = do
         withConnection
                 migsConnString { connectDatabase = "postgres"
                                , connectUser     = "postgres"
@@ -125,7 +141,8 @@ finallyDrop dbName f = f `finally` dropDb
 createTestUserMig :: MonadIO m => m (AddedSqlMigration m)
 createTestUserMig = do
     let migTimestamp = getIncreasingTimestamp (-1000)
-    connInfo <- testConnInfo
+    cinfo <- testConnInfo
+
     pure $ AddedSqlMigration
         SqlMigration
             { migrationName           = "bootstrap-test-db-and-user.sql"
@@ -144,7 +161,7 @@ createTestUserMig = do
                 <> "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
             , migrationInTxn          = False
 -- A custom connection string is necessary because the DB doesn't yet exist
-            , migrationCustomConnInfo = Just connInfo
+            , migrationCustomConnInfo = Just cinfo
                                             { connectUser     = "postgres"
                                             , connectDatabase = "postgres"
                                             }
@@ -176,14 +193,24 @@ aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 
 aroundDatabaseWithMigs
-    :: [AddedSqlMigration m] -> SpecWith CoddSettings -> Spec
+    :: (forall m . Monad m => [AddedSqlMigration m])
+    -> SpecWith CoddSettings
+    -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
-    coddSettings@CoddSettings { migsConnString } <- testCoddSettings
+    coddSettings@CoddSettings { migsConnString, txnIsolationLvl } <-
+        testCoddSettings
+    connInfo <- testConnInfo
 
+    -- TODO: Reuse withCoddDbAndDrop!
     runStdoutLoggingT
-        $ (applyMigrationsNoCheck coddSettings testConnTimeout (const $ pure ())
-          >> liftIO (act coddSettings)
-          )
+            (do
+                bootstrapMig <- createTestUserMig
+                applyMigrationsNoCheck coddSettings
+                                       (Just $ bootstrapMig : startingMigs)
+                                       testConnTimeout
+                                       (const $ pure ())
+                liftIO (act coddSettings)
+            )
         `finally` withConnection
                       migsConnString { connectUser     = "postgres"
                                      , connectDatabase = "postgres"

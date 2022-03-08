@@ -15,6 +15,9 @@ import           Codd.Internal                  ( collectAndApplyMigrations
                                                 , laxCheckLastAction
                                                 , strictCheckLastAction
                                                 )
+import           Codd.Parsing                   ( AddedSqlMigration
+                                                , hoistAddedSqlMigration
+                                                )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
@@ -39,16 +42,19 @@ data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | Che
 applyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
+    -> Maybe [AddedSqlMigration m]
+    -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
     -> DiffTime
     -> CheckHashes
     -> m ApplyResult
-applyMigrations dbInfo@CoddSettings { onDiskHashes } connectTimeout checkHashes
+applyMigrations dbInfo@CoddSettings { onDiskHashes } mOverrideMigs connectTimeout checkHashes
     = case checkHashes of
         StrictCheck -> do
             eh <- either readHashesFromDisk pure onDiskHashes
             runResourceT $ collectAndApplyMigrations
                 (strictCheckLastAction dbInfo eh)
                 dbInfo
+                (map (hoistAddedSqlMigration lift) <$> mOverrideMigs)
                 connectTimeout
             pure $ ChecksumsMatch eh
         LaxCheck -> do
@@ -56,6 +62,7 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes } connectTimeout checkHashes
             dbCksums <- runResourceT $ collectAndApplyMigrations
                 (laxCheckLastAction dbInfo eh)
                 dbInfo
+                (map (hoistAddedSqlMigration lift) <$> mOverrideMigs)
                 connectTimeout
 
             if dbCksums /= eh
@@ -73,12 +80,14 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes } connectTimeout checkHashes
 applyMigrationsNoCheck
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
     => CoddSettings
+    -> Maybe [AddedSqlMigration m]
+    -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
     -> DiffTime
     -> (DB.Connection -> m a)
     -> m a
-applyMigrationsNoCheck dbInfo connectTimeout finalFunc =
+applyMigrationsNoCheck dbInfo mOverrideMigs connectTimeout finalFunc =
     runResourceT $ collectAndApplyMigrations
         (\_migBlocks conn -> lift $ finalFunc conn)
         dbInfo
+        (map (hoistAddedSqlMigration lift) <$> mOverrideMigs)
         connectTimeout
-

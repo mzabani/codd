@@ -31,12 +31,12 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , shouldBeStrictlySortedOn
                                                 , testCoddSettings
                                                 , testConnTimeout
-                                                , withDbAndDrop
+                                                , withCoddDbAndDrop
                                                 )
 import           Test.Hspec
 import           UnliftIO.Concurrent            ( threadDelay )
 
-timestampsMig, lotsOfObjectsMigration :: AddedSqlMigration
+timestampsMig, lotsOfObjectsMigration :: Monad m => AddedSqlMigration m
 timestampsMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-create-timestamps-table.sql"
@@ -65,7 +65,6 @@ lotsOfObjectsMigration = AddedSqlMigration
 
 spec :: Spec
 spec = do
-    let mkDbInfo baseDbInfo migs = baseDbInfo { sqlMigrations = Right migs }
     describe "DbDependentSpecs" $ do
         describe "Invariants tests" $ do
             aroundDatabaseWithMigs [timestampsMig]
@@ -157,15 +156,15 @@ spec = do
             it "Timing does not affect hashing" $ do
                     -- One possible impurity is the time certain objects are added to the Database. So we apply our migrations with a few seconds
                     -- in between and check the hashes match
-                dbInfo    <- testCoddSettings [lotsOfObjectsMigration]
-                dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
-                    dbInfo
+                dbInfo    <- testCoddSettings
+                dbHashes1 <- runStdoutLoggingT $ withCoddDbAndDrop
+                    [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readHashesFromDatabaseWithSettings dbInfo
                     )
                 threadDelay (5 * 1000 * 1000)
-                dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
-                    dbInfo
+                dbHashes2 <- runStdoutLoggingT $ withCoddDbAndDrop
+                    [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readHashesFromDatabaseWithSettings dbInfo
                     )

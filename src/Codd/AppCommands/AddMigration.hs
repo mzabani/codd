@@ -109,6 +109,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
             -- when possible, since that's what "up" does.
             databaseChecksums <- Codd.applyMigrationsNoCheck
               dbInfo
+              Nothing
               (secondsToDiffTime 5)
               (readHashesFromDatabaseWithSettings dbInfo)
             persistHashesToDisk databaseChecksums onDiskHashesDir

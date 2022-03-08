@@ -117,6 +117,7 @@ tests:
     - hspec-expectations
     - mtl
     - QuickCheck
+    - resourcet
     - streaming
     - time
     - unliftio

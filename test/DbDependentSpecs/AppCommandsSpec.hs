@@ -39,7 +39,7 @@ import           Test.Hspec                     ( Spec
 import           UnliftIO                       ( IOException )
 
 
-migThatWontRun :: AddedSqlMigration
+migThatWontRun :: Monad m => AddedSqlMigration m
 migThatWontRun = AddedSqlMigration
     SqlMigration
         { migrationName           = "create-things.sql"
@@ -55,7 +55,7 @@ migThatWontRun = AddedSqlMigration
 
 doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
-    vanillaTestSettings <- testCoddSettings []
+    vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
             , sqlMigrations  = Right [migThatWontRun]

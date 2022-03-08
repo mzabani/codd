@@ -7,7 +7,8 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
-import           Control.Monad                  ( forM_
+import           Control.Monad                  ( (>=>)
+                                                , forM_
                                                 , void
                                                 , when
                                                 )
@@ -22,7 +23,8 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 )
 import           Test.Hspec
 
-createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
+createTableMig, addColumnMig, dropColumnMig, dropTableMig
+    :: Monad m => AddedSqlMigration m
 createTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-create-table.sql"
                  , migrationSql = Just $ mkValidSql "CREATE TABLE anytable ();"
@@ -58,7 +60,6 @@ dropTableMig = AddedSqlMigration
 
 spec :: Spec
 spec = do
-    let mkDbInfo baseDbInfo migs = baseDbInfo { sqlMigrations = Right migs }
     describe "DbDependentSpecs"
         $ describe "Analysis tests"
         $ context "Transaction modifying migrations"
@@ -90,15 +91,21 @@ spec = do
                                 , "BEGIN; BEGIN; SELECT 1; COMMIT"
                                 ]
 
-                        forM_ badMigs $ \mig ->
-                            checkMigration mig `shouldSatisfy` \case
-                                Right (MigrationCheck (Just _)) -> True
-                                _                               -> False
+                        forM_
+                            badMigs
+                            (   checkMigration
+                            >=> (`shouldSatisfy` \case
+                                    Right (MigrationCheck (Just _)) -> True
+                                    _                               -> False
+                                )
+                            )
 
-                        forM_ goodMigs $ \mig ->
-                            checkMigration mig `shouldSatisfy` \case
-                                Right (MigrationCheck Nothing) -> True
-                                _                              -> False
+                        forM_ goodMigs
+                            $   checkMigration
+                            >=> (`shouldSatisfy` \case
+                                    Right (MigrationCheck Nothing) -> True
+                                    _                              -> False
+                                )
 
               it "in-txn migration containing COMMIT detected correctly" $ do
                   let commitTxnMig = SqlMigration
@@ -107,9 +114,11 @@ spec = do
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }
-                  checkMigration commitTxnMig `shouldSatisfy` \case
-                      Right (MigrationCheck (Just _)) -> True
-                      _                               -> False
+                  checkMigration commitTxnMig
+                      >>= (`shouldSatisfy` \case
+                              Right (MigrationCheck (Just _)) -> True
+                              _                               -> False
+                          )
               it "in-txn migration containing ROLLBACK detected correctly" $ do
                   let rollbackTxnMig = SqlMigration
                           { migrationName           = "0000-rollback.sql"
@@ -117,6 +126,8 @@ spec = do
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }
-                  checkMigration rollbackTxnMig `shouldSatisfy` \case
-                      Right (MigrationCheck (Just _)) -> True
-                      _                               -> False
+                  checkMigration rollbackTxnMig
+                      >>= (`shouldSatisfy` \case
+                              Right (MigrationCheck (Just _)) -> True
+                              _                               -> False
+                          )
