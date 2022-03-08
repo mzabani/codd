@@ -54,8 +54,10 @@ import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import           Data.Time                      ( fromGregorianValid
+                                                , secondsToDiffTime
+                                                )
 import           Data.Time.Clock                ( UTCTime(..) )
-import           Data.Time.Format.ISO8601       ( iso8601ParseM )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
@@ -590,11 +592,37 @@ toMigrationTimestamp (UTCTime day diffTime) =
 
 -- | Parses the UTC timestamp from a migration's name.
 parseMigrationTimestamp :: String -> Either Text DB.UTCTimestamp
-parseMigrationTimestamp name =
-  case iso8601ParseM (Prelude.takeWhile (/= 'Z') name ++ "Z") of
-    Nothing ->
-      Left
-        $  "Could not find migration timestamp from its name: '"
-        <> Text.pack name
-        <> "'"
-    Just t -> Right $ DB.Finite t
+parseMigrationTimestamp name = first Text.pack $ parseOnly
+  (migTimestampParser <|> fail
+    ("Could not find migration timestamp from its name: '" <> name <> "'")
+  )
+  (Text.pack name)
+ where
+  dash               = void $ char '-'
+  migTimestampParser = do
+    yyyy <- Parsec.decimal
+    dash
+    monthMm <- Parsec.decimal
+    dash
+    dd <- Parsec.decimal
+    dash
+    hh <- Parsec.decimal
+    guard $ hh >= 0 && hh <= 23
+    dash
+    minuteMm <- Parsec.decimal
+    guard $ minuteMm >= 0 && minuteMm < 60
+    dash
+    ss <- Parsec.decimal
+    guard $ ss >= 0 && ss < 60
+    case fromGregorianValid yyyy monthMm dd of
+      Nothing -> fail "Invalid date"
+      Just day ->
+        pure
+          $ DB.Finite
+          $ UTCTime day
+          $ secondsToDiffTime
+          $ hh
+          * 3600
+          + minuteMm
+          * 60
+          + ss
