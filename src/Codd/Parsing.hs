@@ -6,7 +6,9 @@ module Codd.Parsing
   , ParsedSql(..)
   , connStringParser
   , hoistAddedSqlMigration
+  , isCommentPiece
   , isTransactionEndingPiece
+  , isWhiteSpacePiece
   , mapSqlMigration
   , nothingIfEmptyQuery
   , piecesToText
@@ -17,6 +19,7 @@ module Codd.Parsing
   , parseAddedSqlMigration
   , parseMigrationTimestamp
   , parseSqlPieces
+  , parseSqlPiecesStreaming
   , toMigrationTimestamp
   ) where
 

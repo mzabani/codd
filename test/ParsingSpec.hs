@@ -3,13 +3,18 @@ module ParsingSpec where
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
+                                                , isCommentPiece
+                                                , isWhiteSpacePiece
                                                 , nothingIfEmptyQuery
                                                 , parseSqlMigration
                                                 , parseSqlPieces
+                                                , parseSqlPiecesStreaming
+                                                , parsedSqlText
                                                 , piecesToText
                                                 , sqlPieceText
                                                 )
-import           Control.Monad                  ( forM_
+import           Control.Monad                  ( (>=>)
+                                                , forM_
                                                 , when
                                                 )
 import qualified Data.Char                     as Char
@@ -28,6 +33,9 @@ import qualified Streaming.Prelude             as Streaming
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
+import           UnliftIO                       ( MonadIO
+                                                , liftIO
+                                                )
 
 newtype RandomSql = RandomSql {unRandomSql :: Text} deriving newtype (Show)
 
@@ -162,6 +170,29 @@ instance Arbitrary RandomSql where
 instance Arbitrary SyntacticallyValidRandomSql where
   arbitrary = fmap SyntacticallyValidRandomSql (genSql True)
 
+shouldHaveWellParsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
+mig `shouldHaveWellParsedSql` sql = case migrationSql mig of
+  Nothing -> liftIO $ expectationFailure "Nothing instead of some parsed sql"
+  Just UnparsedSql{} -> liftIO $ expectationFailure "Got UnparsedSql"
+  Just ps@(WellParsedSql _) -> do
+    psql <- parsedSqlText ps
+    liftIO $ psql `shouldBe` sql
+
+shouldHaveUnparsedSql :: MonadIO m => SqlMigration m -> String -> Text -> m ()
+shouldHaveUnparsedSql mig expectedError expectedSql = case migrationSql mig of
+  Nothing -> liftIO $ expectationFailure "Nothing instead of some Unparsed sql"
+  Just WellParsedSql{} ->
+    liftIO $ expectationFailure "Got WellParsedSql instead"
+  Just (UnparsedSql err sql) -> liftIO $ do
+    err `shouldBe` expectedError
+    sql `shouldBe` expectedSql
+
+-- | Same as a monadic `shouldSatisfy` isLeft, but does not require a Show instance.
+shouldReturnLeft :: MonadIO m => m (Either a b) -> m ()
+shouldReturnLeft mv = mv >>= \case
+  Left  _ -> pure ()
+  Right _ -> liftIO $ expectationFailure "Got Right but was expecting Left"
+
 spec :: Spec
 spec = do
   describe "Parsing tests" $ do
@@ -234,23 +265,20 @@ spec = do
       context "Valid SQL Migrations" $ do
         it "Plain Sql Migration, missing optional options" $ do
           property $ \(unSyntRandomSql -> plainSql) -> do
-            parsedMig <- parseSqlMigration "any-name.sql"
+            Right parsedMig <- parseSqlMigration "any-name.sql"
               $ Streaming.each [plainSql]
-            parsedMig `shouldBe` Right SqlMigration
-              { migrationName           = "any-name.sql"
-              , migrationSql            = Just $ mkValidSql plainSql
-              , migrationInTxn          = True
-              , migrationCustomConnInfo = Nothing
-              }
-        it "Sql Migration options parsed correctly"
-          $ let sql = "-- codd: no-txn\nSOME SQL"
-            in  parseSqlMigration "any-name.sql" (Streaming.each [sql])
-                  `shouldReturn` Right SqlMigration
-                                   { migrationName           = "any-name.sql"
-                                   , migrationSql = Just $ mkValidSql sql
-                                   , migrationInTxn          = False
-                                   , migrationCustomConnInfo = Nothing
-                                   }
+            migrationName parsedMig `shouldBe` "any-name.sql"
+            parsedMig `shouldHaveWellParsedSql` plainSql
+            migrationInTxn parsedMig `shouldBe` True
+            migrationCustomConnInfo parsedMig `shouldBe` Nothing
+        it "Sql Migration options parsed correctly" $ do
+          let sql = "-- codd: no-txn\nSOME SQL"
+          Right parsedMig <- parseSqlMigration "any-name.sql"
+                                               (Streaming.each [sql])
+          migrationName parsedMig `shouldBe` "any-name.sql"
+          parsedMig `shouldHaveWellParsedSql` sql
+          migrationInTxn parsedMig `shouldBe` False
+          migrationCustomConnInfo parsedMig `shouldBe` Nothing
 
         it "Sql Migration connection and custom options"
           $ property
@@ -266,99 +294,102 @@ spec = do
                     <> connStr
                     <> "\n-- codd: in-txn\n"
                     <> "SOME SQL"
-              parseSqlMigration "any-name.sql" (Streaming.each [sql1])
-                `shouldReturn` Right SqlMigration
-                                 { migrationName           = "any-name.sql"
-                                 , migrationSql = Just $ mkValidSql sql1
-                                 , migrationInTxn          = False
-                                 , migrationCustomConnInfo = Just connInfo
-                                 }
+              parsedMig1 <- either (error "Oh no") id
+                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql1])
+              migrationName parsedMig1 `shouldBe` "any-name.sql"
+              parsedMig1 `shouldHaveWellParsedSql` sql1
+              migrationInTxn parsedMig1 `shouldBe` False
+              migrationCustomConnInfo parsedMig1 `shouldBe` Just connInfo
 
-              parseSqlMigration "any-name.sql" (Streaming.each [sql2])
-                `shouldReturn` Right SqlMigration
-                                 { migrationName           = "any-name.sql"
-                                 , migrationSql = Just $ mkValidSql sql2
-                                 , migrationInTxn          = True
-                                 , migrationCustomConnInfo = Just connInfo
-                                 }
+              parsedMig2 <- either (error "Oh nooo") id
+                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql2])
+              migrationName parsedMig2 `shouldBe` "any-name.sql"
+              parsedMig2 `shouldHaveWellParsedSql` sql2
+              migrationInTxn parsedMig2 `shouldBe` True
+              migrationCustomConnInfo parsedMig2 `shouldBe` Just connInfo
 
         it "Sql Migration connection option alone"
           $ property
-          $ \(ConnStringGen connStr connInfo) ->
+          $ \(ConnStringGen connStr connInfo) -> do
               let
                 sql =
                   "-- random comment\n-- codd-connection: "
                     <> connStr
                     <> "\nSOME SQL"
-              in  parseSqlMigration "any-name.sql" (Streaming.each [sql])
-                    `shouldReturn` Right SqlMigration
-                                     { migrationName           = "any-name.sql"
-                                     , migrationSql = Just $ mkValidSql sql
-                                     , migrationInTxn          = True
-                                     , migrationCustomConnInfo = Just connInfo
-                                     }
+              mig <- either (error "Oh no") id
+                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql])
+              migrationName mig `shouldBe` "any-name.sql"
+              mig `shouldHaveWellParsedSql` sql
+              migrationInTxn mig `shouldBe` True
+              migrationCustomConnInfo mig `shouldBe` Just connInfo
 
-
-        it "in-txn and no-txn are mutually exclusive"
-          $ let plainSql = "SOME SQL"
-                sql      = "-- codd: no-txn, in-txn\n" <> plainSql
-            in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
+        it "in-txn and no-txn are mutually exclusive" $ do
+          let plainSql = "SOME SQL"
+              sql      = "-- codd: no-txn, in-txn\n" <> plainSql
+          shouldReturnLeft @IO
+            $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
 
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
         property $ \(unRandomSql -> anyText) -> do
-          parseSqlMigration "any-name.sql" (Streaming.each [anyText])
-            >>= (`shouldSatisfy` (`seq` True))
+          mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [anyText])
+          pure $ mig `seq` ()
 
       it "Gibberish after -- codd:" $ do
         let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
-        parseSqlMigration "any-name.sql" sql
-          `shouldReturn` (\(Left err) ->
+        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        case mig of
+          Left err ->
+            err `shouldSatisfy`
                           -- Error message is specific about what is wrong
-                           "complete gibberish" `List.isInfixOf` err
-                         )
+                                List.isInfixOf "complete gibberish"
+          Right _ -> expectationFailure "Got Right"
 
-      it "Duplicate options"
-        $ let sql = "-- codd: in-txn, in-txn\n" <> "ANY SQL HERE"
-          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` \case
-                Right _   -> False
-                Left  err -> "duplicate" `Text.isInfixOf` err
+      it "Duplicate options" $ do
+        let sql = "-- codd: in-txn, in-txn\n" <> "ANY SQL HERE"
+        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        case mig of
+          Right _   -> expectationFailure "Got Right"
+          Left  err -> err `shouldSatisfy` List.isInfixOf "duplicate"
 
-      it "Unknown / mistyped options"
-        $ let sql = "-- codd: unknown-txn\n" <> "ANY SQL HERE"
-          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
+      it "Unknown / mistyped options" $ do
+        let sql = "-- codd: unknown-txn\n" <> "ANY SQL HERE"
+        shouldReturnLeft @IO
+          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
 
-      it "Mistyped connection string option"
-        $ let sql = "-- codd-connection: blah\n" <> "ANY SQL HERE"
-          in
-            parseSqlMigration "any-name.sql" sql
-              `shouldSatisfy` \(Left err) ->
-                                                -- Nice error message explaining valid format
-                                             "postgres://" `Text.isInfixOf` err
+      it "Mistyped connection string option" $ do
+        let sql = "-- codd-connection: blah\n" <> "ANY SQL HERE"
+        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        case mig of
+          Left err ->
+            -- Nice error message explaining valid format
+            err `shouldSatisfy` List.isInfixOf "postgres://"
+          Right _ -> expectationFailure "Got Right"
 
-      it "Two connection strings"
-        $ let
-            sql =
-              "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
-                <> "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
-                <> "ANY SQL HERE"
-          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
+      it "Two connection strings" $ do
+        let
+          sql =
+            "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
+              <> "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
+              <> "ANY SQL HERE"
+        shouldReturnLeft @IO
+          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
 
-      it "Two -- codd comments"
-        $ let sql = "-- codd: in-txn\n--codd: in-txn\n" <> "MORE SQL HERE"
-          in  parseSqlMigration "any-name.sql" sql `shouldSatisfy` isLeft
+      it "Two -- codd comments" $ do
+        let sql = "-- codd: in-txn\n--codd: in-txn\n" <> "MORE SQL HERE"
+        shouldReturnLeft @IO
+          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
 
-      it "--no-parse forcefully returns a SqlMigration"
-        $              parseSqlMigration "failed-parsing-migration.sql"
-                                         "-- SQL with comments only!"
-        `shouldReturn` Right SqlMigration
-                         { migrationName = "failed-parsing-migration.sql"
-                         , migrationSql            = Just $ UnparsedSql
-                           "-- SQL with comments only!"
-                           "ERROR-MESSAGE-FOR-MIGRATION-WITH-NO-SQL-HERE"
-                         , migrationInTxn          = True
-                         , migrationCustomConnInfo = Nothing
-                         }
+      it "--no-parse forcefully returns a SqlMigration" $ do
+        mig <- either (error "Oops") id <$> parseSqlMigration
+          "failed-parsing-migration.sql"
+          (Streaming.each ["-- SQL with comments only!"])
+        migrationName mig `shouldBe` "failed-parsing-migration.sql"
+        shouldHaveUnparsedSql mig
+                              "ERROR-MESSAGE-FOR-MIGRATION-WITH-NO-SQL-HERE"
+                              "-- SQL with comments only!"
+        migrationInTxn mig `shouldBe` True
+        migrationCustomConnInfo mig `shouldBe` Nothing
 
       it "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith
@@ -402,9 +433,14 @@ spec = do
               <> "ALTER TABLE employee ADD COLUMN employee_name TEXT; -- TODO: Remember to set a good DEFAULT if you need one.\n"
               <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
             ]
-        forM_ emptyQueries
-          $ \q -> (q, nothingIfEmptyQuery q) `shouldBe` (q, Nothing)
+        forM_ emptyQueries $ \q -> do
+          let parsed = parseSqlPiecesStreaming (Streaming.each [q])
+          Streaming.all_ (\p -> isWhiteSpacePiece p || isCommentPiece p) parsed
+            `shouldReturn` True
         forM_ (nonEmptyQueries ++ map sqlPieceText validSqlStatements) $ \q ->
-          nothingIfEmptyQuery q `shouldSatisfy` \case
-            Just (WellParsedSql _) -> True
-            _                      -> False
+          do
+            let parsed = parseSqlPiecesStreaming (Streaming.each [q])
+            Streaming.any_
+                (\p -> not (isWhiteSpacePiece p || isCommentPiece p))
+                parsed
+              `shouldReturn` True

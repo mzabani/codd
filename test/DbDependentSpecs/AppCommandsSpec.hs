@@ -58,7 +58,6 @@ doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
@@ -84,10 +83,9 @@ doesNotCreateDB act = do
 doesNotModifyExistingDb
     :: (CoddSettings -> LoggingT IO a) -> (IO a -> IO ()) -> IO ()
 doesNotModifyExistingDb act assert = do
-    vanillaTestSettings <- testCoddSettings []
+    vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"

@@ -764,7 +764,8 @@ spec = do
                                     shuffledMigs0
                                     (map CreateDbCreationMig [0 .. 3])
                               $ \migOrder migType -> case migType of
-                                    CreateCoddTestDb -> createCoddTestDbMigs
+                                    CreateCoddTestDb ->
+                                        [createCoddTestDbMigs]
                                     CreateDbCreationMig i ->
                                         [ AddedSqlMigration
                                               (createDatabaseMig
@@ -822,9 +823,10 @@ spec = do
                               $ void @IO
                               $ do
                                     runStdoutLoggingT $ applyMigrationsNoCheck
-                                        (testSettings
-                                            { sqlMigrations = Right allMigs
-                                            }
+                                        testSettings
+                                        (Just $ map
+                                            (hoistAddedSqlMigration lift)
+                                            allMigs
                                         )
                                         testConnTimeout
                                         (const $ pure ())
