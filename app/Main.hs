@@ -202,9 +202,9 @@ doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckHashes connectTimeout) =
   runStdoutLoggingT $ case mCheckHashes of
     Nothing ->
-      Codd.applyMigrationsNoCheck dbInfo connectTimeout (const $ pure ())
+      Codd.applyMigrationsNoCheck dbInfo Nothing connectTimeout (const $ pure ())
     Just checkHashes ->
-      void $ Codd.applyMigrations dbInfo connectTimeout checkHashes
+      void $ Codd.applyMigrations dbInfo Nothing connectTimeout checkHashes
 doWork dbInfo (Add dontApply destFolder verbosity fp) =
   runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
 doWork dbInfo (VerifyChecksum verbosity fromStdin) =

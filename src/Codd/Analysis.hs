@@ -6,10 +6,11 @@ module Codd.Analysis
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
+                                                , isCommentPiece
                                                 , isTransactionEndingPiece
+                                                , isWhiteSpacePiece
                                                 )
 import           Data.Text                      ( Text )
-import qualified Data.Text                     as Text
 import qualified Streaming.Prelude             as Streaming
 
 newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe Text }
@@ -22,31 +23,27 @@ newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe 
 checkMigration :: Monad m => SqlMigration m -> m (Either Text MigrationCheck)
 checkMigration mig = do
     migEndsTransaction <- case (migrationSql mig, migrationInTxn mig) of
-        (Nothing, _) -> pure $ Left "The migration seems to be empty"
-        (Just (UnparsedSql err _), _) ->
-            pure
-                $  Left
-                $  "Error parsing migration so checking is not possible: "
-                <> Text.pack err
-        (Just (WellParsedSql pieces), True) -> do
+        (UnparsedSql _, _) -> pure $ Left "Cannot analyze no-parse migration."
+        (WellParsedSql pieces, True) -> do
             problem <- Streaming.any_ isTransactionEndingPiece pieces
             pure $ Right $ if problem
                 then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
                 else Nothing
-        (Just (WellParsedSql pieces), False) -> do
-            mFirstPiece <- Streaming.head_ pieces
-            case mFirstPiece of
-                Nothing -> pure $ Left "The migration seems to be empty"
-                Just p1 -> do
+        (WellParsedSql pieces, False) -> do
+            noSqlToRun <- Streaming.all_
+                (\p -> isWhiteSpacePiece p || isCommentPiece p)
+                pieces
+            if noSqlToRun
+                then pure $ Left "The migration seems to be empty"
+                else do
                     let isOpenAfter wasOpen p = case p of
                             BeginTransaction _ -> True
                             _ -> not (isTransactionEndingPiece p) && wasOpen
 
-                    leavesTransactionOpen <- Streaming.fold_
-                        isOpenAfter
-                        (isOpenAfter False p1)
-                        id
-                        pieces
+                    leavesTransactionOpen <- Streaming.fold_ isOpenAfter
+                                                             False
+                                                             id
+                                                             pieces
 
                     pure $ Right $ if leavesTransactionOpen
                         then

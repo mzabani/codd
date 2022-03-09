@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-unused-matches #-}
 module Codd.AppCommands.AddMigration
   ( AddMigrationOptions(..)
   , addMigration
@@ -14,20 +15,14 @@ import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( streamingReadFile )
-import           Codd.Parsing                   ( ParsedSql(..)
-                                                , SqlMigration(..)
-                                                , parseSqlMigration
-                                                )
+import           Codd.Parsing                   ( parseSqlMigration )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
                                                 , unless
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( MonadLoggerIO
-                                                , logErrorN
-                                                )
+import           Control.Monad.Logger           ( MonadLoggerIO )
 import           Data.Maybe                     ( maybeToList )
-import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
 import           System.Exit                    ( ExitCode(..)
@@ -80,16 +75,9 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
       case parsedSqlMigE of
         Left err ->
           error
-            $  "There was a fatal error parsing this SQL Migration: "
+            $ "There was a fatal error parsing this SQL Migration. Please report this as a bug: "
             ++ show err
         Right sqlMig -> do
-          case migrationSql sqlMig of
-            Just (UnparsedSql parseError _) -> unless noParse $ do
-              logErrorN
-                "There was an error parsing this migration. If you want to consider it in-txn and without support for COPY, add it with the --no-parse option."
-              logErrorN "Also please report this as a bug."
-              logErrorN $ "Parsing error: " <> Text.pack parseError
-            _ -> pure ()
           migCheck  <- checkMigration sqlMig
           migErrors <- either
             (pure . (: []))

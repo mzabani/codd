@@ -227,10 +227,14 @@ spec = do
               -- putStrLn "--------------------------------------------------"
               -- print plainSql
               case eblks of
-                Left  e    -> eblks `shouldNotSatisfy` isLeft
+                Left  e    -> expectationFailure $ "Got left: " <> show eblks
                 Right blks -> do
                   let comments = [ t | CommentPiece t <- NE.toList blks ]
                       whtspc   = [ t | WhiteSpacePiece t <- NE.toList blks ]
+                  spieces <-
+                    Streaming.toList_ $ parseSqlPiecesStreaming $ Streaming.each
+                      [plainSql]
+                  spieces `shouldBe` NE.toList blks
                   piecesToText blks `shouldBe` plainSql
                   forM_ blks $ \case
                     CommentPiece t ->

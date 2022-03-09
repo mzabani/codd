@@ -10,13 +10,13 @@ module Codd.Parsing
   , isTransactionEndingPiece
   , isWhiteSpacePiece
   , mapSqlMigration
-  , nothingIfEmptyQuery
   , piecesToText
   , sqlPieceText
   , parsedSqlText
   , parseSqlMigration
   , parseWithEscapeCharProper
   , parseAddedSqlMigration
+  , parseAndClassifyMigration
   , parseMigrationTimestamp
   , parseSqlPieces
   , parseSqlPiecesStreaming
@@ -51,7 +51,6 @@ import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -70,17 +69,17 @@ import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 
 
+-- | Contains either SQL parsed in pieces or the full original SQL contents
+-- for cases where parsing was foregone.
 data ParsedSql m =
   UnparsedSql
-  !String
-  -- ^ The error when parsing
   !Text
   -- ^ The full file contents
   | WellParsedSql (Stream (Of SqlPiece) m ())
 
 data SqlMigration m = SqlMigration
   { migrationName           :: FilePath
-  , migrationSql            :: Maybe (ParsedSql m)
+  , migrationSql            :: ParsedSql m
   , migrationInTxn          :: Bool
   , migrationCustomConnInfo :: Maybe ConnectInfo
   }
@@ -100,8 +99,8 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) = AddedSqlMigration
   (hoistSqlMig sqlMig)
   tst
  where
-  hoistSqlMig mig = mig { migrationSql = hoistParsedSql <$> migrationSql mig }
-  hoistParsedSql (UnparsedSql err t   ) = UnparsedSql err t
+  hoistSqlMig mig = mig { migrationSql = hoistParsedSql $ migrationSql mig }
+  hoistParsedSql (UnparsedSql   t     ) = UnparsedSql t
   hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
 mapSqlMigration
@@ -111,7 +110,7 @@ mapSqlMigration
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-newtype SectionOption = OptInTxn Bool
+data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
@@ -120,6 +119,7 @@ data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece 
 parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
 parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
 
+-- | This should be the equivalent to `parseSqlPieces`, but for Streams.
 parseSqlPiecesStreaming
   :: forall m . Monad m => Stream (Of Text) m () -> Stream (Of SqlPiece) m ()
 parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
@@ -160,12 +160,13 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     -- When applying parsing continuations the empty string is used to signal/match
     -- endOfInput. So we append a final empty string to the original stream to
     -- parse the last SQL statement properly regardless of semi-colon.
-    -- Also, because empty strings are so special, we filter them out just in case.
+    -- Also, because empty strings are so special, we filter them out from the
+    -- input stream just in case.
       $  Streaming.filter (/= "") contents
       <> Streaming.each [""]
 
 parsedSqlText :: Monad m => ParsedSql m -> m Text
-parsedSqlText (UnparsedSql _ t) = pure t
+parsedSqlText (UnparsedSql t) = pure t
 parsedSqlText (WellParsedSql s) =
   Streaming.fold_ (<>) "" id $ Streaming.map sqlPieceText s
 
@@ -471,13 +472,18 @@ connStringParser = do
 optionParser :: Parser SectionOption
 optionParser = do
   skipJustSpace
-  x <- inTxn <|> noTxn <|> fail
-    "Valid options after '-- codd:' are 'in-txn' or 'no-txn'"
+  x <-
+    inTxn
+    <|> noTxn
+    <|> noParse
+    <|> fail
+          "Valid options after '-- codd:' are 'in-txn', 'no-txn' or 'no-parse' (the last implies in-txn)"
   skipJustSpace
   return x
  where
-  inTxn = string "in-txn" >> pure (OptInTxn True)
-  noTxn = string "no-txn" >> pure (OptInTxn False)
+  inTxn   = string "in-txn" >> pure (OptInTxn True)
+  noTxn   = string "no-txn" >> pure (OptInTxn False)
+  noParse = string "no-parse" >> pure (OptNoParse True)
 
 
 skipJustSpace :: Parser ()
@@ -531,12 +537,13 @@ isTransactionEndingPiece _                       = False
 -- | Looks only at comments that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
--- Also returns the consumed SqlPieces as the second in the pair.
+-- Also returns the full Stream of SqlPieces as the second in the pair.
 extractCoddOpts
   :: Monad m
-  => Stream (Of SqlPiece) m ()
-  -> m (Either String ([SectionOption], Maybe ConnectInfo), [SqlPiece])
-extractCoddOpts ps = do
+  => Stream (Of Text) m ()
+  -> m (Either String (([SectionOption], Maybe ConnectInfo), ParsedSql m))
+extractCoddOpts t = do
+  let ps = parseSqlPiecesStreaming t
   consumedPieces <- Streaming.toList_
     $ Streaming.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
   let firstComments  = filter isCommentPiece consumedPieces
@@ -560,8 +567,13 @@ extractCoddOpts ps = do
         firstComments
       headMay []      = Nothing
       headMay (x : _) = Just x
+
+  -- TODO: Look for a "-- codd: no-parse" option and somehow not parse
+  -- the rest of the migration.
+  -- error "TODO"
+
   -- Urgh.. is there no better way of pattern matching the stuff below?
-  (, consumedPieces) <$> case (allOptSections, customConnString) of
+  fmap (, WellParsedSql ps) <$> case (allOptSections, customConnString) of
     (_ : _ : _, _) ->
       pure
         $ Left
@@ -597,26 +609,13 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 parseAndClassifyMigration
   :: Monad m
   => Stream (Of Text) m ()
-  -> m ([SectionOption], Maybe ConnectInfo, ParsedSql m)
+  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
 parseAndClassifyMigration t = do
-  let sqlPiecesStream = parseSqlPiecesStreaming t
-  (eOpts, consumedPieces) <- extractCoddOpts sqlPiecesStream
-  case eOpts of
-    -- We'll have to put it all in memory if parsing failed at some point. We do that now.
-    Left err -> do
-      let consumedSql = mconcat $ map sqlPieceText consumedPieces
-      remainderOfFile <- Streaming.fold_ (<>) "" id
-        $ Streaming.map sqlPieceText sqlPiecesStream
-      pure ([], Nothing, UnparsedSql err $ consumedSql <> remainderOfFile)
-    Right (opts, customConnStr) ->
-      -- We wouldn't need to include white-space and comments here,
-      -- but this preserves the property that all written SQL is parsed
-      -- and run. It is a relatively nice invariant and mental model.
-                                   pure
-      ( opts
-      , customConnStr
-      , WellParsedSql $ Streaming.each consumedPieces <> sqlPiecesStream
-      )
+  eExtr <- extractCoddOpts t
+  case eExtr of
+    Left err -> pure $ Left err
+    Right ((opts, customConnStr), psql) ->
+      pure $ Right (opts, customConnStr, psql)
 
 parseSqlMigration
   :: forall m
@@ -624,9 +623,7 @@ parseSqlMigration
   => String
   -> Stream (Of Text) m ()
   -> m (Either String (SqlMigration m))
-parseSqlMigration name t = do
-  mig <- parseAndClassifyMigration t
-  pure $ toMig mig
+parseSqlMigration name t = (toMig =<<) <$> parseAndClassifyMigration t
  where
   dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe String
@@ -641,7 +638,7 @@ parseSqlMigration name t = do
   mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql m) -> SqlMigration m
   mkMig (opts, customConnString, sql) = SqlMigration
     { migrationName           = name
-    , migrationSql            = Just sql
+    , migrationSql            = sql
     , migrationInTxn          = inTxn opts
     , migrationCustomConnInfo = customConnString
     }
@@ -661,16 +658,6 @@ parseAddedSqlMigration
 parseAddedSqlMigration name t = do
   sqlMig <- parseSqlMigration name t
   pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
-
--- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
--- we find a way to remove it.
-nothingIfEmptyQuery :: Monad m => Text -> Maybe (ParsedSql m)
-nothingIfEmptyQuery t = case (parseSqlPieces t, t) of
-  (Left  _  , "") -> Nothing
-  (Left  err, _ ) -> Just $ UnparsedSql err t
-  (Right pcs, _ ) -> if all (\x -> isWhiteSpacePiece x || isCommentPiece x) pcs
-    then Nothing
-    else Just (WellParsedSql $ Streaming.each $ NE.toList pcs)
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
 -- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime

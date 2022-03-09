@@ -415,11 +415,10 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                             throwIO $ userError $ "Fatal error parsing migration '" <> fn <> "': " <> err
                         Right asqlmig@(AddedSqlMigration mig _) -> do
                             case migrationSql mig of
-                                Just (UnparsedSql err _) ->
+                                UnparsedSql _ ->
                                     logWarnN
                                         $ Text.pack fn
-                                        <> " could not be parsed and thus will be considered in is entirety as in-txn. Parsing error: "
-                                        <> Text.pack err
+                                        <> " is not to be parsed and thus will be considered in is entirety as in-txn."
                                 _ -> pure ()
                             pure asqlmig
         )
@@ -647,14 +646,11 @@ applySingleMigration conn statementRetryPol afterMigRun (AddedSqlMigration sqlMi
         let fn = migrationName sqlMig
         logDebugN $ "Applying " <> Text.pack fn
 
-        case migrationSql sqlMig of
-            Nothing -> pure ()
-            Just nonDestSql ->
-                let inTxn = if migrationInTxn sqlMig
-                        then InTransaction
-                        else NotInTransaction statementRetryPol
-                in  multiQueryStatement_ inTxn conn nonDestSql
-
+        let inTxn = if migrationInTxn sqlMig
+                then InTransaction
+                else NotInTransaction statementRetryPol
+        
+        multiQueryStatement_ inTxn conn $ migrationSql sqlMig
         afterMigRun fn migTimestamp
 
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered

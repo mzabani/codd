@@ -81,8 +81,8 @@ multiQueryStatement_
   -> ParsedSql m
   -> m ()
 multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
-  (UnparsedSql _ t, InTransaction) -> singleStatement_ conn t
-  (UnparsedSql _ t, NotInTransaction retryPol) ->
+  (UnparsedSql t, InTransaction) -> singleStatement_ conn t
+  (UnparsedSql t, NotInTransaction retryPol) ->
     retry retryPol $ singleStatement_ conn t
   (WellParsedSql stms, NotInTransaction retryPol) ->
     -- We retry individual statements in no-txn migrations
