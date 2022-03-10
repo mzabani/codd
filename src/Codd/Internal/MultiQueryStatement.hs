@@ -86,14 +86,11 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
     retry retryPol $ singleStatement_ conn t
   (WellParsedSql stms, NotInTransaction retryPol) ->
     -- We retry individual statements in no-txn migrations
-    flip Streaming.mapM_ stms $ \stm -> do
-      liftIO $ print stm
-      retry retryPol $ runSingleStatementInternal_ conn stm
+                                                     flip Streaming.mapM_ stms
+    $ \stm -> retry retryPol $ runSingleStatementInternal_ conn stm
   (WellParsedSql stms, InTransaction) ->
     -- We don't retry individual statements in in-txn migrations
-                                         flip Streaming.mapM_ stms $ \stm -> do
-    liftIO $ print stm
-    runSingleStatementInternal_ conn stm
+    flip Streaming.mapM_ stms $ \stm -> runSingleStatementInternal_ conn stm
 
 runSingleStatementInternal_ :: MonadIO m => DB.Connection -> SqlPiece -> m ()
 runSingleStatementInternal_ _    (CommentPiece     _) = pure ()

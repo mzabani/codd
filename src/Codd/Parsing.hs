@@ -534,18 +534,24 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
--- | Looks only at comments that precede the first SQL statement and
+-- | Parses only comments and white-space that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
--- Also returns the full Stream of SqlPieces as the second in the pair.
-extractCoddOpts
+parseAndClassifyMigration
   :: Monad m
   => Stream (Of Text) m ()
-  -> m (Either String (([SectionOption], Maybe ConnectInfo), ParsedSql m))
-extractCoddOpts t = do
-  let ps = parseSqlPiecesStreaming t
-  consumedPieces <- Streaming.toList_
-    $ Streaming.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
+  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
+parseAndClassifyMigration sqlStream = do
+  -- There is no easy way to avoid parsing at least up until and including
+  -- the first sql statement.
+  -- This means always advancing `sqlStream` beyond its first sql statement
+  -- too.
+  -- We are relying a lot on the parser to do a good job, which it usually does,
+  -- but it may be interesting to think of alternatives here.
+  consumedPieces :> sqlPiecesBodyStream <-
+    Streaming.toList
+    $ Streaming.span (\p -> isCommentPiece p || isWhiteSpacePiece p)
+    $ parseSqlPiecesStreaming sqlStream
   let firstComments  = filter isCommentPiece consumedPieces
       allOptSections = mapMaybe
         ( (\case
@@ -568,12 +574,8 @@ extractCoddOpts t = do
       headMay []      = Nothing
       headMay (x : _) = Just x
 
-  -- TODO: Look for a "-- codd: no-parse" option and somehow not parse
-  -- the rest of the migration.
-  -- error "TODO"
-
   -- Urgh.. is there no better way of pattern matching the stuff below?
-  fmap (, WellParsedSql ps) <$> case (allOptSections, customConnString) of
+  eExtr <- case (allOptSections, customConnString) of
     (_ : _ : _, _) ->
       pure
         $ Left
@@ -601,21 +603,37 @@ extractCoddOpts t = do
       (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
       (Nothing, Nothing) -> pure $ Right ([], Nothing)
 
+  case eExtr of
+    Left err -> pure $ Left err
+    Right (opts, customConnStr)
+      |
+      -- Detect "-- codd: no-parse"
+        OptNoParse True `elem` opts -> do
+        let consumedText = piecesToText consumedPieces
+        -- Remember: the original Stream (Of Text) has already been advanced
+        -- beyond its first SQL statement. We have to rely on the parser a little
+        -- bit more to reconstruct the full contents of the original stream.
+        -- We could figure out how Streaming.copy works and use that, probably.
+        firstSqlStatement <- maybe "" sqlPieceText
+          <$> Streaming.head_ sqlPiecesBodyStream
+        remainingText <- Streaming.fold_ (<>) "" id sqlStream
+        pure $ Right
+          ( opts
+          , customConnStr
+          , UnparsedSql $ consumedText <> firstSqlStatement <> remainingText
+          )
+      | otherwise -> pure $ Right
+        ( opts
+        , customConnStr
+        -- Prepend consumedPieces to preserve the property that SqlMigration objects
+        -- will hold the full original SQL.
+        , WellParsedSql $ Streaming.each consumedPieces <> sqlPiecesBodyStream
+        )
+
 
 
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
-
-parseAndClassifyMigration
-  :: Monad m
-  => Stream (Of Text) m ()
-  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
-parseAndClassifyMigration t = do
-  eExtr <- extractCoddOpts t
-  case eExtr of
-    Left err -> pure $ Left err
-    Right ((opts, customConnStr), psql) ->
-      pure $ Right (opts, customConnStr, psql)
 
 parseSqlMigration
   :: forall m
