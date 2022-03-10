@@ -609,18 +609,18 @@ parseAndClassifyMigration sqlStream = do
       |
       -- Detect "-- codd: no-parse"
         OptNoParse True `elem` opts -> do
-        let consumedText = piecesToText consumedPieces
+        -- let consumedText = piecesToText consumedPieces
         -- Remember: the original Stream (Of Text) has already been advanced
         -- beyond its first SQL statement. We have to rely on the parser a little
         -- bit more to reconstruct the full contents of the original stream.
         -- We could figure out how Streaming.copy works and use that, probably.
-        firstSqlStatement <- maybe "" sqlPieceText
-          <$> Streaming.head_ sqlPiecesBodyStream
+        -- firstSqlStatement <- maybe "" sqlPieceText
+        --   <$> Streaming.head_ sqlPiecesBodyStream
         remainingText <- Streaming.fold_ (<>) "" id sqlStream
         pure $ Right
           ( opts
           , customConnStr
-          , UnparsedSql $ consumedText <> firstSqlStatement <> remainingText
+          , UnparsedSql remainingText --consumedText <> firstSqlStatement <> remainingText
           )
       | otherwise -> pure $ Right
         ( opts

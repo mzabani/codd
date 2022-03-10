@@ -5,7 +5,6 @@ import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 , isCommentPiece
                                                 , isWhiteSpacePiece
-                                                , nothingIfEmptyQuery
                                                 , parseSqlMigration
                                                 , parseSqlPieces
                                                 , parseSqlPiecesStreaming
@@ -27,6 +26,7 @@ import           Data.Maybe                     ( fromMaybe
                                                 )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( mkValidSql )
 import           EnvironmentSpec                ( ConnStringGen(..) )
 import qualified Streaming.Prelude             as Streaming
@@ -172,19 +172,15 @@ instance Arbitrary SyntacticallyValidRandomSql where
 
 shouldHaveWellParsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
 mig `shouldHaveWellParsedSql` sql = case migrationSql mig of
-  Nothing -> liftIO $ expectationFailure "Nothing instead of some parsed sql"
-  Just UnparsedSql{} -> liftIO $ expectationFailure "Got UnparsedSql"
-  Just ps@(WellParsedSql _) -> do
+  UnparsedSql _        -> liftIO $ expectationFailure "Got UnparsedSql"
+  ps@(WellParsedSql _) -> do
     psql <- parsedSqlText ps
     liftIO $ psql `shouldBe` sql
 
-shouldHaveUnparsedSql :: MonadIO m => SqlMigration m -> String -> Text -> m ()
-shouldHaveUnparsedSql mig expectedError expectedSql = case migrationSql mig of
-  Nothing -> liftIO $ expectationFailure "Nothing instead of some Unparsed sql"
-  Just WellParsedSql{} ->
-    liftIO $ expectationFailure "Got WellParsedSql instead"
-  Just (UnparsedSql err sql) -> liftIO $ do
-    err `shouldBe` expectedError
+shouldHaveUnparsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
+shouldHaveUnparsedSql mig expectedSql = case migrationSql mig of
+  WellParsedSql _   -> liftIO $ expectationFailure "Got WellParsedSql instead"
+  UnparsedSql   sql -> liftIO $ do
     sql `shouldBe` expectedSql
 
 -- | Same as a monadic `shouldSatisfy` isLeft, but does not require a Show instance.
@@ -384,16 +380,48 @@ spec = do
         shouldReturnLeft @IO
           $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
 
-      it "--no-parse forcefully returns a SqlMigration" $ do
-        mig <- either (error "Oops") id <$> parseSqlMigration
-          "failed-parsing-migration.sql"
-          (Streaming.each ["-- SQL with comments only!"])
-        migrationName mig `shouldBe` "failed-parsing-migration.sql"
-        shouldHaveUnparsedSql mig
-                              "ERROR-MESSAGE-FOR-MIGRATION-WITH-NO-SQL-HERE"
-                              "-- SQL with comments only!"
+      it "--codd: no-parse returns UnparsedSql" $ do
+        let sql =
+              [ "-- codd: no-parse\n"
+              , "-- Anything here!"
+              , "Some statement; -- Some comment\n"
+              , "Other statement"
+              ]
+        mig <- either (error "Oops") id
+          <$> parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
+        migrationName mig `shouldBe` "no-parse-migration.sql"
+        shouldHaveUnparsedSql mig $ Text.concat sql
         migrationInTxn mig `shouldBe` True
         migrationCustomConnInfo mig `shouldBe` Nothing
+
+      it "--codd: no-parse with custom connection-string" $ do
+        let
+          sql =
+            [ "-- codd: no-parse\n"
+            , "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
+            , ""
+            , "-- Anything here!"
+            , "Some statement; -- Some comment\n"
+            , "Other statement"
+            ]
+        mig <- either (error "Oops") id
+          <$> parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
+        migrationName mig `shouldBe` "no-parse-migration.sql"
+        shouldHaveUnparsedSql mig $ Text.concat sql
+        migrationInTxn mig `shouldBe` True
+        migrationCustomConnInfo mig `shouldBe` Just DB.ConnectInfo
+          { DB.connectUser     = "codd_admin"
+          , DB.connectHost     = "127.0.0.1"
+          , DB.connectPort     = 5433
+          , DB.connectPassword = ""
+          , DB.connectDatabase = "codd-experiments"
+          }
+
+      it "--codd: no-parse does not mix with -- codd: no-txn" $ do
+        let sql =
+              ["-- codd: no-parse\n", "-- codd: no-txn\n", "", "Some statement"]
+        shouldReturnLeft @IO
+          $ parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
 
       it "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith

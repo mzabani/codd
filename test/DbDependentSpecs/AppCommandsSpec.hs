@@ -43,8 +43,7 @@ migThatWontRun :: Monad m => AddedSqlMigration m
 migThatWontRun = AddedSqlMigration
     SqlMigration
         { migrationName           = "create-things.sql"
-        , migrationSql            = Just
-                                    $  mkValidSql
+        , migrationSql            = mkValidSql
                                     $  "CREATE USER \"user-that-wont-exist\";\n"
                                     <> "CREATE TABLE table_that_wont_exist();\n"
                                     <> "CREATE SCHEMA schema_that_wont_exist;"

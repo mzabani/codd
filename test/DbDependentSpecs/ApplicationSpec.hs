@@ -83,15 +83,15 @@ placeHoldersMig, selectMig, copyMig :: Monad m => AddedSqlMigration m
 placeHoldersMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-placeholders.sql"
-        , migrationSql            = Just
-            $ mkValidSql "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
+        , migrationSql            = mkValidSql
+                                        "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-select-mig.sql"
-                 , migrationSql            = Just $ mkValidSql "SELECT 1, 3"
+                 , migrationSql            = mkValidSql "SELECT 1, 3"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -100,16 +100,15 @@ copyMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0002-copy-mig.sql"
         , migrationSql            =
-            Just
-                $ mkValidSql
-                      "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n "
+            mkValidSql
+                "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n "
         , migrationInTxn          = False
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 2)
 divideBy0Mig = AddedSqlMigration
     SqlMigration { migrationName           = "0003-divide-by-0-mig.sql"
-                 , migrationSql = Just $ mkValidSql "SELECT 2; SELECT 7/0"
+                 , migrationSql            = mkValidSql "SELECT 2; SELECT 7/0"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -122,8 +121,7 @@ createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
         { migrationName           = "000"
                                     <> show migOrder
                                     <> "-create-table-newtable-mig.sql"
-        , migrationSql            = Just
-                                    $  mkValidSql
+        , migrationSql            = mkValidSql
                                     $  "CREATE TABLE "
                                     <> Text.pack tableName
                                     <> "()"
@@ -136,8 +134,7 @@ createDatabaseMig
     :: Monad m => DB.ConnectInfo -> String -> Int -> Int -> SqlMigration m
 createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     { migrationName = "000" <> show migOrder <> "-create-database-mig.sql"
-    , migrationSql            = Just
-                                $  mkValidSql
+    , migrationSql            = mkValidSql
                                 $  "CREATE DATABASE "
                                 <> Text.pack dbName
                                 <> "; SELECT pg_sleep("
@@ -151,9 +148,8 @@ createCountCheckingMig :: Monad m => Int -> String -> SqlMigration m
 createCountCheckingMig expectedCount migName = SqlMigration
     { migrationName = "000" <> show expectedCount <> "-" <> migName <> ".sql"
     , migrationSql            =
-        Just
-        $  mkValidSql
-        $  "DO\
+        mkValidSql
+        $ "DO\
 \\n$do$\
 \\nBEGIN\
 \\n   IF (SELECT COUNT(*) <> "
@@ -415,8 +411,7 @@ spec = do
                                                 { migrationName           =
                                                     "0000-first-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "CREATE TABLE any_table (txid bigint not null);"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
@@ -431,8 +426,7 @@ spec = do
                                                 { migrationName           =
                                                     "0001-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- No txids from this migration because it runs in the same transaction as the last one, two more rows
@@ -446,8 +440,7 @@ spec = do
                                                 { migrationName           =
                                                     "0002-no-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "CREATE TYPE experience AS ENUM ('junior', 'senior');"
                                                     <> "\nALTER TABLE any_table ADD COLUMN experience experience;"
                                                     <> "\nALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
@@ -465,8 +458,7 @@ spec = do
                                                 { migrationName           =
                                                     "0003-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- One unique txid from this migration because it runs in a new transaction, two more rows
@@ -480,8 +472,7 @@ spec = do
                                                 { migrationName           =
                                                     "0004-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- No txids from this migration because it runs in the same transaction as the last one, two more rows

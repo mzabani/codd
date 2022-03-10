@@ -27,7 +27,7 @@ createTableMig, addColumnMig, dropColumnMig, dropTableMig
     :: Monad m => AddedSqlMigration m
 createTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-create-table.sql"
-                 , migrationSql = Just $ mkValidSql "CREATE TABLE anytable ();"
+                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -35,8 +35,8 @@ createTableMig = AddedSqlMigration
 addColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0002-add-column.sql"
-        , migrationSql            = Just
-            $ mkValidSql "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
@@ -44,15 +44,15 @@ addColumnMig = AddedSqlMigration
 dropColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0003-drop-column.sql"
-        , migrationSql            = Just
-            $ mkValidSql "ALTER TABLE anytable DROP COLUMN anycolumn;"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable DROP COLUMN anycolumn;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0004-drop-table.sql"
-                 , migrationSql = Just $ mkValidSql "DROP TABLE anytable;"
+                 , migrationSql            = mkValidSql "DROP TABLE anytable;"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -70,7 +70,7 @@ spec = do
                         let badMigs = map
                                 (\c -> SqlMigration
                                     { migrationName           = "0000-begin.sql"
-                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
                                     }
@@ -80,7 +80,7 @@ spec = do
                             goodMigs = map
                                 (\c -> SqlMigration
                                     { migrationName           = "0000-begin.sql"
-                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
                                     }
@@ -110,7 +110,7 @@ spec = do
               it "in-txn migration containing COMMIT detected correctly" $ do
                   let commitTxnMig = SqlMigration
                           { migrationName           = "0000-commit.sql"
-                          , migrationSql = Just $ mkValidSql "COMMIT;"
+                          , migrationSql            = mkValidSql "COMMIT;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }
@@ -122,7 +122,7 @@ spec = do
               it "in-txn migration containing ROLLBACK detected correctly" $ do
                   let rollbackTxnMig = SqlMigration
                           { migrationName           = "0000-rollback.sql"
-                          , migrationSql = Just $ mkValidSql "ROLLBACK;"
+                          , migrationSql            = mkValidSql "ROLLBACK;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }

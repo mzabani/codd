@@ -147,8 +147,7 @@ createTestUserMig = do
         SqlMigration
             { migrationName           = "bootstrap-test-db-and-user.sql"
             , migrationSql            =
-                Just
-                $  mkValidSql
+                mkValidSql
                 $  "DO\n"
                 <> "$do$\n"
                 <> "BEGIN\n"
