@@ -106,13 +106,6 @@ copyMig = AddedSqlMigration
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 2)
-divideBy0Mig = AddedSqlMigration
-    SqlMigration { migrationName           = "0003-divide-by-0-mig.sql"
-                 , migrationSql            = mkValidSql "SELECT 2; SELECT 7/0"
-                 , migrationInTxn          = True
-                 , migrationCustomConnInfo = Nothing
-                 }
-    (getIncreasingTimestamp 3)
 
 createTableNewTableMig
     :: Monad m => String -> Bool -> Int -> AddedSqlMigration m
@@ -514,7 +507,7 @@ spec = do
                                                 logsmv
                                                 (applyMigrationsNoCheck
                                                     (emptyTestDbInfo
-                                                        { retryPolicy =
+                                                        { retryPolicy   =
                                                             RetryPolicy
                                                                 7
                                                                 (ExponentialBackoff
@@ -522,18 +515,16 @@ spec = do
                                                                         0.001
                                                                     )
                                                                 )
+                                                        , sqlMigrations =
+                                                            [ if inTxn
+                                                                  then
+                                                                      "test/migrations/retry-policy-test-in-txn/"
+                                                                  else
+                                                                      "test/migrations/retry-policy-test-no-txn/"
+                                                            ]
                                                         }
                                                     )
-                                                    (Just
-                                                        [ mapSqlMigration
-                                                              (\m -> m
-                                                                  { migrationInTxn =
-                                                                      inTxn
-                                                                  }
-                                                              )
-                                                              divideBy0Mig
-                                                        ]
-                                                    )
+                                                    Nothing
                                                     testConnTimeout
                                                     (const $ pure ())
                                                 )
@@ -542,24 +533,9 @@ spec = do
                                                                   `List.isInfixOf` show
                                                                                        e
 
-                                                                  &&
-
-                                                            -- For no-txn migrations, each statement is retried individually
-                                                                     (inTxn
-                                                                     && "SELECT 2;"
-                                                                     `List.isInfixOf` show
-                                                                                          e
-                                                                     || not
-                                                                            inTxn
-                                                                     && not
-                                                                            ("SELECT 2;"
-                                                                            `List.isInfixOf` show
-                                                                                                 e
-                                                                            )
-                                                                     && "SELECT 7/0"
-                                                                     `List.isInfixOf` show
-                                                                                          e
-                                                                     )
+                                                                  && "SELECT 7/0"
+                                                                  `List.isInfixOf` show
+                                                                                       e
                                                           )
                                         logs <- readMVar logsmv
                                         length

@@ -201,7 +201,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         let waitTimeInSecs :: Double = realToFrac connectTimeout
-        logDebugN
+        logInfoN
             $  "Checking if Database '"
             <> dbName
             <> "' is accessible with the configured connection string... (waiting up to "
@@ -230,7 +230,7 @@ applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, 
 
         if null bootstrapMigBlocks
             then do
-                logDebugN
+                logInfoN
                     "Checking if Codd Schema exists and creating it if necessary..."
 
                 withConnection migsConnString connectTimeout $ createCoddSchema txnIsolationLvl
@@ -334,7 +334,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
 
             pure $ PendingMigrations bootstrapMigBlocks otherMigBlocks
         else do
-            logDebugN
+            logInfoN
                 "Checking if Codd Schema exists and creating it if necessary..."
 
             withConnection defaultConnString connectTimeout $ createCoddSchema txnIsolationLvl
@@ -351,7 +351,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
         collectOtherMigrations = do
                 withConnection defaultConnString connectTimeout $ \conn -> do
                     -- Note: there should be no risk of race conditions for the query below, already-run migrations can't be deleted or have its non-null fields set to null again
-                    logDebugN
+                    logInfoN
                         "Checking in the Database which SQL migrations have already been applied..."
                     migsAlreadyApplied :: [FilePath] <-
                         liftIO
