@@ -5,7 +5,7 @@ module Codd.Internal.MultiQueryStatement
   , runSingleStatementInternal_
   ) where
 
-import           Codd.Internal.Retry            ( retry )
+import           Codd.Internal.Retry            ( retry_ )
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
@@ -83,11 +83,11 @@ multiQueryStatement_
 multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
   (UnparsedSql t, InTransaction) -> singleStatement_ conn t
   (UnparsedSql t, NotInTransaction retryPol) ->
-    retry retryPol $ singleStatement_ conn t
+    retry_ retryPol $ singleStatement_ conn t
   (WellParsedSql stms, NotInTransaction retryPol) ->
     -- We retry individual statements in no-txn migrations
                                                      flip Streaming.mapM_ stms
-    $ \stm -> retry retryPol $ runSingleStatementInternal_ conn stm
+    $ \stm -> retry_ retryPol $ runSingleStatementInternal_ conn stm
   (WellParsedSql stms, InTransaction) ->
     -- We don't retry individual statements in in-txn migrations
     flip Streaming.mapM_ stms $ \stm -> runSingleStatementInternal_ conn stm

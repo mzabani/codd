@@ -12,7 +12,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction(..)
                                                 , multiQueryStatement_
                                                 )
-import           Codd.Internal.Retry            ( retry )
+import           Codd.Internal.Retry            ( RetryIteration (..), retry )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
 
                                                 , SqlMigration(..)
@@ -30,7 +30,7 @@ import           Control.Monad                  ( forM
                                                 , forM_
                                                 , unless
                                                 , void
-                                                , when, foldM
+                                                , when, foldM, (>=>)
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Logger           ( MonadLogger
@@ -74,6 +74,7 @@ import qualified System.IO as IO
 import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release, MonadResource)
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 import UnliftIO.IO (openFile, IOMode (ReadMode))
+import Data.Bifunctor (second)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -338,13 +339,12 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
 
             withConnection defaultConnString connectTimeout $ createCoddSchema txnIsolationLvl
 
-            blocksOfMigsToRun <- collectOtherMigrations
-            pure $ PendingMigrations [] blocksOfMigsToRun
+            PendingMigrations [] <$> collectOtherMigrations
     where
         collectBootstrapMigrations =
             parseMigrationFiles [] sqlMigrations <&> span isBootstrapMigBlock
             where
-                isBootstrapMigBlock (m1 :| _) = case migrationCustomConnInfo $ addedSqlMig m1 of
+                isBootstrapMigBlock (BlockOfMigrations (m1 :| _) _) = case migrationCustomConnInfo $ addedSqlMig m1 of
                     Nothing -> False
                     Just connInfo -> DB.connectDatabase defaultConnString /= DB.connectDatabase connInfo
 
@@ -371,8 +371,8 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
 -- the last line had a '\n' at the end or an EOF.
 -- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
 -- So we copy streaming's implementation and modify it slightly.
-streamingReadFile :: MonadResource m => FilePath -> m (Stream (Of Text) m ())
-streamingReadFile filePath = Streaming.map Text.pack . go . snd <$> allocate (openFile filePath ReadMode) hClose
+streamingReadFile :: MonadResource m => FilePath -> m (ReleaseKey, Stream (Of Text) m ())
+streamingReadFile filePath = second (Streaming.map Text.pack . go) <$> allocate (openFile filePath ReadMode) hClose
   where
     go h = do
         eof <- liftIO $ IO.hIsEOF h
@@ -390,9 +390,43 @@ parseMigrationFiles
     -> Either [FilePath] [AddedSqlMigration m]
     -> m [BlockOfMigrations m]
 parseMigrationFiles migsCompleted sqlMigrations = do
-    pendingParsedMigrations :: [AddedSqlMigration m] <- either
-        (\(sqlDirs :: [FilePath]) -> do
-            pendingSqlMigrationFiles :: [(FilePath, FilePath)] <-
+    pendingParsedMigrations :: [((FilePath, FilePath), (ReleaseKey, AddedSqlMigration m))] <- either
+        (listPendingFromDisk >=> readPaths)
+        readFromMemory
+        sqlMigrations
+
+    -- Group migrations in blocks of consecutive transactions by in-txn/no-txn and custom
+    -- connection string.
+    pure $ NE.groupWith
+        (\(_, (_, AddedSqlMigration m _)) ->
+            (migrationInTxn m, migrationCustomConnInfo m)
+        )
+        pendingParsedMigrations
+        <&> \migs -> BlockOfMigrations {
+            allMigs = snd . snd <$> migs
+            , reReadBlock = reRead migs
+        }
+
+    where
+        reRead oldMigsAndPaths = do
+            -- Close handles of all migrations in the block, re-open and read+parse them
+            forM_ oldMigsAndPaths $ \(_, (releaseKey, _)) -> release releaseKey
+            newMigs <- readPaths $ fmap fst oldMigsAndPaths
+            pure BlockOfMigrations {
+                allMigs = snd . snd <$> newMigs
+                , reReadBlock = reRead newMigs
+            }
+        readFromMemory ams = pure
+                $ mapMaybe
+                      (\case
+                          a@(AddedSqlMigration mig _)
+                              | migrationName mig `elem` migsCompleted
+                              -> Nothing
+                              | otherwise
+                              -> Just ((migrationName mig, migrationName mig), (error "No releaseKey for in-memory migs", a))
+                      )
+                $ sortOn (\(AddedSqlMigration _ ts) -> ts) ams
+        listPendingFromDisk sqlDirs =
                 fmap (sortOn fst . concat) $ forM sqlDirs $ \dir -> do
                     filesInDir <- listDirectory dir
                     return $ map (\fn -> (fn, dir </> fn)) $ filter
@@ -400,15 +434,17 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                             ".sql"
                                 `List.isSuffixOf` fn
                                 &&                fn
-                                `notElem`         migsCompleted
+                                    `notElem`         migsCompleted
                         )
                         filesInDir
 
-            sqlMigrationsContents :: [(FilePath, Stream (Of Text) m ())] <-
+        readPaths :: forall t. Traversable t => t (FilePath, FilePath) -> m (t ((FilePath, FilePath), (ReleaseKey, AddedSqlMigration m)))
+        readPaths pendingSqlMigrationFiles = do
+            sqlMigrationsContents :: t ((FilePath, FilePath), (ReleaseKey, Stream (Of Text) m ())) <-
                 pendingSqlMigrationFiles
-                `forM` (\(fn, fp) -> (,) fn <$> streamingReadFile fp)
+                `forM` (\nameAndPath@(_, fp) -> (,) nameAndPath <$> streamingReadFile fp)
 
-            forM sqlMigrationsContents $ \(fn, sqlStream) -> do
+            forM sqlMigrationsContents $ \((fn, fp), (releaseKey, sqlStream)) -> do
                     parsedMig <- parseAddedSqlMigration fn sqlStream
                     case parsedMig of
                         Left err -> do
@@ -420,29 +456,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                                         $ Text.pack fn
                                         <> " is not to be parsed and thus will be considered in is entirety as in-txn."
                                 _ -> pure ()
-                            pure asqlmig
-        )
-        (\(ams :: [AddedSqlMigration m]) ->
-            return
-                $ mapMaybe
-                      (\case
-                          a@(AddedSqlMigration mig _)
-                              | migrationName mig `elem` migsCompleted
-                              -> Nothing
-                              | otherwise
-                              -> Just a
-                      )
-                $ sortOn (\(AddedSqlMigration _ ts) -> ts) ams
-        )
-        sqlMigrations
-
-    -- Run all Migrations now. Group them in blocks of consecutive transactions by in-txn/no-txn and custom
-    -- connection string.
-    return $ NE.groupWith
-        (\(AddedSqlMigration m _) ->
-            (migrationInTxn m, migrationCustomConnInfo m)
-        )
-        pendingParsedMigrations
+                            pure ((fn, fp), (releaseKey, asqlmig))
 
 data ApplyMigsResult m a = ApplyMigsResult
     { migsAppliedAt     :: [(AddedSqlMigration m, UTCTime)]
@@ -561,8 +575,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl c
         if inTxn then registerRanMigration defaultConn
             else \fp time -> beginCommitTxnBracket isolLvl defaultConn $ registerRanMigration defaultConn fp time
 
-    runMigs :: DB.Connection -> RetryPolicy -> [AddedSqlMigration m] -> (FilePath -> DB.UTCTimestamp -> m UTCTime) -> m [(AddedSqlMigration m, UTCTime)]
-    runMigs conn withRetryPolicy migs runAfterMig = forM migs $ \asqlmig ->
+    runMigs :: DB.Connection -> RetryPolicy -> NonEmpty (AddedSqlMigration m) -> (FilePath -> DB.UTCTimestamp -> m UTCTime) -> m [(AddedSqlMigration m, UTCTime)]
+    runMigs conn withRetryPolicy migs runAfterMig = fmap NE.toList $ forM migs $ \asqlmig ->
         (asqlmig,)
             <$> applySingleMigration conn
                                      withRetryPolicy
@@ -577,17 +591,20 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl c
     runBlock act conn migBlock runAfterMig = do
         if blockInTxn migBlock
             then do
-                res <- retry retryPol $ do
-                    logDebugN "BEGINning transaction"
+                res <- retry retryPol $ \RetryIteration { tryNumber } -> do
+                    blockFinal <- if tryNumber == 0 then pure migBlock else do
+                        logDebugN "Re-reading migrations of this block from disk"
+                        reReadBlock migBlock
+                    logInfoN "BEGINning transaction"
                     beginCommitTxnBracket isolLvl conn
                         $   ApplyMigsResult
-                        <$> runMigs conn singleTryPolicy (NE.toList migBlock) runAfterMig -- We retry entire transactions, not individual statements
+                        <$> runMigs conn singleTryPolicy (allMigs blockFinal) runAfterMig -- We retry entire transactions, not individual statements
                         <*> act conn
-                logDebugN "COMMITed transaction"
+                logInfoN "COMMITed transaction"
                 pure res
             else
                 ApplyMigsResult
-                <$> runMigs conn retryPol (NE.toList migBlock) runAfterMig
+                <$> runMigs conn retryPol (allMigs migBlock) runAfterMig
                 <*> act conn
 
 -- | This can be used as a last-action when applying migrations to
@@ -620,19 +637,23 @@ laxCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
     logChecksumsComparison cksums expectedHashes
     pure cksums
 
-type BlockOfMigrations m = NonEmpty (AddedSqlMigration m)
+data BlockOfMigrations m = BlockOfMigrations {
+    allMigs :: NonEmpty (AddedSqlMigration m)
+    , reReadBlock :: m (BlockOfMigrations m)
+}
 blockInTxn :: BlockOfMigrations m -> Bool
-blockInTxn (AddedSqlMigration { addedSqlMig } :| _) =
+blockInTxn (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _) =
     migrationInTxn addedSqlMig
 
 blockCustomConnInfo :: BlockOfMigrations m -> Maybe DB.ConnectInfo
-blockCustomConnInfo (AddedSqlMigration { addedSqlMig } :| _) =
+blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _) =
     migrationCustomConnInfo addedSqlMig
 
 data CanUpdateCoddSchema = CanUpdateCoddSchema | CannotUpdateCoddSchema
     deriving stock (Eq)
 
--- | Applies a single migration and returns the time when it finished being applied.
+-- | Applies a single migration and returns the time when it finished being applied. Does not
+-- itself register that the migration ran, only runs "afterMigRun" after applying the migration.
 applySingleMigration
     :: forall m
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
@@ -644,12 +665,12 @@ applySingleMigration
 applySingleMigration conn statementRetryPol afterMigRun (AddedSqlMigration sqlMig migTimestamp)
     = do
         let fn = migrationName sqlMig
-        logDebugN $ "Applying " <> Text.pack fn
+        logInfoN $ "Applying " <> Text.pack fn
 
         let inTxn = if migrationInTxn sqlMig
                 then InTransaction
                 else NotInTransaction statementRetryPol
-        
+
         multiQueryStatement_ inTxn conn $ migrationSql sqlMig
         afterMigRun fn migTimestamp
 
@@ -660,7 +681,7 @@ data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 --   Fails if the codd_schema hasn't yet been created.
 registerRanMigration :: MonadIO m =>
     DB.Connection
-    -- ^ The default connection, not any other or this will fail.
+    -- ^ The default connection, not any other or this might fail.
     -> FilePath -> DB.UTCTimestamp -> m UTCTime
 registerRanMigration conn fn migTimestamp =
     DB.fromOnly <$> unsafeQuery1 conn

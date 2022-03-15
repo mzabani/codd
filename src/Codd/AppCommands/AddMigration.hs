@@ -70,8 +70,8 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
     runResourceT $ do
-      sqlMigContents <- streamingReadFile fp
-      parsedSqlMigE  <- parseSqlMigration (takeFileName fp) sqlMigContents
+      (_, sqlMigContents) <- streamingReadFile fp
+      parsedSqlMigE       <- parseSqlMigration (takeFileName fp) sqlMigContents
       case parsedSqlMigE of
         Left err ->
           error
