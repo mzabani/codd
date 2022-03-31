@@ -569,7 +569,7 @@ spec = do
                                                           )
                                                       `shouldBe` 1
                                 it "For in-txn migrations" $ testRetries True
-                                it "For no-txn migrations" $ testRetries True
+                                it "For no-txn migrations" $ testRetries False
 
             describe "Custom connection-string migrations" $ do
                 it
