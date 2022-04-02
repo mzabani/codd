@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: eaeeb022ef2d9451da8021ea7d64c38899b191726088ff5aa546c6bd24f031d6
+-- hash: f6805451c1b96ceba8a03ac5efb54d3efefeb99294523677052e47c980275354
 
 name:           codd
 version:        0.1.0.0
@@ -195,6 +195,7 @@ test-suite codd-test
     , monad-logger
     , mtl
     , postgresql-simple
+    , random
     , resourcet
     , streaming
     , text

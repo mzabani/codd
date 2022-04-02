@@ -18,7 +18,6 @@ module Codd.Parsing
   , parseAddedSqlMigration
   , parseAndClassifyMigration
   , parseMigrationTimestamp
-  , parseSqlPieces
   , parseSqlPiecesStreaming
   , toMigrationTimestamp
   ) where
@@ -37,7 +36,6 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , endOfLine
                                                 , many'
                                                 , many1
-                                                , manyTill
                                                 , parseOnly
                                                 , peekChar
                                                 , sepBy1
@@ -50,7 +48,6 @@ import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
-import           Data.List.NonEmpty             ( NonEmpty(..) )
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -116,9 +113,6 @@ data SectionOption = OptInTxn Bool | OptNoParse Bool
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
-parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
-parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
-
 -- | This should be the equivalent to `parseSqlPieces`, but for Streams.
 parseSqlPiecesStreaming
   :: forall m . Monad m => Stream (Of Text) m () -> Stream (Of SqlPiece) m ()
@@ -178,13 +172,6 @@ sqlPieceText (RollbackTransaction s      ) = s
 sqlPieceText (CommitTransaction   s      ) = s
 sqlPieceText (OtherSqlPiece       s      ) = s
 sqlPieceText (CopyFromStdinPiece s1 s2 s3) = s1 <> s2 <> s3
-
-sqlPiecesParser :: Parser (NonEmpty SqlPiece)
-sqlPiecesParser = do
-  pcs <- manyTill sqlPieceParser endOfInput
-  case pcs of
-    []       -> fail "SQL migration is empty"
-    (p : ps) -> pure (p :| ps)
 
 sqlPieceParser :: Parser SqlPiece
 sqlPieceParser =

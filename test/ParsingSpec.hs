@@ -1,3 +1,4 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 module ParsingSpec where
 
 import           Codd.Parsing                   ( ParsedSql(..)
@@ -6,7 +7,6 @@ import           Codd.Parsing                   ( ParsedSql(..)
                                                 , isCommentPiece
                                                 , isWhiteSpacePiece
                                                 , parseSqlMigration
-                                                , parseSqlPieces
                                                 , parseSqlPiecesStreaming
                                                 , parsedSqlText
                                                 , piecesToText
@@ -29,7 +29,13 @@ import qualified Data.Text                     as Text
 import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( mkValidSql )
 import           EnvironmentSpec                ( ConnStringGen(..) )
+import           Streaming                      ( Of
+                                                , Stream
+                                                )
 import qualified Streaming.Prelude             as Streaming
+import           System.Random                  ( mkStdGen
+                                                , randomR
+                                                )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
@@ -37,10 +43,20 @@ import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
 
-newtype RandomSql = RandomSql {unRandomSql :: Text} deriving newtype (Show)
+data RandomSql m = RandomSql
+  { unRandomSql  :: Stream (Of Text) m ()
+  , fullContents :: Text
+  }
+instance Show (RandomSql m) where
+  show RandomSql { fullContents } = show fullContents
 
 -- | Syntactically valid SQL must contain at least one statement!
-newtype SyntacticallyValidRandomSql = SyntacticallyValidRandomSql {unSyntRandomSql :: Text} deriving newtype (Show)
+data SyntacticallyValidRandomSql m = SyntacticallyValidRandomSql
+  { unSyntRandomSql :: Stream (Of Text) m ()
+  , fullContents    :: Text
+  }
+instance Show (SyntacticallyValidRandomSql m) where
+  show SyntacticallyValidRandomSql { fullContents } = show fullContents
 
 genSingleSqlStatement :: Gen SqlPiece
 genSingleSqlStatement = elements validSqlStatements
@@ -126,9 +142,27 @@ validSqlStatements =
     --   <> "\n  */ SELECT 1;"
   ]
 
-genSql :: Bool -> Gen Text
-genSql onlySyntacticallyValid = frequency
-  [(if onlySyntacticallyValid then 0 else 1, pure ""), (50, randomSqlGen)]
+
+genTextStream :: Monad m => Text -> Gen (Stream (Of Text) m ())
+genTextStream t = do
+  n <- arbitrary
+  pure $ mkRandStream n t
+
+mkRandStream :: Monad m => Int -> Text -> Stream (Of Text) m ()
+mkRandStream seed t = go (mkStdGen seed) t
+ where
+  go g t =
+    let (n, g') = randomR (0, len) g
+        remainder =
+          if t == "" then Streaming.yield "" else go g' (Text.drop n t)
+    in  Streaming.yield (Text.take n t) <> remainder
+    where len = Text.length t
+
+genSql :: Monad m => Bool -> Gen (Stream (Of Text) m (), Text)
+genSql onlySyntacticallyValid = do
+  t <- frequency
+    [(if onlySyntacticallyValid then 0 else 1, pure ""), (50, randomSqlGen)]
+  (, t) <$> genTextStream t
  where
   emptyLineGen   = pure "\n"
   bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
@@ -140,9 +174,9 @@ genSql onlySyntacticallyValid = frequency
   -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
   -- is so low that we can just ignore it
   dashDashCommentGen =
-    (<> "\n") . ("-- " <>) . (Text.replace "\n" "") <$> bizarreLineGen
+    (<> "\n") . ("-- " <>) . Text.replace "\n" "" <$> bizarreLineGen
   cStyleCommentGen =
-    ("/*" <>) . (<> "*/") . (Text.replace "*/" "") <$> bizarreLineGen
+    ("/*" <>) . (<> "*/") . Text.replace "*/" "" <$> bizarreLineGen
   commentGen       = frequency [(5, dashDashCommentGen), (1, cStyleCommentGen)]
   lineOrCommentGen = frequency [(5, lineGen), (1, commentGen)]
   randomSqlGen     = fmap Text.concat $ do
@@ -164,11 +198,11 @@ genSql onlySyntacticallyValid = frequency
       then mapLast (\t -> fromMaybe t (Text.stripSuffix ";" t)) finalList
       else finalList
 
-instance Arbitrary RandomSql where
-  arbitrary = fmap RandomSql (genSql False)
+instance Monad m => Arbitrary (RandomSql m) where
+  arbitrary = uncurry RandomSql <$> genSql False
 
-instance Arbitrary SyntacticallyValidRandomSql where
-  arbitrary = fmap SyntacticallyValidRandomSql (genSql True)
+instance Monad m => Arbitrary (SyntacticallyValidRandomSql m) where
+  arbitrary = uncurry SyntacticallyValidRandomSql <$> genSql True
 
 shouldHaveWellParsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
 mig `shouldHaveWellParsedSql` sql = case migrationSql mig of
@@ -193,82 +227,80 @@ spec :: Spec
 spec = do
   describe "Parsing tests" $ do
     context "Multi Query Statement Parser" $ do
-      it "Single command with and without semi-colon" $ do
-        let eblks :: Either String [NonEmpty SqlPiece] = traverse
-              parseSqlPieces
+      it "Single command with and without semi-colon"
+        $ property
+        $ \randomSeed -> do
+            blks :: [[SqlPiece]] <- traverse
+              ( (Streaming.toList_ . parseSqlPiecesStreaming)
+              . mkRandStream randomSeed
+              )
               [ "CREATE TABLE hello;"
               , "CREATE TABLE hello"
               , "CREATE TABLE hello; -- Comment"
               , "CREATE TABLE hello -- Comment"
               , "CREATE TABLE hello -- Comment\n;"
               ]
-        eblks `shouldBe` Right
-          [ OtherSqlPiece "CREATE TABLE hello;" :| []
-          , OtherSqlPiece "CREATE TABLE hello" :| []
-          , OtherSqlPiece "CREATE TABLE hello;"
-            :| [WhiteSpacePiece " ", CommentPiece "-- Comment"]
-          , OtherSqlPiece "CREATE TABLE hello -- Comment" :| []
-          , OtherSqlPiece "CREATE TABLE hello -- Comment\n;" :| []
-          ]
+            blks
+              `shouldBe` [ [OtherSqlPiece "CREATE TABLE hello;"]
+                         , [OtherSqlPiece "CREATE TABLE hello"]
+                         , [ OtherSqlPiece "CREATE TABLE hello;"
+                           , WhiteSpacePiece " "
+                           , CommentPiece "-- Comment"
+                           ]
+                         , [OtherSqlPiece "CREATE TABLE hello -- Comment"]
+                         , [OtherSqlPiece "CREATE TABLE hello -- Comment\n;"]
+                         ]
       it "Statement separation boundaries are good"
-        $ forAll (listOf1 genSingleSqlStatement)
-        $ \blocks -> do
-            let estm = parseSqlPieces $ Text.concat (map sqlPieceText blocks)
-            NE.toList <$> estm `shouldBe` Right blocks
+        $ forAll ((,) <$> listOf1 genSingleSqlStatement <*> arbitrary @Int)
+        $ \(origPieces, randomSeed) -> do
+            parsedPieces <-
+              Streaming.toList_
+              $ parseSqlPiecesStreaming
+              $ mkRandStream randomSeed
+              $ Text.concat (map sqlPieceText origPieces)
+            parsedPieces `shouldBe` origPieces
       it
           "Statements concatenation matches original and statements end with semi-colon"
         $ do
-            property $ \(unSyntRandomSql -> plainSql) -> do
-              let eblks = parseSqlPieces plainSql
-              -- putStrLn "--------------------------------------------------"
-              -- print plainSql
-              case eblks of
-                Left  e    -> expectationFailure $ "Got left: " <> show eblks
-                Right blks -> do
-                  let comments = [ t | CommentPiece t <- NE.toList blks ]
-                      whtspc   = [ t | WhiteSpacePiece t <- NE.toList blks ]
-                  spieces <-
-                    Streaming.toList_ $ parseSqlPiecesStreaming $ Streaming.each
-                      [plainSql]
-                  spieces `shouldBe` NE.toList blks
-                  piecesToText blks `shouldBe` plainSql
-                  forM_ blks $ \case
-                    CommentPiece t ->
-                      t
-                        `shouldSatisfy` (\c ->
-                                          "--"
-                                            `Text.isPrefixOf` c
-                                            ||                "/*"
-                                            `Text.isPrefixOf` c
-                                            &&                "*/"
-                                            `Text.isSuffixOf` c
-                                        )
-                    WhiteSpacePiece t ->
-                      t `shouldSatisfy` (\c -> Text.strip c == "")
-                    CopyFromStdinPiece c d ll ->
-                      ll
-                        `shouldSatisfy` (\l ->
-                                          d
-                                            /= ""
-                                            && (  l
-                                               == "\n\\.\n"
-                                               || l
-                                               == "\r\n\\.\r\n"
-                                               )
-                                            || d
-                                            == ""
-                                            && (l == "\\.\n" || l == "\\.\r\n")
-                                        )
-                    _ -> pure ()
+            property $ \SyntacticallyValidRandomSql {..} -> do
+              blks <- Streaming.toList_
+                $ parseSqlPiecesStreaming unSyntRandomSql
+              let comments = [ t | CommentPiece t <- blks ]
+                  whtspc   = [ t | WhiteSpacePiece t <- blks ]
+              piecesToText blks `shouldBe` fullContents
+              forM_ blks $ \case
+                CommentPiece t ->
+                  t
+                    `shouldSatisfy` (\c ->
+                                      "--"
+                                        `Text.isPrefixOf` c
+                                        ||                "/*"
+                                        `Text.isPrefixOf` c
+                                        &&                "*/"
+                                        `Text.isSuffixOf` c
+                                    )
+                WhiteSpacePiece t ->
+                  t `shouldSatisfy` (\c -> Text.strip c == "")
+                CopyFromStdinPiece c d ll ->
+                  ll
+                    `shouldSatisfy` (\l ->
+                                      d
+                                        /= ""
+                                        && (l == "\n\\.\n" || l == "\r\n\\.\r\n"
+                                           )
+                                        || d
+                                        == ""
+                                        && (l == "\\.\n" || l == "\\.\r\n")
+                                    )
+                _ -> pure ()
 
     context "Simple mode" $ do
       context "Valid SQL Migrations" $ do
         it "Plain Sql Migration, missing optional options" $ do
-          property $ \(unSyntRandomSql -> plainSql) -> do
-            Right parsedMig <- parseSqlMigration "any-name.sql"
-              $ Streaming.each [plainSql]
+          property $ \SyntacticallyValidRandomSql {..} -> do
+            Right parsedMig <- parseSqlMigration "any-name.sql" unSyntRandomSql
             migrationName parsedMig `shouldBe` "any-name.sql"
-            parsedMig `shouldHaveWellParsedSql` plainSql
+            parsedMig `shouldHaveWellParsedSql` fullContents
             migrationInTxn parsedMig `shouldBe` True
             migrationCustomConnInfo parsedMig `shouldBe` Nothing
         it "Sql Migration options parsed correctly" $ do
@@ -331,13 +363,14 @@ spec = do
 
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
-        property $ \(unRandomSql -> anyText) -> do
-          mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [anyText])
+        property $ \RandomSql { unRandomSql } -> do
+          mig <- parseSqlMigration @IO "any-name.sql" unRandomSql
           pure $ mig `seq` ()
 
-      it "Gibberish after -- codd:" $ do
+      it "Gibberish after -- codd:" $ property $ \randomSeed -> do
         let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
-        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        mig <- parseSqlMigration @IO "any-name.sql"
+          $ mkRandStream randomSeed sql
         case mig of
           Left err ->
             err `shouldSatisfy`
@@ -345,90 +378,103 @@ spec = do
                                 List.isInfixOf "complete gibberish"
           Right _ -> expectationFailure "Got Right"
 
-      it "Duplicate options" $ do
+      it "Duplicate options" $ property $ \randomSeed -> do
         let sql = "-- codd: in-txn, in-txn\n" <> "ANY SQL HERE"
-        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        mig <- parseSqlMigration @IO "any-name.sql"
+          $ mkRandStream randomSeed sql
         case mig of
           Right _   -> expectationFailure "Got Right"
           Left  err -> err `shouldSatisfy` List.isInfixOf "duplicate"
 
-      it "Unknown / mistyped options" $ do
+      it "Unknown / mistyped options" $ property $ \randomSeed -> do
         let sql = "-- codd: unknown-txn\n" <> "ANY SQL HERE"
-        shouldReturnLeft @IO
-          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
+        shouldReturnLeft @IO $ parseSqlMigration "any-name.sql" $ mkRandStream
+          randomSeed
+          sql
 
-      it "Mistyped connection string option" $ do
+      it "Mistyped connection string option" $ property $ \randomSeed -> do
         let sql = "-- codd-connection: blah\n" <> "ANY SQL HERE"
-        mig <- parseSqlMigration @IO "any-name.sql" (Streaming.each [sql])
+        mig <- parseSqlMigration @IO "any-name.sql"
+          $ mkRandStream randomSeed sql
         case mig of
           Left err ->
             -- Nice error message explaining valid format
             err `shouldSatisfy` List.isInfixOf "postgres://"
           Right _ -> expectationFailure "Got Right"
 
-      it "Two connection strings" $ do
+      it "Two connection strings" $ property $ \randomSeed -> do
         let
           sql =
             "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
               <> "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
               <> "ANY SQL HERE"
-        shouldReturnLeft @IO
-          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
+        shouldReturnLeft @IO $ parseSqlMigration "any-name.sql" $ mkRandStream
+          randomSeed
+          sql
 
-      it "Two -- codd comments" $ do
+      it "Two -- codd comments" $ property $ \randomSeed -> do
         let sql = "-- codd: in-txn\n--codd: in-txn\n" <> "MORE SQL HERE"
-        shouldReturnLeft @IO
-          $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
+        shouldReturnLeft @IO $ parseSqlMigration "any-name.sql" $ mkRandStream
+          randomSeed
+          sql
 
-      it "--codd: no-parse returns UnparsedSql" $ do
-        let sql =
-              [ "-- codd: no-parse\n"
-              , "-- Anything here!"
-              , "Some statement; -- Some comment\n"
-              , "Other statement"
-              ]
+      it "--codd: no-parse returns UnparsedSql" $ property $ \randomSeed -> do
+        let
+          sql
+            = "-- codd: no-parse\n\
+                \-- Anything here!\
+                \Some statement; -- Some comment\n\
+                \Other statement"
+
         mig <- either (error "Oops") id
-          <$> parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
+          <$> parseSqlMigration
+                "no-parse-migration.sql"
+                (mkRandStream randomSeed sql)
         migrationName mig `shouldBe` "no-parse-migration.sql"
-        shouldHaveUnparsedSql mig $ Text.concat sql
+        shouldHaveUnparsedSql mig sql
         migrationInTxn mig `shouldBe` True
         migrationCustomConnInfo mig `shouldBe` Nothing
 
-      it "--codd: no-parse with custom connection-string" $ do
-        let
-          sql =
-            [ "-- codd: no-parse\n"
-            , "-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n"
-            , ""
-            , "-- Anything here!"
-            , "Some statement; -- Some comment\n"
-            , "Other statement"
-            ]
-        mig <- either (error "Oops") id
-          <$> parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
-        migrationName mig `shouldBe` "no-parse-migration.sql"
-        shouldHaveUnparsedSql mig $ Text.concat sql
-        migrationInTxn mig `shouldBe` True
-        migrationCustomConnInfo mig `shouldBe` Just DB.ConnectInfo
-          { DB.connectUser     = "codd_admin"
-          , DB.connectHost     = "127.0.0.1"
-          , DB.connectPort     = 5433
-          , DB.connectPassword = ""
-          , DB.connectDatabase = "codd-experiments"
-          }
+      it "--codd: no-parse with custom connection-string"
+        $ property
+        $ \randomSeed -> do
+            let
+              sql
+                = "-- codd: no-parse\n\
+            \-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n\
+            \-- Anything here!\
+            \Some statement; -- Some comment\n\
+            \Other statement"
 
-      it "--codd: no-parse does not mix with -- codd: no-txn" $ do
-        let sql =
-              ["-- codd: no-parse\n", "-- codd: no-txn\n", "", "Some statement"]
-        shouldReturnLeft @IO
-          $ parseSqlMigration "no-parse-migration.sql" (Streaming.each sql)
+            mig <- either (error "Oops") id
+              <$> parseSqlMigration
+                    "no-parse-migration.sql"
+                    (mkRandStream randomSeed sql)
+            migrationName mig `shouldBe` "no-parse-migration.sql"
+            shouldHaveUnparsedSql mig $ sql
+            migrationInTxn mig `shouldBe` True
+            migrationCustomConnInfo mig `shouldBe` Just DB.ConnectInfo
+              { DB.connectUser     = "codd_admin"
+              , DB.connectHost     = "127.0.0.1"
+              , DB.connectPort     = 5433
+              , DB.connectPassword = ""
+              , DB.connectDatabase = "codd-experiments"
+              }
+
+      it "--codd: no-parse does not mix with -- codd: no-txn"
+        $ property
+        $ \randomSeed -> do
+            let sql = "-- codd: no-parse\n-- codd: no-txn\nSome statement"
+            shouldReturnLeft @IO
+              $ parseSqlMigration "no-parse-migration.sql"
+              $ mkRandStream randomSeed sql
 
       it "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith
             "Testing this by selecting txid_current() might be more effective"
 
     context "Other important behaviours to test" $ do
-      it "Empty queries detector works well" $ do
+      it "Empty queries detector works well" $ property $ \randomSeed -> do
         let
           emptyQueries =
             [ ""
@@ -466,12 +512,13 @@ spec = do
               <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
             ]
         forM_ emptyQueries $ \q -> do
-          let parsed = parseSqlPiecesStreaming (Streaming.each [q])
+          let parsed = parseSqlPiecesStreaming $ mkRandStream randomSeed q
           Streaming.all_ (\p -> isWhiteSpacePiece p || isCommentPiece p) parsed
             `shouldReturn` True
         forM_ (nonEmptyQueries ++ map sqlPieceText validSqlStatements) $ \q ->
           do
-            let parsed = parseSqlPiecesStreaming (Streaming.each [q])
+            let parsed =
+                  parseSqlPiecesStreaming $ mkRandStream (randomSeed + 1) q
             Streaming.any_
                 (\p -> not (isWhiteSpacePiece p || isCommentPiece p))
                 parsed

@@ -117,6 +117,7 @@ tests:
     - hspec-expectations
     - mtl
     - QuickCheck
+    - random
     - resourcet
     - streaming
     - time

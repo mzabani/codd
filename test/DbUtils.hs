@@ -13,7 +13,7 @@ import           Codd.Internal                  ( PendingMigrations
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
-                                                , parseSqlPieces
+                                                , parseSqlPiecesStreaming
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
@@ -80,9 +80,7 @@ aroundConnInfo = around $ \act -> do
     act cinfo
 
 mkValidSql :: Monad m => Text -> ParsedSql m
-mkValidSql t = case parseSqlPieces t of
-    Left  e   -> error e -- Probably best to fail early if sql is invalid inside test code
-    Right pcs -> WellParsedSql $ Streaming.each pcs
+mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
