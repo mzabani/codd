@@ -136,16 +136,20 @@ finallyDrop dbName f = f `finally` dropDb
                       $  "DROP DATABASE IF EXISTS "
                       <> dbIdentifier dbName
 
-createTestUserMig :: MonadIO m => m (AddedSqlMigration m)
-createTestUserMig = do
+createTestUserMig :: forall m . MonadIO m => m (AddedSqlMigration m)
+createTestUserMig = createTestUserMigPol @m
+
+-- | A version of "createTestUser" that is more polymorphic in the Monad of the
+-- returned migration.
+createTestUserMigPol
+    :: forall n m . (Monad n, MonadIO m) => m (AddedSqlMigration n)
+createTestUserMigPol = do
     let migTimestamp = getIncreasingTimestamp (-1000)
     cinfo <- testConnInfo
 
-    pure $ AddedSqlMigration
-        SqlMigration
-            { migrationName           = "bootstrap-test-db-and-user.sql"
-            , migrationSql            =
-                mkValidSql
+    let
+        psql =
+            mkValidSql
                 $  "DO\n"
                 <> "$do$\n"
                 <> "BEGIN\n"
@@ -156,6 +160,10 @@ createTestUserMig = do
                 <> "$do$;\n"
                 <> "CREATE DATABASE \"codd-test-db\" WITH OWNER=\"codd-test-user\";\n"
                 <> "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\";"
+    pure $ AddedSqlMigration
+        SqlMigration
+            { migrationName           = "bootstrap-test-db-and-user.sql"
+            , migrationSql            = psql
             , migrationInTxn          = False
 -- A custom connection string is necessary because the DB doesn't yet exist
             , migrationCustomConnInfo = Just cinfo

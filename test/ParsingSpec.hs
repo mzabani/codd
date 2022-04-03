@@ -38,6 +38,7 @@ import           System.Random                  ( mkStdGen
                                                 )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
+import           Test.Hspec.QuickCheck          ( prop )
 import           Test.QuickCheck
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
