@@ -23,7 +23,7 @@ newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe 
 checkMigration :: Monad m => SqlMigration m -> m (Either Text MigrationCheck)
 checkMigration mig = do
     migEndsTransaction <- case (migrationSql mig, migrationInTxn mig) of
-        (UnparsedSql _, _) -> pure $ Left "Cannot analyze no-parse migration."
+        (UnparsedSql   _     , _   ) -> pure $ Right Nothing
         (WellParsedSql pieces, True) -> do
             problem <- Streaming.any_ isTransactionEndingPiece pieces
             pure $ Right $ if problem

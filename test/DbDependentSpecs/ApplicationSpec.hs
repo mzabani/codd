@@ -40,6 +40,7 @@ import           Control.Monad.Logger           ( LogStr
                                                 , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans            ( lift )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
 import           Data.Text                      ( Text
@@ -79,7 +80,7 @@ import           UnliftIO.Concurrent            ( MVar
                                                 , readMVar
                                                 )
 
-placeHoldersMig, selectMig, copyMig :: Monad m => AddedSqlMigration m
+placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
 placeHoldersMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-placeholders.sql"
@@ -108,7 +109,7 @@ copyMig = AddedSqlMigration
     (getIncreasingTimestamp 2)
 
 createTableNewTableMig
-    :: Monad m => String -> Bool -> Int -> AddedSqlMigration m
+    :: MonadThrow m => String -> Bool -> Int -> AddedSqlMigration m
 createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
     SqlMigration
         { migrationName           = "000"
@@ -124,7 +125,7 @@ createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
     (getIncreasingTimestamp (fromIntegral migOrder))
 
 createDatabaseMig
-    :: Monad m => DB.ConnectInfo -> String -> Int -> Int -> SqlMigration m
+    :: MonadThrow m => DB.ConnectInfo -> String -> Int -> Int -> SqlMigration m
 createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     { migrationName = "000" <> show migOrder <> "-create-database-mig.sql"
     , migrationSql            = mkValidSql
@@ -137,7 +138,7 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     , migrationCustomConnInfo = Just customConnInfo
     }
 
-createCountCheckingMig :: Monad m => Int -> String -> SqlMigration m
+createCountCheckingMig :: MonadThrow m => Int -> String -> SqlMigration m
 createCountCheckingMig expectedCount migName = SqlMigration
     { migrationName = "000" <> show expectedCount <> "-" <> migName <> ".sql"
     , migrationSql            =
@@ -758,7 +759,7 @@ instance Show (DiverseMigrationOrder m) where
 
 
 diversifyAppCheckMigs
-    :: Monad m
+    :: MonadThrow m
     => DB.ConnectInfo
     -> CoddSettings
     -> AddedSqlMigration m

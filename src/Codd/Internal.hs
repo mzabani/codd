@@ -74,6 +74,7 @@ import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 import UnliftIO.IO (openFile, IOMode (ReadMode))
 import Data.Bifunctor (second)
+import Control.Monad.Trans.Resource (MonadThrow)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -189,7 +190,7 @@ data PendingMigrations m = PendingMigrations {
 }
 
 collectAndApplyMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
     => ([BlockOfMigrations m] -> DB.Connection -> m a)
     -> CoddSettings
     -> Maybe [AddedSqlMigration m]
@@ -266,7 +267,7 @@ createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedEr
 
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
-collectPendingMigrations :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+collectPendingMigrations :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
     => DB.ConnectInfo
     -> Either [FilePath] [AddedSqlMigration m]
     -> TxnIsolationLvl
@@ -330,7 +331,7 @@ streamingReadFile filePath = second (Streaming.map Text.pack . go) <$> allocate 
             go h
 
 parseMigrationFiles
-    :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+    :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
     => [FilePath]
     -> Either [FilePath] [AddedSqlMigration m]
     -> m [BlockOfMigrations m]

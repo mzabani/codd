@@ -13,6 +13,7 @@ import           Control.Monad                  ( (>=>)
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Maybe                     ( isJust )
 import           Data.Text                      ( unpack )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -24,7 +25,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
 import           Test.Hspec
 
 createTableMig, addColumnMig, dropColumnMig, dropTableMig
-    :: Monad m => AddedSqlMigration m
+    :: MonadThrow m => AddedSqlMigration m
 createTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-create-table.sql"
                  , migrationSql = mkValidSql "CREATE TABLE anytable ();"

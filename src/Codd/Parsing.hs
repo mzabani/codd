@@ -27,6 +27,7 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
+import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , anyChar
                                                 , asciiCI
@@ -64,6 +65,7 @@ import           Streaming                      ( MFunctor(hoist)
                                                 )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
+import           UnliftIO.Exception             ( Exception )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -113,11 +115,29 @@ data SectionOption = OptInTxn Bool | OptNoParse Bool
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
--- | This should be the equivalent to `parseSqlPieces`, but for Streams.
+data ParsingException = ParsingException
+  { sqlFragment :: Text
+  , errorMsg    :: String
+  }
+  deriving stock Show
+
+instance Exception ParsingException
+
+-- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
 parseSqlPiecesStreaming
-  :: forall m . Monad m => Stream (Of Text) m () -> Stream (Of SqlPiece) m ()
+  :: forall m
+   . MonadThrow m
+  => Stream (Of Text) m ()
+  -> Stream (Of SqlPiece) m ()
 parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
  where
+  mkErrorMsg errorMsg =
+    "An internal parsing error occurred. This is most likely a bug in codd. Please file a bug report.\
+    \ In the meantime, you can add this migration by writing \"-- codd: no-parse\" as its very first line.\
+    \ The downside is this migration will be in-txn and COPY will not be supported. It will also be put in\
+    \ memory all at once instead of being read and applied in streaming fashion.\
+    \ The more detailed parsing error is: "
+      ++ errorMsg
     -- Important question: will the unconsumed Text remainders in the parsing Results
     -- be allocated and take a lot of memory? This probably depends on how lazily these are
     -- allocated by attoparsec and by Text's internal implementation. We might want to test this
@@ -125,30 +145,32 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     -- NOTE: It's unlikely Text's internal implementation
     -- copies byte arrays for new instances. It most likely references existing byte arrays
     -- with some offset and length integers to follow. Double-check just in case.
-  parseOneInc :: Text -> ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece))
+  parseOneInc :: Text -> m ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece))
   parseOneInc t = if t == ""
-    then ([], Nothing)
+    then pure ([], Nothing)
     else case Parsec.parse sqlPieceParser t of
       Parsec.Fail _ _ errorMsg ->
-        error $ "Codd internal parsing error: " <> errorMsg
+        throwM $ ParsingException t $ mkErrorMsg errorMsg
       Parsec.Done unconsumedInput sqlPiece ->
-        first (sqlPiece :) $ parseOneInc unconsumedInput
-      Parsec.Partial continue -> ([], Just continue)
+        first (sqlPiece :) <$> parseOneInc unconsumedInput
+      Parsec.Partial continue -> pure ([], Just continue)
 
   parseResultsStream :: Stream (Of [SqlPiece]) m ()
   parseResultsStream =
-    Streaming.scan
+    Streaming.scanM
         (\(_, !mContinue) !textPiece -> case mContinue of
           Nothing       -> parseOneInc textPiece
+           -- TODO: The following case is almost essentially "parseOneInc".
+           -- Reuse more code!
           Just continue -> case continue textPiece of
             Parsec.Fail _ _ errorMsg ->
-              error $ "Codd internal parsing error: " <> errorMsg
+              throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
             Parsec.Done unconsumedInput sqlPiece ->
-              first (sqlPiece :) $ parseOneInc unconsumedInput
-            Parsec.Partial nextContinue -> ([], Just nextContinue)
+              first (sqlPiece :) <$> parseOneInc unconsumedInput
+            Parsec.Partial nextContinue -> pure ([], Just nextContinue)
         )
-        (([], Nothing) :: ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece)))
-        fst
+        (pure ([], Nothing))
+        (pure . fst)
     -- SQL files' last statement don't need to end with a semi-colon, and because of
     -- that they could end up as a partial match in those cases.
     -- When applying parsing continuations the empty string is used to signal/match
@@ -157,7 +179,7 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     -- Also, because empty strings are so special, we filter them out from the
     -- input stream just in case.
       $  Streaming.filter (/= "") contents
-      <> Streaming.each [""]
+      <> Streaming.yield ""
 
 parsedSqlText :: Monad m => ParsedSql m -> m Text
 parsedSqlText (UnparsedSql t) = pure t
@@ -525,7 +547,7 @@ isTransactionEndingPiece _                       = False
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
 parseAndClassifyMigration
-  :: Monad m
+  :: MonadThrow m
   => Stream (Of Text) m ()
   -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
 parseAndClassifyMigration sqlStream = do
@@ -624,7 +646,7 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 
 parseSqlMigration
   :: forall m
-   . Monad m
+   . MonadThrow m
   => String
   -> Stream (Of Text) m ()
   -> m (Either String (SqlMigration m))
@@ -656,7 +678,7 @@ parseSqlMigration name t = (toMig =<<) <$> parseAndClassifyMigration t
     _        -> Right $ mkMig x
 
 parseAddedSqlMigration
-  :: Monad m
+  :: MonadThrow m
   => String
   -> Stream (Of Text) m ()
   -> m (Either String (AddedSqlMigration m))

@@ -21,6 +21,7 @@ import           Codd.Query                     ( execvoid_
 import           Control.Monad.Logger           ( LoggingT
                                                 , runStdoutLoggingT
                                                 )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( isInfixOf )
 import qualified Data.Map                      as Map
 import qualified Database.PostgreSQL.Simple    as DB
@@ -39,7 +40,7 @@ import           Test.Hspec                     ( Spec
 import           UnliftIO                       ( IOException )
 
 
-migThatWontRun :: Monad m => AddedSqlMigration m
+migThatWontRun :: MonadThrow m => AddedSqlMigration m
 migThatWontRun = AddedSqlMigration
     SqlMigration
         { migrationName           = "create-things.sql"

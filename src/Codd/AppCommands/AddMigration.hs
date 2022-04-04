@@ -22,7 +22,9 @@ import           Control.Monad                  ( forM_
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLoggerIO )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Maybe                     ( maybeToList )
+import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
 import           System.Exit                    ( ExitCode(..)
@@ -40,20 +42,19 @@ import           UnliftIO.Directory             ( copyFile
 import           UnliftIO.Exception             ( bracketOnError )
 import           UnliftIO.Resource              ( runResourceT )
 
-data AddMigrationOptions = AddMigrationOptions
+newtype AddMigrationOptions = AddMigrationOptions
   { dontApply :: Bool
-  , noParse   :: Bool
   }
 
 addMigration
   :: forall m
-   . (MonadUnliftIO m, MonadLoggerIO m)
+   . (MonadUnliftIO m, MonadLoggerIO m, MonadThrow m)
   => CoddSettings
   -> AddMigrationOptions
   -> Maybe FilePath
   -> SqlFilePath
   -> m ()
-addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrationOptions { dontApply, noParse } destFolder sqlFp@(SqlFilePath fp)
+addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
   = do
     finalDir <- case (destFolder, sqlMigrations) of
       (Just f, _) -> pure f
@@ -73,10 +74,12 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
       (_, sqlMigContents) <- streamingReadFile fp
       parsedSqlMigE       <- parseSqlMigration (takeFileName fp) sqlMigContents
       case parsedSqlMigE of
-        Left err ->
-          error
-            $ "There was a fatal error parsing this SQL Migration. Please report this as a bug: "
-            ++ show err
+        Left err -> do
+          liftIO
+            $  Text.hPutStrLn stderr
+            $  "Could not add migration: "
+            <> Text.pack err
+          liftIO $ exitWith (ExitFailure 1)
         Right sqlMig -> do
           migCheck  <- checkMigration sqlMig
           migErrors <- either
@@ -85,6 +88,7 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
             migCheck
 
           when (migErrors /= []) $ liftIO $ do
+            Text.hPutStrLn stderr "Analysis of the migration detected errors."
             forM_ migErrors (Text.hPutStrLn stderr)
             exitWith (ExitFailure 1)
 

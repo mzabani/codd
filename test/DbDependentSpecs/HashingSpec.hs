@@ -48,6 +48,7 @@ import           Control.Monad.State            ( MonadState(put)
                                                 )
 import           Control.Monad.State.Class      ( get )
 import           Control.Monad.Trans            ( lift )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( nubBy )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( fromMaybe )
@@ -105,7 +106,8 @@ hoistMU
 hoistMU f (MU sqlMig tst, change) =
   (MU (hoistAddedSqlMigration f sqlMig) tst, change)
 
-migrationsAndHashChange :: Monad m => m [(MU (AddedSqlMigration m), DbChange)]
+migrationsAndHashChange
+  :: MonadThrow m => m [(MU (AddedSqlMigration m), DbChange)]
 migrationsAndHashChange = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-

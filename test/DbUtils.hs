@@ -30,6 +30,7 @@ import           Control.Monad.Logger           ( LoggingT
                                                 , MonadLogger
                                                 , runStdoutLoggingT
                                                 )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -79,13 +80,13 @@ aroundConnInfo = around $ \act -> do
     cinfo <- testConnInfo
     act cinfo
 
-mkValidSql :: Monad m => Text -> ParsedSql m
+mkValidSql :: MonadThrow m => Text -> ParsedSql m
 mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
 withCoddDbAndDrop
-    :: (MonadUnliftIO m, MonadLogger m)
+    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m)
     => [AddedSqlMigration m]
     -> (ConnectInfo -> m a)
     -> m a
@@ -136,13 +137,14 @@ finallyDrop dbName f = f `finally` dropDb
                       $  "DROP DATABASE IF EXISTS "
                       <> dbIdentifier dbName
 
-createTestUserMig :: forall m . MonadIO m => m (AddedSqlMigration m)
+createTestUserMig
+    :: forall m . (MonadIO m, MonadThrow m) => m (AddedSqlMigration m)
 createTestUserMig = createTestUserMigPol @m
 
 -- | A version of "createTestUser" that is more polymorphic in the Monad of the
 -- returned migration.
 createTestUserMigPol
-    :: forall n m . (Monad n, MonadIO m) => m (AddedSqlMigration n)
+    :: forall n m . (MonadThrow n, MonadIO m) => m (AddedSqlMigration n)
 createTestUserMigPol = do
     let migTimestamp = getIncreasingTimestamp (-1000)
     cinfo <- testConnInfo
@@ -198,7 +200,7 @@ aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 
 aroundDatabaseWithMigs
-    :: (forall m . Monad m => [AddedSqlMigration m])
+    :: (forall m . MonadThrow m => [AddedSqlMigration m])
     -> SpecWith CoddSettings
     -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do

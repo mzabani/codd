@@ -15,6 +15,7 @@ import           Control.Monad                  ( void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( nubBy )
 import           Data.Text                      ( unpack )
 import           Data.Time.Calendar             ( fromGregorian )
@@ -36,7 +37,7 @@ import           DbUtils                        ( aroundDatabaseWithMigs
 import           Test.Hspec
 import           UnliftIO.Concurrent            ( threadDelay )
 
-timestampsMig, lotsOfObjectsMigration :: Monad m => AddedSqlMigration m
+timestampsMig, lotsOfObjectsMigration :: MonadThrow m => AddedSqlMigration m
 timestampsMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-create-timestamps-table.sql"

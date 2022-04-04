@@ -215,8 +215,7 @@ mig `shouldHaveWellParsedSql` sql = case migrationSql mig of
 shouldHaveUnparsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
 shouldHaveUnparsedSql mig expectedSql = case migrationSql mig of
   WellParsedSql _   -> liftIO $ expectationFailure "Got WellParsedSql instead"
-  UnparsedSql   sql -> liftIO $ do
-    sql `shouldBe` expectedSql
+  UnparsedSql   sql -> liftIO $ sql `shouldBe` expectedSql
 
 -- | Same as a monadic `shouldSatisfy` isLeft, but does not require a Show instance.
 shouldReturnLeft :: MonadIO m => m (Either a b) -> m ()
@@ -295,78 +294,90 @@ spec = do
                                     )
                 _ -> pure ()
 
-    context "Simple mode" $ do
-      context "Valid SQL Migrations" $ do
-        it "Plain Sql Migration, missing optional options" $ do
-          property $ \SyntacticallyValidRandomSql {..} -> do
+    context "Valid SQL Migrations" $ do
+      it "Plain Sql Migration, missing optional options"
+        $ property
+        $ \SyntacticallyValidRandomSql {..} -> do
             Right parsedMig <- parseSqlMigration "any-name.sql" unSyntRandomSql
             migrationName parsedMig `shouldBe` "any-name.sql"
             parsedMig `shouldHaveWellParsedSql` fullContents
             migrationInTxn parsedMig `shouldBe` True
             migrationCustomConnInfo parsedMig `shouldBe` Nothing
-        it "Sql Migration options parsed correctly" $ do
-          let sql = "-- codd: no-txn\nSOME SQL"
-          Right parsedMig <- parseSqlMigration "any-name.sql"
-                                               (Streaming.each [sql])
-          migrationName parsedMig `shouldBe` "any-name.sql"
-          parsedMig `shouldHaveWellParsedSql` sql
-          migrationInTxn parsedMig `shouldBe` False
-          migrationCustomConnInfo parsedMig `shouldBe` Nothing
+      it "Sql Migration options parsed correctly" $ property $ \randomSeed -> do
+        let sql = "-- codd: no-txn\nSOME SQL"
+        Right parsedMig <- parseSqlMigration "any-name.sql"
+          $ mkRandStream randomSeed sql
+        migrationName parsedMig `shouldBe` "any-name.sql"
+        parsedMig `shouldHaveWellParsedSql` sql
+        migrationInTxn parsedMig `shouldBe` False
+        migrationCustomConnInfo parsedMig `shouldBe` Nothing
 
-        it "Sql Migration connection and custom options"
-          $ property
-          $ \(ConnStringGen connStr connInfo) -> do
-              let
-                sql1 =
-                  "\n-- codd: no-txn\n"
-                    <> "\n\n-- codd-connection: "
-                    <> connStr
-                    <> "\n\nSOME SQL"
-                sql2 =
-                  "\n\n-- codd-connection: "
-                    <> connStr
-                    <> "\n-- codd: in-txn\n"
-                    <> "SOME SQL"
-              parsedMig1 <- either (error "Oh no") id
-                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql1])
-              migrationName parsedMig1 `shouldBe` "any-name.sql"
-              parsedMig1 `shouldHaveWellParsedSql` sql1
-              migrationInTxn parsedMig1 `shouldBe` False
-              migrationCustomConnInfo parsedMig1 `shouldBe` Just connInfo
+      it "Sql Migration connection and custom options"
+        $ property
+        $ \(ConnStringGen connStr connInfo, randomSeed) -> do
+            let
+              sql1 =
+                "\n-- codd: no-txn\n"
+                  <> "\n\n-- codd-connection: "
+                  <> connStr
+                  <> "\n\nSOME SQL"
+              sql2 =
+                "\n\n-- codd-connection: "
+                  <> connStr
+                  <> "\n-- codd: in-txn\n"
+                  <> "SOME SQL"
+            parsedMig1 <- either (error "Oh no") id
+              <$> parseSqlMigration
+                    "any-name.sql"
+                    (mkRandStream randomSeed sql1)
+            migrationName parsedMig1 `shouldBe` "any-name.sql"
+            parsedMig1 `shouldHaveWellParsedSql` sql1
+            migrationInTxn parsedMig1 `shouldBe` False
+            migrationCustomConnInfo parsedMig1 `shouldBe` Just connInfo
 
-              parsedMig2 <- either (error "Oh nooo") id
-                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql2])
-              migrationName parsedMig2 `shouldBe` "any-name.sql"
-              parsedMig2 `shouldHaveWellParsedSql` sql2
-              migrationInTxn parsedMig2 `shouldBe` True
-              migrationCustomConnInfo parsedMig2 `shouldBe` Just connInfo
+            parsedMig2 <- either (error "Oh nooo") id
+              <$> parseSqlMigration
+                    "any-name.sql"
+                    (mkRandStream randomSeed sql2)
+            migrationName parsedMig2 `shouldBe` "any-name.sql"
+            parsedMig2 `shouldHaveWellParsedSql` sql2
+            migrationInTxn parsedMig2 `shouldBe` True
+            migrationCustomConnInfo parsedMig2 `shouldBe` Just connInfo
 
-        it "Sql Migration connection option alone"
-          $ property
-          $ \(ConnStringGen connStr connInfo) -> do
-              let
-                sql =
-                  "-- random comment\n-- codd-connection: "
-                    <> connStr
-                    <> "\nSOME SQL"
-              mig <- either (error "Oh no") id
-                <$> parseSqlMigration "any-name.sql" (Streaming.each [sql])
-              migrationName mig `shouldBe` "any-name.sql"
-              mig `shouldHaveWellParsedSql` sql
-              migrationInTxn mig `shouldBe` True
-              migrationCustomConnInfo mig `shouldBe` Just connInfo
+      it "Sql Migration connection option alone"
+        $ property
+        $ \(ConnStringGen connStr connInfo, randomSeed) -> do
+            let
+              sql =
+                "-- random comment\n-- codd-connection: "
+                  <> connStr
+                  <> "\nSOME SQL"
+            mig <- either (error "Oh no") id
+              <$> parseSqlMigration "any-name.sql" (mkRandStream randomSeed sql)
+            migrationName mig `shouldBe` "any-name.sql"
+            mig `shouldHaveWellParsedSql` sql
+            migrationInTxn mig `shouldBe` True
+            migrationCustomConnInfo mig `shouldBe` Just connInfo
 
-        it "in-txn and no-txn are mutually exclusive" $ do
+      it "in-txn and no-txn are mutually exclusive" $ property $ \randomSeed ->
+        do
           let plainSql = "SOME SQL"
               sql      = "-- codd: no-txn, in-txn\n" <> plainSql
-          shouldReturnLeft @IO
-            $ parseSqlMigration "any-name.sql" (Streaming.each [sql])
+          shouldReturnLeft @IO $ parseSqlMigration "any-name.sql" $ mkRandStream
+            randomSeed
+            sql
 
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
-        property $ \RandomSql { unRandomSql } -> do
-          mig <- parseSqlMigration @IO "any-name.sql" unRandomSql
-          pure $ mig `seq` ()
+        property $ \RandomSql { unRandomSql, fullContents } -> do
+          emig <- parseSqlMigration @IO "any-name.sql" unRandomSql
+          case migrationSql <$> emig of
+            Left  _                      -> error "Should not be Left!"
+            Right (WellParsedSql pieces) -> do
+              t <- piecesToText <$> Streaming.toList_ pieces
+              t `shouldBe` fullContents
+            Right (UnparsedSql t) -> t `shouldBe` fullContents
+
 
       it "Gibberish after -- codd:" $ property $ \randomSeed -> do
         let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
@@ -419,22 +430,19 @@ spec = do
           randomSeed
           sql
 
-      it "--codd: no-parse returns UnparsedSql" $ property $ \randomSeed -> do
-        let
-          sql
-            = "-- codd: no-parse\n\
-                \-- Anything here!\
-                \Some statement; -- Some comment\n\
-                \Other statement"
+      it "--codd: no-parse returns UnparsedSql"
+        $ property
+        $ \(RandomSql { unRandomSql, fullContents }, randomSeed) -> do
+            let coddOpts = "-- codd: no-parse\n"
+                sql      = coddOpts <> fullContents
 
-        mig <- either (error "Oops") id
-          <$> parseSqlMigration
-                "no-parse-migration.sql"
-                (mkRandStream randomSeed sql)
-        migrationName mig `shouldBe` "no-parse-migration.sql"
-        shouldHaveUnparsedSql mig sql
-        migrationInTxn mig `shouldBe` True
-        migrationCustomConnInfo mig `shouldBe` Nothing
+            mig <- either (error "Oops") id <$> parseSqlMigration
+              "no-parse-migration.sql"
+              (mkRandStream randomSeed coddOpts <> unRandomSql)
+            migrationName mig `shouldBe` "no-parse-migration.sql"
+            shouldHaveUnparsedSql mig sql
+            migrationInTxn mig `shouldBe` True
+            migrationCustomConnInfo mig `shouldBe` Nothing
 
       it "--codd: no-parse with custom connection-string"
         $ property
