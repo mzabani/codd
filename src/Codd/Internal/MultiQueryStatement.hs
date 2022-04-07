@@ -10,9 +10,7 @@ import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
 import           Codd.Types                     ( RetryPolicy )
-import           Control.Monad                  ( void
-                                                , when
-                                                )
+import           Control.Monad                  ( void )
 import           Control.Monad.Logger           ( MonadLogger )
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
@@ -101,10 +99,9 @@ runSingleStatementInternal_ conn (CommitTransaction s) =
 runSingleStatementInternal_ conn (RollbackTransaction s) =
   singleStatement_ conn s
 runSingleStatementInternal_ conn (OtherSqlPiece s) = singleStatement_ conn s
-runSingleStatementInternal_ conn (CopyFromStdinPiece copyStm copyData _terminator)
-  = liftIO $ do
-    DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
-    when (copyData /= "") $ do
-      DB.putCopyData conn $ encodeUtf8 copyData
-      DB.putCopyData conn $ encodeUtf8 "\n"
-    void $ DB.putCopyEnd conn
+runSingleStatementInternal_ conn (CopyFromStdinStatement copyStm) =
+  liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
+runSingleStatementInternal_ conn (CopyFromStdinRow copyRow) =
+  liftIO $ DB.putCopyData conn $ encodeUtf8 copyRow
+runSingleStatementInternal_ conn (CopyFromStdinEnd _) =
+  liftIO $ void $ DB.putCopyEnd conn

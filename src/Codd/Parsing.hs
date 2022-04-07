@@ -46,7 +46,6 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , takeWhile1
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
-import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.List                      ( nub )
 import           Data.Maybe                     ( mapMaybe )
@@ -112,7 +111,7 @@ mapSqlMigration f (AddedSqlMigration sqlMig tst) =
 data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)
 
-data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
+data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRow !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
 data ParsingException = ParsingException
@@ -145,32 +144,40 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     -- NOTE: It's unlikely Text's internal implementation
     -- copies byte arrays for new instances. It most likely references existing byte arrays
     -- with some offset and length integers to follow. Double-check just in case.
-  parseOneInc :: Text -> m ([SqlPiece], Maybe (Text -> Parsec.Result SqlPiece))
-  parseOneInc t = if t == ""
-    then pure ([], Nothing)
-    else case Parsec.parse sqlPieceParser t of
+  parseOneInc
+    :: ParserState
+    -> Text
+    -> m
+         ( [SqlPiece]
+         , Maybe (Text -> Parsec.Result (SqlPiece, ParserState))
+         , ParserState
+         )
+  parseOneInc parserState t = if t == ""
+    then pure ([], Nothing, parserState)
+    else case Parsec.parse (sqlPieceParser parserState) t of
       Parsec.Fail _ _ errorMsg ->
         throwM $ ParsingException t $ mkErrorMsg errorMsg
-      Parsec.Done unconsumedInput sqlPiece ->
-        first (sqlPiece :) <$> parseOneInc unconsumedInput
-      Parsec.Partial continue -> pure ([], Just continue)
+      Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
+        first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
+      Parsec.Partial continue -> pure ([], Just continue, parserState)
 
   parseResultsStream :: Stream (Of [SqlPiece]) m ()
   parseResultsStream =
     Streaming.scanM
-        (\(_, !mContinue) !textPiece -> case mContinue of
-          Nothing       -> parseOneInc textPiece
+        (\(_, !mContinue, !parserState) !textPiece -> case mContinue of
+          Nothing       -> parseOneInc parserState textPiece
            -- TODO: The following case is almost essentially "parseOneInc".
            -- Reuse more code!
           Just continue -> case continue textPiece of
             Parsec.Fail _ _ errorMsg ->
               throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
-            Parsec.Done unconsumedInput sqlPiece ->
-              first (sqlPiece :) <$> parseOneInc unconsumedInput
-            Parsec.Partial nextContinue -> pure ([], Just nextContinue)
+            Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
+              first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
+            Parsec.Partial nextContinue ->
+              pure ([], Just nextContinue, parserState)
         )
-        (pure ([], Nothing))
-        (pure . fst)
+        (pure ([], Nothing, OutsideCopy))
+        (pure . fst3)
     -- SQL files' last statement don't need to end with a semi-colon, and because of
     -- that they could end up as a partial match in those cases.
     -- When applying parsing continuations the empty string is used to signal/match
@@ -181,34 +188,53 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
       $  Streaming.filter (/= "") contents
       <> Streaming.yield ""
 
+  fst3 (a, _, _) = a
+  first3 f (a, b, c) = (f a, b, c)
+
 parsedSqlText :: Monad m => ParsedSql m -> m Text
 parsedSqlText (UnparsedSql t) = pure t
 parsedSqlText (WellParsedSql s) =
   Streaming.fold_ (<>) "" id $ Streaming.map sqlPieceText s
 
 sqlPieceText :: SqlPiece -> Text
-sqlPieceText (CommentPiece        s      ) = s
-sqlPieceText (WhiteSpacePiece     s      ) = s
-sqlPieceText (BeginTransaction    s      ) = s
-sqlPieceText (RollbackTransaction s      ) = s
-sqlPieceText (CommitTransaction   s      ) = s
-sqlPieceText (OtherSqlPiece       s      ) = s
-sqlPieceText (CopyFromStdinPiece s1 s2 s3) = s1 <> s2 <> s3
+sqlPieceText (CommentPiece           s) = s
+sqlPieceText (WhiteSpacePiece        s) = s
+sqlPieceText (BeginTransaction       s) = s
+sqlPieceText (RollbackTransaction    s) = s
+sqlPieceText (CommitTransaction      s) = s
+sqlPieceText (OtherSqlPiece          s) = s
+sqlPieceText (CopyFromStdinStatement s) = s
+sqlPieceText (CopyFromStdinRow       s) = s
+sqlPieceText (CopyFromStdinEnd       s) = s
 
-sqlPieceParser :: Parser SqlPiece
-sqlPieceParser =
-  CommentPiece
-    <$> commentParser
-    <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace)
-    <|> copyFromStdinParser
-    <|> BeginTransaction
-    <$> beginTransactionParser
-    <|> RollbackTransaction
-    <$> rollbackTransactionParser
-    <|> CommitTransaction
-    <$> commitTransactionParser
-    <|> (OtherSqlPiece <$> anySqlPieceParser)
+data ParserState = OutsideCopy | InsideCopy
+
+sqlPieceParser :: ParserState -> Parser (SqlPiece, ParserState)
+sqlPieceParser parserState = case parserState of
+  OutsideCopy -> outsideCopyParser
+  InsideCopy  -> copyFromStdinAfterStatementParser
  where
+  outsideCopyParser =
+    (, OutsideCopy)
+      .   CommentPiece
+      <$> commentParser
+      <|> (, OutsideCopy)
+      .   WhiteSpacePiece
+      <$> takeWhile1 Char.isSpace
+      <|> (, InsideCopy)
+      <$> copyFromStdinStatementParser
+      <|> (, OutsideCopy)
+      .   BeginTransaction
+      <$> beginTransactionParser
+      <|> (, OutsideCopy)
+      .   RollbackTransaction
+      <$> rollbackTransactionParser
+      <|> (, OutsideCopy)
+      .   CommitTransaction
+      <$> commitTransactionParser
+      <|> (, OutsideCopy)
+      .   OtherSqlPiece
+      <$> anySqlPieceParser
   beginTransactionParser =
     spaceSeparatedTokensToParser [CITextToken "BEGIN", AllUntilEndOfStatement]
       <|> spaceSeparatedTokensToParser
@@ -275,8 +301,8 @@ spaceSeparatedTokensToParser allTokens = case allTokens of
     pure $ firstEl <> otherEls
 
 -- Urgh.. parsing statements precisely would benefit a lot from importing the lex parser
-copyFromStdinParser :: Parser SqlPiece
-copyFromStdinParser = do
+copyFromStdinStatementParser :: Parser SqlPiece
+copyFromStdinStatementParser = do
   stmt <- spaceSeparatedTokensToParser
     [ CITextToken "COPY"
     , SqlIdentifier
@@ -286,36 +312,26 @@ copyFromStdinParser = do
     , CITextToken "STDIN"
     , AllUntilEndOfStatement
     ]
-  seol                     <- eol
-  -- The first alternatie handles a special case: COPY without data (very common in DB dumps)
-  (copyData, parsedSuffix) <-
-    ("", )
+  seol <- eol
+  pure $ CopyFromStdinStatement $ stmt <> seol
+
+-- | Parser to be used after "COPY FROM STDIN..." has been parsed with `copyFromStdinStatementParser`.
+copyFromStdinAfterStatementParser :: Parser (SqlPiece, ParserState)
+copyFromStdinAfterStatementParser =
+  -- The first alternative handles a special case: COPY without data (very common in DB dumps)
+  (, OutsideCopy)
+    .   CopyFromStdinEnd
     <$> terminatorOnly
-    <|> parseUntilSuffix '\n' newlineAndTerminator
-    <|> parseUntilSuffix '\r' newlineAndTerminator -- Sorry Windows users, but you come second..
-  pure $ CopyFromStdinPiece (stmt <> seol) copyData parsedSuffix
+    <|> (   (, InsideCopy)
+        .   CopyFromStdinRow
+        <$> ((<>) <$> parseWithEscapeCharPreserve (== '\n') <*> string "\n")
+        )
+
  where
-  newlineAndTerminator = do
-    eol1 <- eol
-    t    <- terminatorOnly
-    pure $ eol1 <> t
   terminatorOnly = do
     s    <- string "\\."
     eol2 <- eol <|> ("" <$ endOfInput)
     pure $ s <> eol2
-
--- | Parse until finding the suffix string, returning both contents and suffix separately, in this order.
---   Can return an empty string for the contents.
-parseUntilSuffix :: Char -> Parser Text -> Parser (Text, Text)
-parseUntilSuffix suffixFirstChar wholeSuffix = do
-  s                         <- takeWhile (/= suffixFirstChar)
-  (parsedSuffix, succeeded) <- (, True) <$> wholeSuffix <|> pure ("", False)
-  if succeeded
-    then pure (s, parsedSuffix)
-    else do
-      nc                        <- char suffixFirstChar
-      (remain, recParsedSuffix) <- parseUntilSuffix suffixFirstChar wholeSuffix
-      pure (Text.snoc s nc <> remain, recParsedSuffix)
 
 -- | Parses 0 or more consecutive white-space or comments
 commentOrSpaceParser :: Bool -> Parser Text
@@ -555,7 +571,7 @@ parseAndClassifyMigration sqlStream = do
   -- the first sql statement.
   -- This means always advancing `sqlStream` beyond its first sql statement
   -- too.
-  -- We are relying a lot on the parser to do a good job, which it usually does,
+  -- We are relying a lot on the parser to do a good job, which it apparently does,
   -- but it may be interesting to think of alternatives here.
   consumedPieces :> sqlPiecesBodyStream <-
     Streaming.toList

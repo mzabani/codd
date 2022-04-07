@@ -101,8 +101,13 @@ copyMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0002-copy-mig.sql"
         , migrationSql            =
+            -- CSV and Text formats' escaping rules aren't obvious.
+            -- We test those here. See https://www.postgresql.org/docs/13/sql-copy.html
+            -- TODO Test:
+            -- Specifying custom delimiters, escape chars, NULL specifier, BINARY copy.
+            -- Always compare to what psql does. Hopefully all the complexity is server-side.
             mkValidSql
-                "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n "
+                "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n COPY x FROM stdin;\nLine\\nbreak\\r\n\\.\n"
         , migrationInTxn          = False
         , migrationCustomConnInfo = Nothing
         }
@@ -199,12 +204,23 @@ spec = do
                                           testConnTimeout
                                           (const $ pure ())
 
-                      it "COPY FROM STDIN works" $ \emptyTestDbInfo -> do
-                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
-                              emptyTestDbInfo
-                              (Just [copyMig])
-                              testConnTimeout
-                              (const $ pure ())
+                      it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
+                          runStdoutLoggingT
+                                  (applyMigrationsNoCheck
+                                      emptyTestDbInfo
+                                      (Just [copyMig])
+                                      testConnTimeout
+                                      (\conn -> liftIO $ DB.query
+                                          conn
+                                          "SELECT name FROM x ORDER BY name"
+                                          ()
+                                      )
+                                  )
+                              `shouldReturn` [ DB.Only @String "Line\nbreak\r"
+                                             , DB.Only "Some name"
+                                             ]
+
+
 
                       forM_
                               [ DbDefault

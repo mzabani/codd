@@ -27,6 +27,7 @@ import           Data.Maybe                     ( fromMaybe
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Database.PostgreSQL.Simple    as DB
+import qualified Database.PostgreSQL.Simple    as SQL
 import           DbUtils                        ( mkValidSql )
 import           EnvironmentSpec                ( ConnStringGen(..) )
 import           Streaming                      ( Of
@@ -59,89 +60,115 @@ data SyntacticallyValidRandomSql m = SyntacticallyValidRandomSql
 instance Show (SyntacticallyValidRandomSql m) where
   show SyntacticallyValidRandomSql { fullContents } = show fullContents
 
-genSingleSqlStatement :: Gen SqlPiece
+-- | This is a list because it can be a sequence of `CopyFromStdinStatement`+`CopyFromStdinRow`+`CopyFromStdinEnd`.
+-- For all other cases it shall be a single statement.
+genSingleSqlStatement :: Gen [SqlPiece]
 genSingleSqlStatement = elements validSqlStatements
 
-validSqlStatements :: [SqlPiece]
+-- | Sql statements that can be interleaved in any form and should still form syntactically valid SQL.
+-- The inner lists contain statements that _must_ be put consecutively.
+validSqlStatements :: [[SqlPiece]]
 validSqlStatements =
-  [ OtherSqlPiece "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
-  , OtherSqlPiece
-    $  "DO"
-    <> "\n$do$"
-    <> "\nBEGIN"
-    <> "\n   IF NOT EXISTS ("
-    <> "\n      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN"
-    <> "\n"
-    <> "\n      CREATE USER \"codd-user\";"
-    <> "\n   END IF;"
-    <> "\nEND"
-    <> "\n$do$;"
-  , OtherSqlPiece "CREATE TABLE \"escaped--table /* nasty */\";"
-  , OtherSqlPiece "CREATE TABLE any_table();"
-  , OtherSqlPiece
-    $  "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
-    <> "\nBEGIN"
-    <> "\n    RETURN subtotal * 0.06;"
-    <> "\nEND;"
-    <> "\n$$ LANGUAGE plpgsql;"
-  , OtherSqlPiece
-    $  "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
-    <> "\nDECLARE"
-    <> "\n    v_string ALIAS FOR $1;"
-    <> "\n    index ALIAS FOR $2;"
-    <> "\nBEGIN"
-    <> "\n    -- some computations using v_string and index here"
-    <> "\nEND;"
-    <> "\n$$ LANGUAGE plpgsql;"
-  , OtherSqlPiece
-    "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
-  , OtherSqlPiece "SELECT 'some''quoted ''string';"
-  , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
-  , OtherSqlPiece "SELECT 'double quotes \" inside single quotes \" - 2';"
-  , OtherSqlPiece "SELECT \"single quotes ' inside double quotes ' - 2\";"
-  , OtherSqlPiece
-    $  "$function$"
-    <> "\nBEGIN"
-    <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
-    <> "\nEND;"
-    <> "\n$function$;"
-  , OtherSqlPiece "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
-  , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
-  , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
-                       "5,Dracula,master\n6,The Grinch,master"
-                       "\n\\.\n"
-  , CopyFromStdinPiece "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
-                       ""
-                       "\\.\n"
-  , -- Empty COPY is possible
-    CopyFromStdinPiece
-    "copy \"schema\".employee FROM stdin WITH (FORMAT CSV);\n"
-    "DATA"
-    "\n\\.\n"
-  , -- Fully qualified identifiers part 1
-    CopyFromStdinPiece
-    "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with (FORMAT CSV);\n"
-    ""
-    "\\.\n"
-  , -- Fully qualified identifiers part 2
-    CopyFromStdinPiece
-    "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
-    "Lots of data\nin\neach line"
-    "\n\\.\n" -- Specifying columns
-  , BeginTransaction "begin;"
-  , BeginTransaction "BEGiN/*a*/;"
-  , BeginTransaction "BEgIN   ;"
-  , RollbackTransaction "ROllBaCk;"
-  , RollbackTransaction "ROllBaCk/*a*/;"
-  , RollbackTransaction "ROllBaCk   ;"
-  , CommitTransaction "COmmIT;"
-  , CommitTransaction "COMMIT/*a*/;"
-  , CommitTransaction "cOMMIT   ;"
+  map
+      (: [])
+      [ OtherSqlPiece "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+      , OtherSqlPiece
+      $  "DO"
+      <> "\n$do$"
+      <> "\nBEGIN"
+      <> "\n   IF NOT EXISTS ("
+      <> "\n      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd-user') THEN"
+      <> "\n"
+      <> "\n      CREATE USER \"codd-user\";"
+      <> "\n   END IF;"
+      <> "\nEND"
+      <> "\n$do$;"
+      , OtherSqlPiece "CREATE TABLE \"escaped--table /* nasty */\";"
+      , OtherSqlPiece "CREATE TABLE any_table();"
+      , OtherSqlPiece
+      $  "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
+      <> "\nBEGIN"
+      <> "\n    RETURN subtotal * 0.06;"
+      <> "\nEND;"
+      <> "\n$$ LANGUAGE plpgsql;"
+      , OtherSqlPiece
+      $  "CREATE FUNCTION instr(varchar, integer) RETURNS integer AS $$"
+      <> "\nDECLARE"
+      <> "\n    v_string ALIAS FOR $1;"
+      <> "\n    index ALIAS FOR $2;"
+      <> "\nBEGIN"
+      <> "\n    -- some computations using v_string and index here"
+      <> "\nEND;"
+      <> "\n$$ LANGUAGE plpgsql;"
+      , OtherSqlPiece
+        "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+      , OtherSqlPiece "SELECT 'some''quoted ''string';"
+      , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
+      , OtherSqlPiece "SELECT 'double quotes \" inside single quotes \" - 2';"
+      , OtherSqlPiece "SELECT \"single quotes ' inside double quotes ' - 2\";"
+      , OtherSqlPiece
+      $  "$function$"
+      <> "\nBEGIN"
+      <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
+      <> "\nEND;"
+      <> "\n$function$;"
+      , OtherSqlPiece "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
+      , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
+      , BeginTransaction "begin;"
+      , BeginTransaction "BEGiN/*a*/;"
+      , BeginTransaction "BEgIN   ;"
+      , RollbackTransaction "ROllBaCk;"
+      , RollbackTransaction "ROllBaCk/*a*/;"
+      , RollbackTransaction "ROllBaCk   ;"
+      , CommitTransaction "COmmIT;"
+      , CommitTransaction "COMMIT/*a*/;"
+      , CommitTransaction "cOMMIT   ;"
     -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
     -- , "/* multiline comment"
     --   <> "\n  * with nesting: /* nested block comment */"
     --   <> "\n  */ SELECT 1;"
-  ]
+      ]
+    ++ [ [ CopyFromStdinStatement
+           "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
+         , CopyFromStdinRow "5,Dracula,master\n"
+         , CopyFromStdinRow "6,The Grinch,master\n"
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       , [ CopyFromStdinStatement
+           "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
+    -- COPY without any rows is syntactically valid
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       , [ CopyFromStdinStatement
+           "copy \"schema\".employee FROM stdin WITH (FORMAT CSV);\n"
+         , CopyFromStdinRow "DATA\n"
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       , [
+     -- Fully qualified identifiers part 1 + table without columns, but with one row (this is possible!)
+           CopyFromStdinStatement
+           "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with (FORMAT CSV);\n"
+         , CopyFromStdinRow "\n"
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       , [
+    -- Fully qualified identifiers part 2 + specifying columns
+           CopyFromStdinStatement
+           "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
+         , CopyFromStdinRow "Lots of data\n"
+         , CopyFromStdinRow "in\n"
+         , CopyFromStdinRow "each line\n"
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       ,
+         -- COPY with lots of custom escaping
+         [ CopyFromStdinStatement
+           "COPY whatever FROM STDIN WITH (FORMAT CSV);\n"
+         , CopyFromStdinRow "\\b \\0 \\x1 \\t \\v \\r \\n \\f \\b \n"
+         , CopyFromStdinRow "\b \0 \r \t\n" -- I think these characters are actually invalid in COPY according to postgres.
+         , CopyFromStdinEnd "\\.\n"
+         ]
+       ]
 
 
 genTextStream :: Monad m => Text -> Gen (Stream (Of Text) m ())
@@ -170,7 +197,7 @@ genSql onlySyntacticallyValid = do
   lineGen        = frequency
     [ (if onlySyntacticallyValid then 0 else 1, bizarreLineGen)
     , (1, emptyLineGen)
-    , (5, sqlPieceText <$> genSingleSqlStatement)
+    , (5, piecesToText <$> genSingleSqlStatement)
     ]
   -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
   -- is so low that we can just ignore it
@@ -183,7 +210,7 @@ genSql onlySyntacticallyValid = do
   randomSqlGen     = fmap Text.concat $ do
     l1             <- listOf lineOrCommentGen
     l2             <- listOf lineOrCommentGen
-    atLeastOneStmt <- sqlPieceText <$> genSingleSqlStatement
+    atLeastOneStmt <- piecesToText <$> genSingleSqlStatement
     let finalList = if onlySyntacticallyValid
           then l1 ++ (atLeastOneStmt : l2)
           else l1 ++ l2
@@ -257,8 +284,8 @@ spec = do
               Streaming.toList_
               $ parseSqlPiecesStreaming
               $ mkRandStream randomSeed
-              $ Text.concat (map sqlPieceText origPieces)
-            parsedPieces `shouldBe` origPieces
+              $ Text.concat (map piecesToText origPieces)
+            parsedPieces `shouldBe` mconcat origPieces
       it
           "Statements concatenation matches original and statements end with semi-colon"
         $ do
@@ -281,18 +308,8 @@ spec = do
                                     )
                 WhiteSpacePiece t ->
                   t `shouldSatisfy` (\c -> Text.strip c == "")
-                CopyFromStdinPiece c d ll ->
-                  ll
-                    `shouldSatisfy` (\l ->
-                                      d
-                                        /= ""
-                                        && (l == "\n\\.\n" || l == "\r\n\\.\r\n"
-                                           )
-                                        || d
-                                        == ""
-                                        && (l == "\\.\n" || l == "\\.\r\n")
-                                    )
-                _ -> pure ()
+                CopyFromStdinEnd ll -> ll `shouldBe` "\\.\n"
+                _                   -> pure ()
 
     context "Valid SQL Migrations" $ do
       it "Plain Sql Migration, missing optional options"
@@ -524,7 +541,7 @@ spec = do
           let parsed = parseSqlPiecesStreaming $ mkRandStream randomSeed q
           Streaming.all_ (\p -> isWhiteSpacePiece p || isCommentPiece p) parsed
             `shouldReturn` True
-        forM_ (nonEmptyQueries ++ map sqlPieceText validSqlStatements) $ \q ->
+        forM_ (nonEmptyQueries ++ map piecesToText validSqlStatements) $ \q ->
           do
             let parsed =
                   parseSqlPiecesStreaming $ mkRandStream (randomSeed + 1) q
