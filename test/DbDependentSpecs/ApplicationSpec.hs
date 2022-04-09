@@ -48,6 +48,7 @@ import           Data.Text                      ( Text
                                                 )
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
+import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( UTCTime
                                                 , diffUTCTime
                                                 , secondsToDiffTime
@@ -73,6 +74,7 @@ import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
+                                                , stdout
                                                 )
 import           UnliftIO.Concurrent            ( MVar
                                                 , modifyMVar_
@@ -103,7 +105,7 @@ copyMig = AddedSqlMigration
         , migrationSql            =
             -- CSV and Text formats' escaping rules aren't obvious.
             -- We test those here. See https://www.postgresql.org/docs/13/sql-copy.html
-            -- TODO Test:
+            -- TODO:
             -- Specifying custom delimiters, escape chars, NULL specifier, BINARY copy.
             -- Always compare to what psql does. Hopefully all the complexity is server-side.
             mkValidSql
@@ -869,6 +871,11 @@ diversifyAppCheckMigs defaultConnInfo testSettings createCoddTestDbMigs = do
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
 runMVarLogger logsmv m = runLoggingT
     m
-    (\_loc _source _level str ->
-        modifyMVar_ logsmv (\l -> pure $ l ++ [decodeUtf8 $ fromLogStr str])
+    (\_loc _source _level str -> modifyMVar_
+        logsmv
+        (\l -> do
+            let s = decodeUtf8 $ fromLogStr str
+            liftIO $ Text.hPutStrLn stdout s
+            pure $ l ++ [s]
+        )
     )

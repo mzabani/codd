@@ -14,9 +14,9 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration (..), retry )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
-
+                                                , ParsedSql (..)
                                                 , SqlMigration(..)
-                                                , parseAddedSqlMigration, ParsedSql (UnparsedSql)
+                                                , parseAddedSqlMigration
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
@@ -41,19 +41,19 @@ import           Control.Monad.Logger           ( MonadLogger
 import Control.Monad.Trans (MonadTrans(..))
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
-import           Data.List                      ( sortOn
-                                                )
+import Data.List ( sortOn )
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
-import           Data.Maybe                     ( mapMaybe, fromMaybe
+import           Data.Maybe                     ( fromMaybe
                                                 )
 import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import qualified Data.Text.IO as Text
 import           Data.Time                      ( UTCTime, DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           System.Exit                    ( exitFailure )
-import           System.FilePath                ( (</>) )
+import           System.FilePath                ( (</>), takeFileName )
 import           UnliftIO                       ( MonadUnliftIO
                                                 , toIO, hClose
                                                 )
@@ -73,7 +73,6 @@ import qualified System.IO as IO
 import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release, MonadResource)
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 import UnliftIO.IO (openFile, IOMode (ReadMode))
-import Data.Bifunctor (second)
 import Control.Monad.Trans.Resource (MonadThrow)
 
 dbIdentifier :: Text -> DB.Query
@@ -311,24 +310,39 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             logInfoN "Parse-checking all pending SQL Migrations..."
             parseMigrationFiles migsAlreadyApplied sqlMigrations
 
--- | Streams a UTF-8 file.
+data FileStream m = FileStream {
+    filePath :: FilePath
+    , releaseKey :: ReleaseKey
+    , fileStream :: Stream (Of Text) m ()
+}
+
+-- | Opens a UTF-8 file allowing it to be read in streaming fashion.
 -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
--- reads, but does not append '\n' to the Strings it returns, making it impossible to know if
--- the last line had a '\n' at the end or an EOF.
+-- reads, but does not append '\n' to the Strings it returns, making it impossible to know 
+-- whether the last line had a '\n' after it.
 -- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
--- So we copy streaming's implementation and modify it slightly.
-streamingReadFile :: MonadResource m => FilePath -> m (ReleaseKey, Stream (Of Text) m ())
-streamingReadFile filePath = second (Streaming.map Text.pack . go) <$> allocate (openFile filePath ReadMode) hClose
+-- So we copied streaming's implementation and modified it slightly.
+streamingReadFile :: MonadResource m => FilePath -> m (FileStream m)
+streamingReadFile filePath = do
+    (releaseKey, handle) <- allocate (openFile filePath ReadMode) hClose
+    pure $ FileStream {
+        filePath
+        , releaseKey
+        , fileStream = go handle
+    }
   where
     go h = do
         eof <- liftIO $ IO.hIsEOF h
         unless eof $ do
-            str <- liftIO $ IO.hGetLine h
+            str <- liftIO $ Text.hGetLine h
             eof2 <- liftIO $ IO.hIsEOF h
-            if eof2 then
-                Streaming.yield str
-            else Streaming.yield $ str <> "\n"
-            go h
+            if eof2 then Streaming.yield str
+            else do
+                Streaming.each [str, "\n"]
+                go h
+
+closeFileStream :: MonadResource m => FileStream m -> m ()
+closeFileStream (FileStream _ releaseKey _) = release releaseKey
 
 parseMigrationFiles
     :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
@@ -336,46 +350,44 @@ parseMigrationFiles
     -> Either [FilePath] [AddedSqlMigration m]
     -> m [BlockOfMigrations m]
 parseMigrationFiles migsCompleted sqlMigrations = do
-    pendingParsedMigrations :: [((FilePath, FilePath), (ReleaseKey, AddedSqlMigration m))] <- either
-        (listPendingFromDisk >=> readPaths)
-        readFromMemory
+    pendingParsedMigrations :: [(Either String (FileStream m), AddedSqlMigration m)] <- either
+        (listPendingFromDisk >=> readFromDisk)
+        (pure . readFromMemory . listPendingFromMemory)
         sqlMigrations
 
     -- Group migrations in blocks of consecutive transactions by in-txn/no-txn and custom
     -- connection string.
     pure $ NE.groupWith
-        (\(_, (_, AddedSqlMigration m _)) ->
+        (\(_, AddedSqlMigration m _) ->
             (migrationInTxn m, migrationCustomConnInfo m)
         )
         pendingParsedMigrations
         <&> \migs -> BlockOfMigrations {
-            allMigs = snd . snd <$> migs
+            allMigs = snd <$> migs
             , reReadBlock = reRead migs
         }
 
     where
         reRead oldMigsAndPaths = do
             -- Close handles of all migrations in the block, re-open and read+parse them
-            forM_ oldMigsAndPaths $ \(_, (releaseKey, _)) -> release releaseKey
-            newMigs <- readPaths $ fmap fst oldMigsAndPaths
+            filePaths <- forM oldMigsAndPaths $
+                \case
+                    (Left _memStream, _) -> error "Re-reading in-memory streams is not yet implemented"
+                    (Right fileStream, _) -> closeFileStream fileStream >> pure (filePath fileStream)
+            newMigs <- readFromDisk filePaths
             pure BlockOfMigrations {
-                allMigs = snd . snd <$> newMigs
+                allMigs = snd <$> newMigs
                 , reReadBlock = reRead newMigs
             }
-        readFromMemory ams = pure
-                $ mapMaybe
-                      (\case
-                          a@(AddedSqlMigration mig _)
-                              | migrationName mig `elem` migsCompleted
-                              -> Nothing
-                              | otherwise
-                              -> Just ((migrationName mig, migrationName mig), (error "No releaseKey for in-memory migs", a))
-                      )
+        readFromMemory :: [AddedSqlMigration m] -> [(Either String (FileStream m), AddedSqlMigration m)]
+        readFromMemory ams = map
+                      (\asqlmig@(AddedSqlMigration mig _) -> (Left $ migrationName mig, asqlmig))
                 $ sortOn (\(AddedSqlMigration _ ts) -> ts) ams
+        listPendingFromMemory = filter (\(AddedSqlMigration mig _) -> migrationName mig `notElem` migsCompleted)
         listPendingFromDisk sqlDirs =
-                fmap (sortOn fst . concat) $ forM sqlDirs $ \dir -> do
+                fmap (sortOn takeFileName . concat) $ forM sqlDirs $ \dir -> do
                     filesInDir <- listDirectory dir
-                    return $ map (\fn -> (fn, dir </> fn)) $ filter
+                    return $ map (dir </>) $ filter
                         (\fn ->
                             ".sql"
                                 `List.isSuffixOf` fn
@@ -384,13 +396,14 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                         )
                         filesInDir
 
-        readPaths :: forall t. Traversable t => t (FilePath, FilePath) -> m (t ((FilePath, FilePath), (ReleaseKey, AddedSqlMigration m)))
-        readPaths pendingSqlMigrationFiles = do
-            sqlMigrationsContents :: t ((FilePath, FilePath), (ReleaseKey, Stream (Of Text) m ())) <-
+        readFromDisk :: forall t. Traversable t => t FilePath -> m (t (Either String (FileStream m), AddedSqlMigration m))
+        readFromDisk pendingSqlMigrationFiles = do
+            sqlMigrationsContents :: t (FileStream m) <-
                 pendingSqlMigrationFiles
-                `forM` (\nameAndPath@(_, fp) -> (,) nameAndPath <$> streamingReadFile fp)
+                `forM` streamingReadFile
 
-            forM sqlMigrationsContents $ \((fn, fp), (releaseKey, sqlStream)) -> do
+            forM sqlMigrationsContents $ \fileStream@(FileStream fp _ sqlStream) -> do
+                    let fn = takeFileName fp
                     parsedMig <- parseAddedSqlMigration fn sqlStream
                     case parsedMig of
                         Left err -> do
@@ -400,9 +413,9 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                                 UnparsedSql _ ->
                                     logWarnN
                                         $ Text.pack fn
-                                        <> " is not to be parsed and thus will be considered in is entirety as in-txn."
+                                        <> " is not to be parsed and thus will be considered in is entirety as in-txn, without support for COPY."
                                 _ -> pure ()
-                            pure ((fn, fp), (releaseKey, asqlmig))
+                            pure (Right fileStream, asqlmig)
 
 data ApplyMigsResult m a = ApplyMigsResult
     { migsAppliedAt     :: [(AddedSqlMigration m, UTCTime)]
@@ -540,6 +553,9 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
     runBlock act conn migBlock runAfterMig = do
         if blockInTxn migBlock
             then do
+                -- TODO: We need the re-read loop in a "retryFold" function of sorts,
+                -- or we'll not be closing open handles of re-read files as early as we could.
+                -- These will then accumulate as per the number of retries...
                 res <- retry retryPol $ \RetryIteration { tryNumber } -> do
                     blockFinal <- if tryNumber == 0 then pure migBlock else do
                         logDebugN "Re-reading migrations of this block from disk"

@@ -615,7 +615,7 @@ parseAndClassifyMigration sqlStream = do
           $  Left
           $  "The options '"
           <> Text.unpack badOptions
-          <> "' are invalid. Valid options are a comma-separated list of 'in-txn', 'no-txn', 'force'"
+          <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
       (_, Just (CoddCommentWithGibberish badConn)) ->
         pure
           $  Left
@@ -641,6 +641,7 @@ parseAndClassifyMigration sqlStream = do
         -- We could figure out how Streaming.copy works and use that, probably.
         -- firstSqlStatement <- maybe "" sqlPieceText
         --   <$> Streaming.head_ sqlPiecesBodyStream
+        -- TODO: Why does using only "remainingText" work???
         remainingText <- Streaming.fold_ (<>) "" id sqlStream
         pure $ Right
           ( opts
