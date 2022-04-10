@@ -12,7 +12,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction(..)
                                                 , multiQueryStatement_
                                                 )
-import           Codd.Internal.Retry            ( RetryIteration (..), retry )
+import           Codd.Internal.Retry            ( RetryIteration (..), retryFold )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , FileStream(..)
                                                 , ParsedSql (..)
@@ -550,18 +550,19 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
     runBlock act conn migBlock runAfterMig = do
         if blockInTxn migBlock
             then do
-                -- TODO: We need the re-read loop in a "retryFold" function of sorts,
-                -- or we'll not be closing open handles of re-read files as early as we could.
-                -- These will then accumulate as per the number of retries...
-                res <- retry retryPol $ \RetryIteration { tryNumber } -> do
-                    blockFinal <- if tryNumber == 0 then pure migBlock else do
-                        logDebugN "Re-reading migrations of this block from disk"
-                        reReadBlock migBlock
-                    logInfoN "BEGINning transaction"
-                    beginCommitTxnBracket isolLvl conn
-                        $   ApplyMigsResult
-                        <$> runMigs conn singleTryPolicy (allMigs blockFinal) runAfterMig -- We retry entire transactions, not individual statements
-                        <*> act conn
+                res <-
+                    retryFold
+                        retryPol
+                        (\previousBlock RetryIteration { tryNumber } ->
+                            if tryNumber == 0 then pure previousBlock else do
+                                logDebugN "Re-reading migrations of this block from disk"
+                                reReadBlock previousBlock)
+                        migBlock $ \blockFinal -> do
+                                logInfoN "BEGINning transaction"
+                                beginCommitTxnBracket isolLvl conn
+                                    $   ApplyMigsResult
+                                    <$> runMigs conn singleTryPolicy (allMigs blockFinal) runAfterMig -- We retry entire transactions, not individual statements
+                                    <*> act conn
                 logInfoN "COMMITed transaction"
                 pure res
             else
