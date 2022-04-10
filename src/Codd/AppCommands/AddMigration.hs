@@ -14,9 +14,7 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.Internal                  ( FileStream(..)
-                                                , streamingReadFile
-                                                )
+import           Codd.Internal                  ( streamingReadFile )
 import           Codd.Parsing                   ( parseSqlMigration )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
@@ -73,8 +71,8 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
     runResourceT $ do
-      FileStream _ _ sqlMigContents <- streamingReadFile fp
-      parsedSqlMigE <- parseSqlMigration (takeFileName fp) sqlMigContents
+      migStream     <- streamingReadFile fp
+      parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
       case parsedSqlMigE of
         Left err -> do
           liftIO

@@ -14,6 +14,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration (..), retry )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , FileStream(..)
                                                 , ParsedSql (..)
                                                 , SqlMigration(..)
                                                 , parseAddedSqlMigration
@@ -67,7 +68,6 @@ import           UnliftIO.Exception             ( IOException
                                                 , tryJust, catchJust
                                                 )
 import qualified Database.PostgreSQL.Simple.Time as DB
-import Streaming (Stream, Of)
 import qualified Streaming.Prelude as Streaming
 import qualified System.IO as IO
 import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release, MonadResource)
@@ -310,11 +310,8 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             logInfoN "Parse-checking all pending SQL Migrations..."
             parseMigrationFiles migsAlreadyApplied sqlMigrations
 
-data FileStream m = FileStream {
-    filePath :: FilePath
-    , releaseKey :: ReleaseKey
-    , fileStream :: Stream (Of Text) m ()
-}
+
+    
 
 -- | Opens a UTF-8 file allowing it to be read in streaming fashion.
 -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
@@ -402,9 +399,9 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                 pendingSqlMigrationFiles
                 `forM` streamingReadFile
 
-            forM sqlMigrationsContents $ \fileStream@(FileStream fp _ sqlStream) -> do
-                    let fn = takeFileName fp
-                    parsedMig <- parseAddedSqlMigration fn sqlStream
+            forM sqlMigrationsContents $ \fileStream -> do
+                    let fn = takeFileName $ filePath fileStream
+                    parsedMig <- parseAddedSqlMigration fn fileStream
                     case parsedMig of
                         Left err -> do
                             throwIO $ userError $ "Fatal error parsing migration '" <> fn <> "': " <> err

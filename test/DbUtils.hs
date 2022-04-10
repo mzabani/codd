@@ -12,7 +12,9 @@ import           Codd.Internal                  ( PendingMigrations
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
+                                                , PureStream
                                                 , SqlMigration(..)
+                                                , parseSqlMigration
                                                 , parseSqlPiecesStreaming
                                                 )
 import           Codd.Query                     ( execvoid_
@@ -275,3 +277,8 @@ fixMigsOrder = zipWith
 shouldBeStrictlySortedOn :: (Show a, Ord b) => [a] -> (a -> b) -> Expectation
 shouldBeStrictlySortedOn xs f =
     zip xs (drop 1 xs) `shouldSatisfy` all (\(a1, a2) -> f a1 < f a2)
+
+-- | Specialized version of `parseSqlMigration` that helps type inference.
+parseSqlMigrationIO
+    :: String -> PureStream IO -> IO (Either String (SqlMigration IO))
+parseSqlMigrationIO = parseSqlMigration

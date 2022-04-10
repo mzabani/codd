@@ -23,6 +23,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 , multiQueryStatement_
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , PureStream(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 , parseSqlMigration
@@ -64,6 +65,7 @@ import qualified Database.PostgreSQL.Simple.Time
 import           DbUtils                        ( aroundFreshDatabase
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
+                                                , parseSqlMigrationIO
                                                 , testConnTimeout
                                                 )
 import qualified Streaming.Prelude             as Streaming
@@ -107,13 +109,14 @@ hoistMU f (MU sqlMig tst, change) =
   (MU (hoistAddedSqlMigration f sqlMig) tst, change)
 
 migrationsAndHashChange
-  :: MonadThrow m => m [(MU (AddedSqlMigration m), DbChange)]
+  :: forall m . MonadThrow m => m [(MU (AddedSqlMigration m), DbChange)]
 migrationsAndHashChange = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-
-      either (error "Could not parse SQL migration") id <$> parseSqlMigration
-        "1900-01-01-00-00-00-migration.sql"
-        (Streaming.each [doSql])
+      either (error "Could not parse SQL migration") id
+        <$> parseSqlMigration @m @(PureStream m)
+              "1900-01-01-00-00-00-migration.sql"
+              (PureStream $ Streaming.yield doSql)
     pure
       ( MU
         (AddedSqlMigration
@@ -991,11 +994,11 @@ spec = do
           createCollMig <-
             AddedSqlMigration
             <$> (   either (error "Could not parse SQL migration") id
-                <$> parseSqlMigration
+                <$> parseSqlMigrationIO
                       "1900-01-01-00-00-00-create-coll.sql"
-                      (Streaming.each
-                        [ "CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
-                        ]
+                      ( PureStream
+                      $ Streaming.yield
+                          "CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
                       )
                 )
             <*> pure (getIncreasingTimestamp 0)
@@ -1023,12 +1026,12 @@ spec = do
           createMig <-
             AddedSqlMigration
             <$> (   either (error "Could not parse SQL migration") id
-                <$> parseSqlMigration
+                <$> parseSqlMigrationIO
                       "1900-01-01-00-00-00-create-range-and-other-function.sql"
-                      (Streaming.each
-                        [ "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi); \
+                      ( PureStream
+                      $ Streaming.yield
+                          "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi); \
                \\n CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
-                        ]
                       )
                 )
             <*> pure (getIncreasingTimestamp 0)
@@ -1061,13 +1064,13 @@ spec = do
           createMig <-
             AddedSqlMigration
             <$> (   either (error "Could not parse SQL migration") id
-                <$> parseSqlMigration
+                <$> parseSqlMigrationIO
                       "1900-01-01-00-00-00-ignore-col-order-1.sql"
-                      (Streaming.each
-                        [ "CREATE TABLE othertbl(col2 INT PRIMARY KEY);\
+                      ( PureStream
+                      $ Streaming.yield
+                          "CREATE TABLE othertbl(col2 INT PRIMARY KEY);\
                     \CREATE TABLE tbl(col1 INT, col2 SERIAL PRIMARY KEY CHECK (col2 > 0) REFERENCES othertbl(col2));\
                     \CREATE UNIQUE INDEX someidx ON tbl(col2);"
-                        ]
                       )
                     -- TODO: Other dependent objects like triggers, custom locales and whatnot
                 )
@@ -1087,9 +1090,11 @@ spec = do
           dropCol1Mig <-
             AddedSqlMigration
             <$> (   either (error "Could not parse SQL migration 2") id
-                <$> parseSqlMigration
+                <$> parseSqlMigrationIO
                       "1900-01-01-00-00-01-ignore-col-order-2.sql"
-                      (Streaming.each ["ALTER TABLE tbl DROP COLUMN col1;"])
+                      (PureStream $ Streaming.yield
+                        "ALTER TABLE tbl DROP COLUMN col1;"
+                      )
                 )
             <*> pure (getIncreasingTimestamp 1)
 

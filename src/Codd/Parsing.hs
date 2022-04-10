@@ -2,8 +2,10 @@ module Codd.Parsing
   ( SqlMigration(..)
   , AddedSqlMigration(..)
   , CoddCommentParseResult(..)
+  , FileStream(..)
   , SqlPiece(..)
   , ParsedSql(..)
+  , PureStream(..)
   , connStringParser
   , hoistAddedSqlMigration
   , isCommentPiece
@@ -47,10 +49,12 @@ import           Data.Attoparsec.Text           ( Parser
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
 import qualified Data.Char                     as Char
+import           Data.Kind                      ( Type )
 import           Data.List                      ( nub )
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( fromGregorianValid
                                                 , secondsToDiffTime
                                                 )
@@ -64,7 +68,11 @@ import           Streaming                      ( MFunctor(hoist)
                                                 )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
+import           UnliftIO                       ( MonadIO
+                                                , liftIO
+                                                )
 import           UnliftIO.Exception             ( Exception )
+import           UnliftIO.Resource              ( ReleaseKey )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -86,6 +94,35 @@ data AddedSqlMigration m = AddedSqlMigration
   { addedSqlMig       :: SqlMigration m
   , addedSqlTimestamp :: DB.UTCTimestamp
   }
+
+data FileStream m = FileStream
+  { filePath   :: FilePath
+  , releaseKey :: ReleaseKey
+  , fileStream :: Stream (Of Text) m ()
+  }
+
+-- | Pure streams can be consumed as many times
+-- as necessary because consuming doesn't advance
+-- any stream state, unlike `FileStream`.
+newtype PureStream m = PureStream {
+    unPureStream :: Stream (Of Text) m ()
+}
+  deriving newtype (Semigroup)
+
+class MigrationStream (m :: Type -> Type) (s :: Type) where
+    readFullContents :: s -> m Text
+    migStream :: s -> Stream (Of Text) m ()
+
+instance Monad m => MigrationStream m (PureStream m) where
+  readFullContents PureStream { unPureStream } =
+    Streaming.fold_ (<>) "" id unPureStream
+  migStream PureStream { unPureStream } = unPureStream
+
+instance MonadIO m => MigrationStream m (FileStream m) where
+  -- | Reads entire file from disk again as so to
+  -- be immune to the state of the Stream.
+  readFullContents FileStream { filePath } = liftIO $ Text.readFile filePath
+  migStream FileStream { fileStream } = fileStream
 
 -- TODO: This should probably not be in Parsing.hs
 hoistAddedSqlMigration
@@ -563,8 +600,8 @@ isTransactionEndingPiece _                       = False
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
 parseAndClassifyMigration
-  :: MonadThrow m
-  => Stream (Of Text) m ()
+  :: (MonadThrow m, MigrationStream m s)
+  => s
   -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
 parseAndClassifyMigration sqlStream = do
   -- There is no easy way to avoid parsing at least up until and including
@@ -576,7 +613,8 @@ parseAndClassifyMigration sqlStream = do
   consumedPieces :> sqlPiecesBodyStream <-
     Streaming.toList
     $ Streaming.span (\p -> isCommentPiece p || isWhiteSpacePiece p)
-    $ parseSqlPiecesStreaming sqlStream
+    $ parseSqlPiecesStreaming
+    $ migStream sqlStream
   let firstComments  = filter isCommentPiece consumedPieces
       allOptSections = mapMaybe
         ( (\case
@@ -634,20 +672,13 @@ parseAndClassifyMigration sqlStream = do
       |
       -- Detect "-- codd: no-parse"
         OptNoParse True `elem` opts -> do
-        -- let consumedText = piecesToText consumedPieces
         -- Remember: the original Stream (Of Text) has already been advanced
-        -- beyond its first SQL statement. We have to rely on the parser a little
-        -- bit more to reconstruct the full contents of the original stream.
-        -- We could figure out how Streaming.copy works and use that, probably.
-        -- firstSqlStatement <- maybe "" sqlPieceText
-        --   <$> Streaming.head_ sqlPiecesBodyStream
-        -- TODO: Why does using only "remainingText" work???
-        remainingText <- Streaming.fold_ (<>) "" id sqlStream
-        pure $ Right
-          ( opts
-          , customConnStr
-          , UnparsedSql remainingText --consumedText <> firstSqlStatement <> remainingText
-          )
+        -- beyond its first SQL statement, but **only** if this is an IO-based
+        -- Stream. If this is a pure Stream it will start from the beginning when
+        -- consumed. That is why we prefer to use a special action to retrieve
+        -- the full migration's contents.
+        fullMigContents <- readFullContents sqlStream
+        pure $ Right (opts, customConnStr, UnparsedSql fullMigContents)
       | otherwise -> pure $ Right
         ( opts
         , customConnStr
@@ -662,12 +693,12 @@ piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
 parseSqlMigration
-  :: forall m
-   . MonadThrow m
+  :: forall m s
+   . (MonadThrow m, MigrationStream m s)
   => String
-  -> Stream (Of Text) m ()
+  -> s
   -> m (Either String (SqlMigration m))
-parseSqlMigration name t = (toMig =<<) <$> parseAndClassifyMigration t
+parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
  where
   dupOpts opts = length (nub opts) < length opts
   checkOpts :: [SectionOption] -> Maybe String
@@ -695,12 +726,12 @@ parseSqlMigration name t = (toMig =<<) <$> parseAndClassifyMigration t
     _        -> Right $ mkMig x
 
 parseAddedSqlMigration
-  :: MonadThrow m
+  :: (MonadThrow m, MigrationStream m s)
   => String
-  -> Stream (Of Text) m ()
+  -> s
   -> m (Either String (AddedSqlMigration m))
-parseAddedSqlMigration name t = do
-  sqlMig <- parseSqlMigration name t
+parseAddedSqlMigration name s = do
+  sqlMig <- parseSqlMigration name s
   pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
