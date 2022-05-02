@@ -103,7 +103,7 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
 -- Before including other statements in batching, remember that:
 -- - Sql statement exceptions will contain much more SQL and will be harder to debug.
 -- - We shouldn't batch in no-txn migrations, at least not without being very careful.
-data BatchedSqlStatements = StandaloneSqlPiece !SqlPiece | BatchedCopyRows !Text
+data BatchedSqlStatements = StandaloneSqlPiece !SqlPiece | BatchedCopyRows !Text --^ TODO: Use ByteString Builder instead of Text
   deriving stock (Show, Eq)
 
 batchCopyRows512KB :: Monad m => Stream (Of SqlPiece) m () -> Stream (Of BatchedSqlStatements) m ()
