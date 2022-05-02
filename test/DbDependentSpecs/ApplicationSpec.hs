@@ -18,7 +18,7 @@ import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , collectAndApplyMigrations
                                                 , withConnection
                                                 )
-import           Codd.Internal.MultiQueryStatement
+import           Codd.MultiQueryStatement
                                                 ( SqlStatementException )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)

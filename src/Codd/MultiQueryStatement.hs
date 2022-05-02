@@ -1,6 +1,8 @@
-module Codd.Internal.MultiQueryStatement
-  ( InTransaction(..)
+module Codd.MultiQueryStatement
+  ( BatchedSqlStatements(..)
+  , InTransaction(..)
   , SqlStatementException(..)
+  , batchCopyRows
   , multiQueryStatement_
   , runSingleStatementInternal_
   ) where
@@ -90,11 +92,11 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
     retry_ retryPol $ singleStatement_ conn t
   (WellParsedSql stms, NotInTransaction retryPol) ->
     -- We retry individual statements in no-txn migrations
-                                                     flip Streaming.mapM_ (batchCopyRows stms)
+                                                     flip Streaming.mapM_ (batchCopyRows512KB stms)
     $ \stm -> retry_ retryPol $ runSingleStatementInternal_ conn stm
   (WellParsedSql stms, InTransaction) ->
     -- We don't retry individual statements in in-txn migrations
-    flip Streaming.mapM_ (batchCopyRows stms) $ \stm -> runSingleStatementInternal_ conn stm
+    flip Streaming.mapM_ (batchCopyRows512KB stms) $ \stm -> runSingleStatementInternal_ conn stm
 
 -- | Data type that helps batching COPY rows to reduce round-trips. Other statements are
 -- currently not batched in any form.
@@ -102,10 +104,22 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
 -- - Sql statement exceptions will contain much more SQL and will be harder to debug.
 -- - We shouldn't batch in no-txn migrations, at least not without being very careful.
 data BatchedSqlStatements = StandaloneSqlPiece !SqlPiece | BatchedCopyRows !Text
+  deriving stock (Show, Eq)
 
+batchCopyRows512KB :: Monad m => Stream (Of SqlPiece) m () -> Stream (Of BatchedSqlStatements) m ()
+batchCopyRows512KB = batchCopyRows (512 * 1024)
+
+-- | Batches COPY rows in chunks with the minimum specified size in bytes,
+-- except for the last chunk, which will be in the returned `Stream` even
+-- if it's smaller than that, so as not to leave any rows behind.
+-- This hopefully makes applying long COPY statements strike a good
+-- balance between memory usage and performance.
 batchCopyRows
-  :: forall m. Monad m => Stream (Of SqlPiece) m () -> Stream (Of BatchedSqlStatements) m ()
-batchCopyRows = go ""
+  :: Monad m =>
+    Int
+    -- ^ Minimum batch size in bytes
+    -> Stream (Of SqlPiece) m () -> Stream (Of BatchedSqlStatements) m ()
+batchCopyRows minBatchSize = go ""
   where
     go rowsAcc stream = Effect $ do
       e <- Streaming.next stream
@@ -119,8 +133,7 @@ batchCopyRows = go ""
               let
                 newLength = Text.length row + Text.length rowsAcc
               in
-                -- 512KB minimum for each batch
-                if newLength > 512 * 1024 then
+                if newLength >= minBatchSize then
                   Streaming.yield (BatchedCopyRows $ rowsAcc <> row) <> go "" rest
                 else
                   go (rowsAcc <> row) rest

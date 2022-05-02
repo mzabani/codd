@@ -16,7 +16,7 @@ import           Codd.Hashing                   ( DbHashes(..)
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( withConnection )
-import           Codd.Internal.MultiQueryStatement
+import           Codd.MultiQueryStatement
                                                 ( InTransaction
                                                   ( NotInTransaction
                                                   )
