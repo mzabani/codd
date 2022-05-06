@@ -307,7 +307,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                                 ())
                 else pure []
 
-            logInfoN "Parse-checking all pending SQL Migrations..."
+            logInfoN "Parse-checking headers of all pending SQL Migrations..."
             parseMigrationFiles migsAlreadyApplied sqlMigrations
 
 

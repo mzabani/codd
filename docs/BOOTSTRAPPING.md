@@ -1,6 +1,6 @@
 # Bootstrapping
 
-_Codd_ is good at applying migrations but it needs an existing database to apply them on.
+_Codd_ can apply migrations but it needs an existing database to apply them on.
 Custom scripts can help with that initial phase, but _codd_ has its own solution to that, helping save
 a few keystrokes and making the entire process more streamlined; it's called bootstrapping.
 
