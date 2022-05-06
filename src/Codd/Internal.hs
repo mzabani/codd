@@ -8,7 +8,7 @@ import           Codd.Hashing                   ( DbHashes
                                                 , logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.MultiQueryStatement
+import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction(..)
                                                 , multiQueryStatement_
                                                 )
