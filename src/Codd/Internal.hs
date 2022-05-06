@@ -260,9 +260,10 @@ createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedEr
                 \, applied_at timestamptz not null \
                 \, name text not null \
                 \, unique (name), unique (migration_timestamp));"
-                <> -- It is not necessary to grant SELECT, but it helps _a lot_ with a test and shouldn't hurt.
+                <> -- It is not necessary to grant SELECT on the table, but it helps _a lot_ with a test and shouldn't hurt.
+                   -- SELECT on the sequence enables dumps by unprivileged users
                    "GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
-                   \GRANT USAGE ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
+                   \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
 
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
