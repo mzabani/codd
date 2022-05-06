@@ -129,6 +129,70 @@ batchCopyRows = go ""
                  (if rowsAcc /= "" then Streaming.yield (BatchedCopyRows rowsAcc) else mempty)
               <> Streaming.yield (StandaloneSqlPiece el)
               <> go "" rest
+    
+    -- spanMap :: (a -> Maybe b) -> Stream (Of a) m () -> Stream (Of b) m (Stream (Of a) m ())
+    -- spanMap f s = Effect $ do
+    --   e <- Streaming.next s
+    --   case e of
+    --     Left () -> Return mempty
+    --     Right (el, rest) ->
+    --       case f el of
+    --         Nothing -> Return $ Streaming.yield el <> rest
+    --         Just v  -> Streaming.yield v <> spanMap f rest
+    
+    -- isCopyRow :: SqlPiece -> Maybe Text
+    -- isCopyRow = \case
+    --   CopyFromStdinRow row -> Just row
+    --   _ -> Nothing
+    
+    -- takeCopyRowsUntilSize :: Stream (Of Text) m a -> Stream (Of Text) m a
+    -- takeCopyRowsUntilSize = loop ""
+    --   where
+    --     loop acc s = Effect $ do
+    --       e <- Streaming.next s
+    --       pure $ case e of
+    --         Left r ->
+    --           -- Last batch must go regardless of size
+    --           if acc /= "" then Streaming.yield acc else Return r
+    --         Right (el, rest) ->
+    --           let
+    --             newLength = Text.length el + Text.length acc
+    --           in
+    --             -- 512KB minimum for each batch
+    --             if newLength > 512 * 1024 then
+    --               Streaming.yield (acc <> el) <> loop "" rest
+    --             else
+    --               loop (acc <> el) rest
+    -- singlePieceOrMultipleRows :: Stream (Of SqlPiece) m () -> m (Either SqlPiece (Stream (Of Text) m ()))
+    -- singlePieceOrMultipleRows ps = do
+    --   eP1Rest <- Streaming.next ps
+    --   case eP1Rest of
+    --     Left () -> error "Impossible: empty stream."
+    --     Right (p1, rest) -> case p1 of
+    --       CopyFromStdinRow r -> Streaming.yield r <> Streaming.map sqlPieceToText rest
+    --       _ -> do
+    --         -- Ensure `rest` is empty for now.
+    --         emptyResult <- Streaming.next rest
+    --         case emptyResult of
+    --           Right _ -> error "Impossible: stream should be empty!"
+    --           _ -> pure $ Left p1
+    -- flatStream :: Stream (Of [BatchedSqlStatements]) m ()
+    -- flatStream =
+    --   Streaming.mapped
+    --   (\groupStream -> do
+    --       ePieceRows <- singlePieceOrMultipleRows groupStream
+    --       case ePieceRows of
+    --         Left sp -> pure [ StandaloneSqlPiece sp ]
+    --         Right rowsStream -> )
+    --   rowsGroupedStream
+
+    -- rowsGroupedStream :: Stream (Stream (Of SqlPiece) m) m ()
+    -- rowsGroupedStream =
+    --   Streaming.groupBy
+    --     (\p1 p2 ->
+    --       case (p1, p2) of
+    --         (CopyFromStdinRow _, CopyFromStdinRow _) -> True
+    --         _ -> False) s
 
 runSingleStatementInternal_ :: MonadIO m => DB.Connection -> BatchedSqlStatements -> m ()
 runSingleStatementInternal_ conn (StandaloneSqlPiece p) =
