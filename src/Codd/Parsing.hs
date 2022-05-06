@@ -361,10 +361,6 @@ copyFromStdinAfterStatementParser =
     <$> terminatorOnly
     <|> (   (, InsideCopy)
         .   CopyFromStdinRow
-        -- TODO: Imagine a database with huge documents in it: we don't want to store
-        -- entire documents in memory.
-        -- We should parse up to some limit of characters here or until line-break,
-        -- whatever comes first.
         <$> ((<>) <$> parseWithEscapeCharPreserve (== '\n') <*> string "\n")
         )
 

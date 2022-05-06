@@ -13,7 +13,6 @@ import           Codd.Types                     ( RetryPolicy )
 import           Control.Monad                  ( void )
 import           Control.Monad.Logger           ( MonadLogger )
 import           Data.Text                      ( Text )
-import qualified Data.Text as Text
 import           Data.Text.Encoding             ( encodeUtf8 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
@@ -24,11 +23,6 @@ import qualified Database.PostgreSQL.Simple.Internal
 import qualified Database.PostgreSQL.Simple.Types
                                                as DB
 import           Prelude                 hiding ( takeWhile )
-import           Streaming                      ( Of
-                                                , Stream
-                                                , Of(..)
-                                                )
-import Streaming.Internal (Stream(..))
 import qualified Streaming.Prelude             as Streaming
 import           UnliftIO                       ( Exception
                                                 , MonadIO
@@ -90,122 +84,24 @@ multiQueryStatement_ inTxn conn sql = case (sql, inTxn) of
     retry_ retryPol $ singleStatement_ conn t
   (WellParsedSql stms, NotInTransaction retryPol) ->
     -- We retry individual statements in no-txn migrations
-                                                     flip Streaming.mapM_ (batchCopyRows stms)
+                                                     flip Streaming.mapM_ stms
     $ \stm -> retry_ retryPol $ runSingleStatementInternal_ conn stm
   (WellParsedSql stms, InTransaction) ->
     -- We don't retry individual statements in in-txn migrations
-    flip Streaming.mapM_ (batchCopyRows stms) $ \stm -> runSingleStatementInternal_ conn stm
+    flip Streaming.mapM_ stms $ \stm -> runSingleStatementInternal_ conn stm
 
--- | Data type that helps batching COPY rows to reduce round-trips. Other statements are
--- currently not batched in any form.
--- Before including other statements in batching, remember that:
--- - Sql statement exceptions will contain much more SQL and will be harder to debug.
--- - We shouldn't batch in no-txn migrations, at least not without being very careful.
-data BatchedSqlStatements = StandaloneSqlPiece !SqlPiece | BatchedCopyRows !Text
-
-batchCopyRows
-  :: forall m. Monad m => Stream (Of SqlPiece) m () -> Stream (Of BatchedSqlStatements) m ()
-batchCopyRows = go ""
-  where
-    go rowsAcc stream = Effect $ do
-      e <- Streaming.next stream
-      pure $ case e of
-        Left () ->
-            -- Last batch must go regardless of size
-            if rowsAcc /= "" then Streaming.yield (BatchedCopyRows rowsAcc) else mempty
-        Right (el, rest) ->
-          case el of
-            CopyFromStdinRow row ->
-              let
-                newLength = Text.length row + Text.length rowsAcc
-              in
-                -- 512KB minimum for each batch
-                if newLength > 512 * 1024 then
-                  Streaming.yield (BatchedCopyRows $ rowsAcc <> row) <> go "" rest
-                else
-                  go (rowsAcc <> row) rest
-            _ ->
-              -- This could be the COPY terminator, so yield rowsAcc if it's not empty
-                 (if rowsAcc /= "" then Streaming.yield (BatchedCopyRows rowsAcc) else mempty)
-              <> Streaming.yield (StandaloneSqlPiece el)
-              <> go "" rest
-    
-    -- spanMap :: (a -> Maybe b) -> Stream (Of a) m () -> Stream (Of b) m (Stream (Of a) m ())
-    -- spanMap f s = Effect $ do
-    --   e <- Streaming.next s
-    --   case e of
-    --     Left () -> Return mempty
-    --     Right (el, rest) ->
-    --       case f el of
-    --         Nothing -> Return $ Streaming.yield el <> rest
-    --         Just v  -> Streaming.yield v <> spanMap f rest
-    
-    -- isCopyRow :: SqlPiece -> Maybe Text
-    -- isCopyRow = \case
-    --   CopyFromStdinRow row -> Just row
-    --   _ -> Nothing
-    
-    -- takeCopyRowsUntilSize :: Stream (Of Text) m a -> Stream (Of Text) m a
-    -- takeCopyRowsUntilSize = loop ""
-    --   where
-    --     loop acc s = Effect $ do
-    --       e <- Streaming.next s
-    --       pure $ case e of
-    --         Left r ->
-    --           -- Last batch must go regardless of size
-    --           if acc /= "" then Streaming.yield acc else Return r
-    --         Right (el, rest) ->
-    --           let
-    --             newLength = Text.length el + Text.length acc
-    --           in
-    --             -- 512KB minimum for each batch
-    --             if newLength > 512 * 1024 then
-    --               Streaming.yield (acc <> el) <> loop "" rest
-    --             else
-    --               loop (acc <> el) rest
-    -- singlePieceOrMultipleRows :: Stream (Of SqlPiece) m () -> m (Either SqlPiece (Stream (Of Text) m ()))
-    -- singlePieceOrMultipleRows ps = do
-    --   eP1Rest <- Streaming.next ps
-    --   case eP1Rest of
-    --     Left () -> error "Impossible: empty stream."
-    --     Right (p1, rest) -> case p1 of
-    --       CopyFromStdinRow r -> Streaming.yield r <> Streaming.map sqlPieceToText rest
-    --       _ -> do
-    --         -- Ensure `rest` is empty for now.
-    --         emptyResult <- Streaming.next rest
-    --         case emptyResult of
-    --           Right _ -> error "Impossible: stream should be empty!"
-    --           _ -> pure $ Left p1
-    -- flatStream :: Stream (Of [BatchedSqlStatements]) m ()
-    -- flatStream =
-    --   Streaming.mapped
-    --   (\groupStream -> do
-    --       ePieceRows <- singlePieceOrMultipleRows groupStream
-    --       case ePieceRows of
-    --         Left sp -> pure [ StandaloneSqlPiece sp ]
-    --         Right rowsStream -> )
-    --   rowsGroupedStream
-
-    -- rowsGroupedStream :: Stream (Stream (Of SqlPiece) m) m ()
-    -- rowsGroupedStream =
-    --   Streaming.groupBy
-    --     (\p1 p2 ->
-    --       case (p1, p2) of
-    --         (CopyFromStdinRow _, CopyFromStdinRow _) -> True
-    --         _ -> False) s
-
-runSingleStatementInternal_ :: MonadIO m => DB.Connection -> BatchedSqlStatements -> m ()
-runSingleStatementInternal_ conn (StandaloneSqlPiece p) =
-  case p of
-    CommentPiece     _ -> pure ()
-    WhiteSpacePiece  _ -> pure ()
-    BeginTransaction s -> singleStatement_ conn s
-    CommitTransaction s -> singleStatement_ conn s
-    RollbackTransaction s -> singleStatement_ conn s
-    OtherSqlPiece s -> singleStatement_ conn s
-    CopyFromStdinStatement copyStm -> liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
-    CopyFromStdinRow copyRow ->
-      -- This should actually never happen due to batching
-      liftIO $ DB.putCopyData conn $ encodeUtf8 copyRow
-    CopyFromStdinEnd _ -> liftIO $ void $ DB.putCopyEnd conn
-runSingleStatementInternal_ conn (BatchedCopyRows rows) = liftIO $ DB.putCopyData conn $ encodeUtf8 rows
+runSingleStatementInternal_ :: MonadIO m => DB.Connection -> SqlPiece -> m ()
+runSingleStatementInternal_ _    (CommentPiece     _) = pure ()
+runSingleStatementInternal_ _    (WhiteSpacePiece  _) = pure ()
+runSingleStatementInternal_ conn (BeginTransaction s) = singleStatement_ conn s
+runSingleStatementInternal_ conn (CommitTransaction s) =
+  singleStatement_ conn s
+runSingleStatementInternal_ conn (RollbackTransaction s) =
+  singleStatement_ conn s
+runSingleStatementInternal_ conn (OtherSqlPiece s) = singleStatement_ conn s
+runSingleStatementInternal_ conn (CopyFromStdinStatement copyStm) =
+  liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
+runSingleStatementInternal_ conn (CopyFromStdinRow copyRow) =
+  liftIO $ DB.putCopyData conn $ encodeUtf8 copyRow
+runSingleStatementInternal_ conn (CopyFromStdinEnd _) =
+  liftIO $ void $ DB.putCopyEnd conn
