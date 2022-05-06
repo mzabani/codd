@@ -1,23 +1,17 @@
-{-|
-This Module is all about analyzing SQL Migrations, by e.g. running them and checking if they're destructive, amongst other things, possibly.
--}
-
 module Codd.Analysis
     ( MigrationCheck(..)
     , checkMigration
     ) where
 
-import           Codd.Parsing                   ( ParsedSql
-                                                    ( ParseFailSqlText
-                                                    , WellParsedSql
-                                                    )
+import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlMigration(..)
-                                                , SqlPiece(BeginTransaction)
+                                                , SqlPiece(..)
+                                                , isCommentPiece
                                                 , isTransactionEndingPiece
+                                                , isWhiteSpacePiece
                                                 )
-import           Data.Foldable                  ( foldl' )
-import           Data.List.NonEmpty             ( NonEmpty((:|)) )
 import           Data.Text                      ( Text )
+import qualified Streaming.Prelude             as Streaming
 
 newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe Text }
     deriving stock Show
@@ -26,29 +20,34 @@ newtype MigrationCheck = MigrationCheck { transactionManagementProblem :: Maybe 
 -- | Checks for problems in a migration, including:
 --   1. in-txn migration ROLLBACKs or COMMITs.
 --   2. no-txn migrations BEGIN transaction but never ROLLBACKs or COMMITs it.
-checkMigration :: SqlMigration -> Either Text MigrationCheck
-checkMigration mig = MigrationCheck <$> migEndsTransaction
-
-  where
-    migEndsTransaction = case (migrationSql mig, migrationInTxn mig) of
-        (Nothing, _) -> Left "Empty migration"
-        (Just (ParseFailSqlText _), _) ->
-            Left "Error parsing migration so checking is not possible"
-        (Just (WellParsedSql _ pieces), True) ->
-            Right $ if any isTransactionEndingPiece pieces
+checkMigration :: Monad m => SqlMigration m -> m (Either Text MigrationCheck)
+checkMigration mig = do
+    migEndsTransaction <- case (migrationSql mig, migrationInTxn mig) of
+        (UnparsedSql   _     , _   ) -> pure $ Right Nothing
+        (WellParsedSql pieces, True) -> do
+            problem <- Streaming.any_ isTransactionEndingPiece pieces
+            pure $ Right $ if problem
                 then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
                 else Nothing
-        (Just (WellParsedSql _ (p1 :| ps)), False) ->
-            let
-                isOpenAfter wasOpen p = case p of
-                    BeginTransaction _ -> True
-                    _ -> not (isTransactionEndingPiece p) && wasOpen
+        (WellParsedSql pieces, False) -> do
+            noSqlToRun <- Streaming.all_
+                (\p -> isWhiteSpacePiece p || isCommentPiece p)
+                pieces
+            if noSqlToRun
+                then pure $ Left "The migration seems to be empty"
+                else do
+                    let isOpenAfter wasOpen p = case p of
+                            BeginTransaction _ -> True
+                            _ -> not (isTransactionEndingPiece p) && wasOpen
 
-                leavesTransactionOpen =
-                    foldl' isOpenAfter (isOpenAfter False p1) ps
-            in
-                Right $ if leavesTransactionOpen
-                    then
-                        Just
-                            "no-txn migration BEGINs but does not COMMIT or ROLLBACK transaction"
-                    else Nothing
+                    leavesTransactionOpen <- Streaming.fold_ isOpenAfter
+                                                             False
+                                                             id
+                                                             pieces
+
+                    pure $ Right $ if leavesTransactionOpen
+                        then
+                            Just
+                                "no-txn migration BEGINs but does not COMMIT or ROLLBACK transaction"
+                        else Nothing
+    pure $ MigrationCheck <$> migEndsTransaction

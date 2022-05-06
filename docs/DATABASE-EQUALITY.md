@@ -32,7 +32,8 @@ This is not currently the case, may not be entirely possible and some decisions 
 - Sequences (although their _RESTART_ value is not currently checked)
 - Functions, operators, and VIEWs
 - Triggers
-- Row Level Security
+- Row Level Security Policies
+- Extensions, through their objects, but not directly their names
 - Collations (with _important caveats_)
 - Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions
 - Composite, domain, enum and range types  
@@ -42,7 +43,6 @@ In contrast, an **incomplete** list of things that are **not currently checksumm
 
 - Full-text dictionaries
 - Base and shell types
-- Extensions
 - Partitioning
 - Foreign Servers
 

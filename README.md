@@ -44,16 +44,15 @@ $ codd verify-checksums
 
 ````shell
 $ codd up
-[Debug] Checking if Database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
-[Debug] Checking if Codd Schema exists and creating it if necessary...
-[Debug] Checking in the Database which SQL migrations have already been applied...
-[Debug] Parse-checking all pending SQL Migrations...
-[Debug] BEGINning transaction
-[Debug] Applying 2022-02-27-23-14-50-create-animals-table.sql
-[Debug] Applying 2022-02-27-23-30-41-create-people-table.sql
+[Info] Checking if database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
+[Info] Checking which SQL migrations have already been applied...
+[Info] Parse-checking headers of all pending SQL Migrations...
+[Info] BEGINning transaction
+[Info] Applying 2022-02-27-23-14-50-create-animals-table.sql
+[Info] Applying 2022-02-27-23-30-41-create-people-table.sql
 [Info] Database and expected schemas match.
-[Debug] COMMITed transaction
-[Debug] All migrations applied to codd-experiments successfully
+[Info] COMMITed transaction
+[Info] All migrations applied to codd-experiments successfully
 ````
 
 </td>

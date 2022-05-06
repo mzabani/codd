@@ -103,17 +103,11 @@ upParser =
 addParser :: Parser Cmd
 addParser =
   Add
-    <$> (   AddMigrationOptions
-        <$> switch
-              (  long "no-apply"
-              <> help
-                   "Do not apply any pending migrations, including the one being added."
-              )
-        <*> switch
-              (  long "no-parse"
-              <> help
-                   "Use only in case Codd's parsing fails for some reason but you're certain the SQL is valid. Disabling parsing means the migration will be treated as in-txn and COPY FROM STDIN will not be supported."
-              )
+    <$> (AddMigrationOptions <$> switch
+          (  long "no-apply"
+          <> help
+               "Do not apply any pending migrations, including the one being added."
+          )
         )
     <*> optionalStrOption
           (  long "dest-folder"
@@ -201,12 +195,14 @@ main = do
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckHashes connectTimeout) =
   runStdoutLoggingT $ case mCheckHashes of
-    Nothing ->
-      Codd.applyMigrationsNoCheck dbInfo connectTimeout (const $ pure ())
+    Nothing -> Codd.applyMigrationsNoCheck dbInfo
+                                           Nothing
+                                           connectTimeout
+                                           (const $ pure ())
     Just checkHashes ->
-      void $ Codd.applyMigrations dbInfo connectTimeout checkHashes
-doWork dbInfo (Add dontApply destFolder verbosity fp) =
-  runVerbosityLogger verbosity $ addMigration dbInfo dontApply destFolder fp
+      void $ Codd.applyMigrations dbInfo Nothing connectTimeout checkHashes
+doWork dbInfo (Add addOpts destFolder verbosity fp) =
+  runVerbosityLogger verbosity $ addMigration dbInfo addOpts destFolder fp
 doWork dbInfo (VerifyChecksum verbosity fromStdin) =
   runVerbosityLogger verbosity $ verifyChecksums dbInfo fromStdin
 doWork dbInfo (WriteChecksum opts) = writeChecksums dbInfo opts

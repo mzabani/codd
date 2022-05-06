@@ -13,16 +13,16 @@ import           Codd.Hashing                   ( readHashesFromDatabaseWithSett
 import           Codd.Hashing.Types             ( DbHashes(..)
                                                 , ObjHash(..)
                                                 )
-import           Codd.Internal                  ( CanUpdateCoddSchema(..)
-                                                , applyMigrationsInternal
-                                                , baseApplyMigsBlock
+import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , beginCommitTxnBracket
+                                                , collectAndApplyMigrations
                                                 , withConnection
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
+                                                , hoistAddedSqlMigration
                                                 , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
@@ -39,6 +39,8 @@ import           Control.Monad.Logger           ( LogStr
                                                 , fromLogStr
                                                 , runStdoutLoggingT
                                                 )
+import           Control.Monad.Trans            ( lift )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
 import           Data.Text                      ( Text
@@ -46,6 +48,7 @@ import           Data.Text                      ( Text
                                                 )
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
+import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( UTCTime
                                                 , diffUTCTime
                                                 , secondsToDiffTime
@@ -54,6 +57,8 @@ import           Data.Time                      ( UTCTime
 import qualified Database.PostgreSQL.Simple    as DB
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
+                                                , createTestUserMig
+                                                , createTestUserMigPol
                                                 , finallyDrop
                                                 , fixMigsOrder
                                                 , getIncreasingTimestamp
@@ -69,6 +74,7 @@ import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
+                                                , stdout
                                                 )
 import           UnliftIO.Concurrent            ( MVar
                                                 , modifyMVar_
@@ -76,19 +82,19 @@ import           UnliftIO.Concurrent            ( MVar
                                                 , readMVar
                                                 )
 
-placeHoldersMig, selectMig, copyMig :: AddedSqlMigration
+placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
 placeHoldersMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-placeholders.sql"
-        , migrationSql            = Just
-            $ mkValidSql "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
+        , migrationSql            = mkValidSql
+                                        "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-select-mig.sql"
-                 , migrationSql            = Just $ mkValidSql "SELECT 1, 3"
+                 , migrationSql            = mkValidSql "SELECT 1, 3"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -97,29 +103,26 @@ copyMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0002-copy-mig.sql"
         , migrationSql            =
-            Just
-                $ mkValidSql
-                      "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n "
+            -- CSV and Text formats' escaping rules aren't obvious.
+            -- We test those here. See https://www.postgresql.org/docs/13/sql-copy.html
+            -- TODO:
+            -- Specifying custom delimiters, escape chars, NULL specifier, BINARY copy.
+            -- Always compare to what psql does. Hopefully all the complexity is server-side.
+            mkValidSql
+                "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n COPY x FROM stdin;\nLine\\nbreak\\r\n\\.\n"
         , migrationInTxn          = False
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 2)
-divideBy0Mig = AddedSqlMigration
-    SqlMigration { migrationName           = "0003-divide-by-0-mig.sql"
-                 , migrationSql = Just $ mkValidSql "SELECT 2; SELECT 7/0"
-                 , migrationInTxn          = True
-                 , migrationCustomConnInfo = Nothing
-                 }
-    (getIncreasingTimestamp 3)
 
-createTableNewTableMig :: String -> Bool -> Int -> AddedSqlMigration
+createTableNewTableMig
+    :: MonadThrow m => String -> Bool -> Int -> AddedSqlMigration m
 createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
     SqlMigration
         { migrationName           = "000"
                                     <> show migOrder
                                     <> "-create-table-newtable-mig.sql"
-        , migrationSql            = Just
-                                    $  mkValidSql
+        , migrationSql            = mkValidSql
                                     $  "CREATE TABLE "
                                     <> Text.pack tableName
                                     <> "()"
@@ -128,11 +131,11 @@ createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
         }
     (getIncreasingTimestamp (fromIntegral migOrder))
 
-createDatabaseMig :: DB.ConnectInfo -> String -> Int -> Int -> SqlMigration
+createDatabaseMig
+    :: MonadThrow m => DB.ConnectInfo -> String -> Int -> Int -> SqlMigration m
 createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     { migrationName = "000" <> show migOrder <> "-create-database-mig.sql"
-    , migrationSql            = Just
-                                $  mkValidSql
+    , migrationSql            = mkValidSql
                                 $  "CREATE DATABASE "
                                 <> Text.pack dbName
                                 <> "; SELECT pg_sleep("
@@ -142,13 +145,12 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     , migrationCustomConnInfo = Just customConnInfo
     }
 
-createCountCheckingMig :: Int -> String -> SqlMigration
+createCountCheckingMig :: MonadThrow m => Int -> String -> SqlMigration m
 createCountCheckingMig expectedCount migName = SqlMigration
     { migrationName = "000" <> show expectedCount <> "-" <> migName <> ".sql"
     , migrationSql            =
-        Just
-        $  mkValidSql
-        $  "DO\
+        mkValidSql
+        $ "DO\
 \\n$do$\
 \\nBEGIN\
 \\n   IF (SELECT COUNT(*) <> "
@@ -175,11 +177,8 @@ spec = do
                                 void @IO
                                     $ runStdoutLoggingT
                                     $ applyMigrationsNoCheck
-                                          (emptyTestDbInfo
-                                              { sqlMigrations = Right
-                                                  [placeHoldersMig]
-                                              }
-                                          )
+                                          emptyTestDbInfo
+                                          (Just [placeHoldersMig])
                                           testConnTimeout
                                           (const $ pure ())
 
@@ -188,11 +187,8 @@ spec = do
                                 void @IO
                                     $ runStdoutLoggingT
                                     $ applyMigrationsNoCheck
-                                          (emptyTestDbInfo
-                                              { sqlMigrations = Right
-                                                                    [selectMig]
-                                              }
-                                          )
+                                          emptyTestDbInfo
+                                          (Just [selectMig])
                                           testConnTimeout
                                           (const $ pure ())
 
@@ -205,20 +201,28 @@ spec = do
                                 void @IO
                                     $ runStdoutLoggingT
                                     $ applyMigrationsNoCheck
-                                          (emptyTestDbInfo
-                                              { sqlMigrations = Right [inTxnMig]
-                                              }
-                                          )
+                                          emptyTestDbInfo
+                                          (Just [inTxnMig])
                                           testConnTimeout
                                           (const $ pure ())
 
-                      it "COPY FROM STDIN works" $ \emptyTestDbInfo -> do
-                          void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
-                              (emptyTestDbInfo { sqlMigrations = Right [copyMig]
-                                               }
-                              )
-                              testConnTimeout
-                              (const $ pure ())
+                      it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
+                          runStdoutLoggingT
+                                  (applyMigrationsNoCheck
+                                      emptyTestDbInfo
+                                      (Just [copyMig])
+                                      testConnTimeout
+                                      (\conn -> liftIO $ DB.query
+                                          conn
+                                          "SELECT name FROM x ORDER BY name"
+                                          ()
+                                      )
+                                  )
+                              `shouldReturn` [ DB.Only @String "Line\nbreak\r"
+                                             , DB.Only "Some name"
+                                             ]
+
+
 
                       forM_
                               [ DbDefault
@@ -238,39 +242,29 @@ spec = do
                                                   emptyTestDbInfo
                                                       { txnIsolationLvl =
                                                           isolLvl
-                                                      , sqlMigrations   = Right
-                                                          [selectMig] -- One in-txn migrations is exactly what we need to make the last action
-                                                                                      -- run in the same transaction as it
                                                       }
                                           -- This pretty much copies Codd.hs's applyMigrations, but it allows
                                           -- us to run an after-migrations action that queries the transaction isolation level
                                           (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
                                                   String) <-
                                               runStdoutLoggingT @IO
-                                                  $ applyMigrationsInternal
-                                                        (baseApplyMigsBlock
-                                                            (migsConnString
-                                                                modifiedSettings
-                                                            )
-                                                            testConnTimeout
-                                                            (retryPolicy
-                                                                modifiedSettings
-                                                            )
-                                                            (\_blocksOfMigs conn ->
-                                                                (,)
-                                                                    <$> unsafeQuery1
-                                                                            conn
-                                                                            "SHOW transaction_isolation"
-                                                                            ()
-                                                                    <*> unsafeQuery1
-                                                                            conn
-                                                                            "SHOW transaction_read_only"
-                                                                            ()
-                                                            )
-                                                            isolLvl
-                                                        )
+                                                  $ applyMigrationsNoCheck
                                                         modifiedSettings
+                                                        -- One in-txn migration is just what we need to make the last action
+                                                        -- run in the same transaction as it
+                                                        (Just [selectMig])
                                                         testConnTimeout
+                                                        (\conn ->
+                                                            (,)
+                                                                <$> unsafeQuery1
+                                                                        conn
+                                                                        "SHOW transaction_isolation"
+                                                                        ()
+                                                                <*> unsafeQuery1
+                                                                        conn
+                                                                        "SHOW transaction_read_only"
+                                                                        ()
+                                                        )
 
                                           DB.fromOnly actualTxnReadOnly
                                               `shouldBe` "off"
@@ -312,16 +306,16 @@ spec = do
                                           runStdoutLoggingT
                                                   (applyMigrations
                                                       (emptyTestDbInfo
-                                                          { sqlMigrations =
-                                                              Right
-                                                                  [ createTableNewTableMig
-                                                                        "newtable"
-                                                                        True
-                                                                        1
-                                                                  ]
-                                                          , onDiskHashes = Right
+                                                          { onDiskHashes = Right
                                                               bogusDbHashes
                                                           }
+                                                      )
+                                                      (Just
+                                                          [ createTableNewTableMig
+                                                                "newtable"
+                                                                True
+                                                                1
+                                                          ]
                                                       )
                                                       testConnTimeout
                                                       StrictCheck
@@ -339,16 +333,16 @@ spec = do
                                           runStdoutLoggingT
                                               (applyMigrations
                                                   (emptyTestDbInfo
-                                                      { sqlMigrations =
-                                                          Right
-                                                              [ createTableNewTableMig
-                                                                    "newtable"
-                                                                    True
-                                                                    1
-                                                              ]
-                                                      , onDiskHashes  = Right
+                                                      { onDiskHashes = Right
                                                           bogusDbHashes
                                                       }
+                                                  )
+                                                  (Just
+                                                      [ createTableNewTableMig
+                                                            "newtable"
+                                                            True
+                                                            1
+                                                      ]
                                                   )
                                                   testConnTimeout
                                                   LaxCheck
@@ -389,23 +383,23 @@ spec = do
                                                         runStdoutLoggingT
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
-                                                                        { sqlMigrations =
-                                                                            Right
-                                                                                [ createTableNewTableMig
-                                                                                    t1
-                                                                                    firstInTxn
-                                                                                    1
-                                                                                , createTableNewTableMig
-                                                                                    t2
-                                                                                    (not
-                                                                                        firstInTxn
-                                                                                    )
-                                                                                    2
-                                                                                ]
-                                                                        , onDiskHashes =
+                                                                        { onDiskHashes =
                                                                             Right
                                                                                 bogusDbHashes
                                                                         }
+                                                                    )
+                                                                    (Just
+                                                                        [ createTableNewTableMig
+                                                                            t1
+                                                                            firstInTxn
+                                                                            1
+                                                                        , createTableNewTableMig
+                                                                            t2
+                                                                            (not
+                                                                                firstInTxn
+                                                                            )
+                                                                            2
+                                                                        ]
                                                                     )
                                                                     testConnTimeout
                                                                     StrictCheck
@@ -429,8 +423,7 @@ spec = do
                                                 { migrationName           =
                                                     "0000-first-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "CREATE TABLE any_table (txid bigint not null);"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
@@ -445,8 +438,7 @@ spec = do
                                                 { migrationName           =
                                                     "0001-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- No txids from this migration because it runs in the same transaction as the last one, two more rows
@@ -460,8 +452,7 @@ spec = do
                                                 { migrationName           =
                                                     "0002-no-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "CREATE TYPE experience AS ENUM ('junior', 'senior');"
                                                     <> "\nALTER TABLE any_table ADD COLUMN experience experience;"
                                                     <> "\nALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
@@ -479,8 +470,7 @@ spec = do
                                                 { migrationName           =
                                                     "0003-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- One unique txid from this migration because it runs in a new transaction, two more rows
@@ -494,8 +484,7 @@ spec = do
                                                 { migrationName           =
                                                     "0004-second-in-txn-mig.sql"
                                                 , migrationSql            =
-                                                    Just
-                                                    $ mkValidSql
+                                                    mkValidSql
                                                     $ "INSERT INTO any_table (txid) VALUES (txid_current());"
                                                     <> "\nINSERT INTO any_table (txid) VALUES (txid_current());"
                                                 -- No txids from this migration because it runs in the same transaction as the last one, two more rows
@@ -509,10 +498,8 @@ spec = do
                                 void @IO
                                     $ runStdoutLoggingT
                                     $ applyMigrationsNoCheck
-                                          (emptyTestDbInfo
-                                              { sqlMigrations = Right migs
-                                              }
-                                          )
+                                          emptyTestDbInfo
+                                          (Just migs)
                                           testConnTimeout
                                           (const $ pure ())
                                 withConnection
@@ -539,17 +526,7 @@ spec = do
                                                 logsmv
                                                 (applyMigrationsNoCheck
                                                     (emptyTestDbInfo
-                                                        { sqlMigrations =
-                                                            Right
-                                                                [ mapSqlMigration
-                                                                      (\m -> m
-                                                                          { migrationInTxn =
-                                                                              inTxn
-                                                                          }
-                                                                      )
-                                                                      divideBy0Mig
-                                                                ]
-                                                        , retryPolicy   =
+                                                        { retryPolicy   =
                                                             RetryPolicy
                                                                 7
                                                                 (ExponentialBackoff
@@ -557,8 +534,16 @@ spec = do
                                                                         0.001
                                                                     )
                                                                 )
+                                                        , sqlMigrations =
+                                                            [ if inTxn
+                                                                  then
+                                                                      "test/migrations/retry-policy-test-in-txn/"
+                                                                  else
+                                                                      "test/migrations/retry-policy-test-no-txn/"
+                                                            ]
                                                         }
                                                     )
+                                                    Nothing
                                                     testConnTimeout
                                                     (const $ pure ())
                                                 )
@@ -567,24 +552,9 @@ spec = do
                                                                   `List.isInfixOf` show
                                                                                        e
 
-                                                                  &&
-
-                                                            -- For no-txn migrations, each statement is retried individually
-                                                                     (inTxn
-                                                                     && "SELECT 2;"
-                                                                     `List.isInfixOf` show
-                                                                                          e
-                                                                     || not
-                                                                            inTxn
-                                                                     && not
-                                                                            ("SELECT 2;"
-                                                                            `List.isInfixOf` show
-                                                                                                 e
-                                                                            )
-                                                                     && "SELECT 7/0"
-                                                                     `List.isInfixOf` show
-                                                                                          e
-                                                                     )
+                                                                  && "SELECT 7/0"
+                                                                  `List.isInfixOf` show
+                                                                                       e
                                                           )
                                         logs <- readMVar logsmv
                                         length
@@ -618,23 +588,24 @@ spec = do
                                                           )
                                                       `shouldBe` 1
                                 it "For in-txn migrations" $ testRetries True
-                                it "For no-txn migrations" $ testRetries True
+                                it "For no-txn migrations" $ testRetries False
 
             describe "Custom connection-string migrations" $ do
                 it
                         "applied_at registered properly for migrations running before codd_schema is available"
                     $ do
-                          defaultConnInfo <- testConnInfo
-                          testSettings    <- testCoddSettings []
+                          defaultConnInfo      <- testConnInfo
+                          testSettings         <- testCoddSettings
+                          createCoddTestDbMigs <- (: []) <$> createTestUserMig
+
                           let postgresCinfo = defaultConnInfo
                                   { DB.connectDatabase = "postgres"
                                   , DB.connectUser     = "postgres"
                                   }
 
-                              Right createCoddTestDbMigs =
-                                  sqlMigrations testSettings
                               allMigs =
-                                  fixMigsOrder
+                                  map (hoistAddedSqlMigration lift)
+                                      $  fixMigsOrder
                                       $  [ AddedSqlMigration
                                                (createDatabaseMig
                                                    postgresCinfo
@@ -664,10 +635,8 @@ spec = do
                               $ void @IO
                               $ do
                                     runStdoutLoggingT $ applyMigrationsNoCheck
-                                        (testSettings
-                                            { sqlMigrations = Right allMigs
-                                            }
-                                        )
+                                        testSettings
+                                        (Just allMigs)
                                         testConnTimeout
                                         (const $ pure ())
                                     withConnection defaultConnInfo
@@ -721,149 +690,60 @@ spec = do
                                                   `shouldSatisfy` all
                                                                       (> minTimeBetweenMigs
                                                                       )
-                it "Diversified order of different types of migrations"
-                    $ QC.property
-                    $ \() -> do
-                    -- We want to diversify the order of migrations we apply.
-                    -- Meaning we want to test regexp-like sequences
-                    -- like (custom-connection-mig | default-connection-mig)+
-                    -- However, some custom-connection migrations need to run
-                    -- in the right relative order between them, and any default-connection
-                    -- migrations need to run after the mig that creates "codd-test-db".
-                    -- So the format is actually approximately:
-                    -- 1. migs <- [create-codd-test-db] ++ Perm{default-conn-migs}
-                    -- 2. Merge [create-database-migs] and `migs` into another list
-                    --    preserving relative order of migs from each list randomly.
 
-                    -- Also, we want - to the extent that it's possible - ensure
-                    -- codd_schema.sql_migrations is up-to-date and with rows in
-                    -- the correct order.
-                    -- We do that by having default-conn-migs check COUNT(*)
-                    -- for that table.
-
-                    -- Finally we check the order of migrations in codd_schema.sql_migrations
-                    -- after having all migrations applied.
+                it "Diverse order of different types of migrations"
+                    $ ioProperty
+                    $ do
                           defaultConnInfo <- testConnInfo
-                          testSettings    <- testCoddSettings []
-                          let postgresCinfo = defaultConnInfo
-                                  { DB.connectDatabase = "postgres"
-                                  , DB.connectUser     = "postgres"
-                                  }
-
-                              Right createCoddTestDbMigs =
-                                  sqlMigrations testSettings
-
-                          -- This is important to ensure we're testing with a custom user
-                          -- but same database in some of our migrations.
-                          DB.connectUser defaultConnInfo `shouldBe` "postgres"
-
-                          -- A small list of count-checking migrations is *important*
-                          -- to ensure we have statistical diversity in terms of relative
-                          -- position between different types of migrations.
-                          -- Otherwise, we'd have count-checking migs as the last migrations
-                          -- and at the earliest position almost every time.
-                          shuffledMigs0 <-
-                              QC.generate $ (CreateCoddTestDb :) <$> QC.resize
-                                  5
-                                  (QC.listOf
-                                      (QC.elements
-                                          [ CreateCountCheckingMig True
-                                          , CreateCountCheckingMig False
-                                          , CreateCountCheckingMigDifferentUser
-                                              True
-                                          , CreateCountCheckingMigDifferentUser
-                                              False
-                                          ]
-                                      )
-                                  )
-                          allMigs <- fmap
-                              (fixMigsOrder . concat)
-                              ( QC.generate
-                              $ mergeShuffle
-                                    shuffledMigs0
-                                    (map CreateDbCreationMig [0 .. 3])
-                              $ \migOrder migType -> case migType of
-                                    CreateCoddTestDb -> createCoddTestDbMigs
-                                    CreateDbCreationMig i ->
-                                        [ AddedSqlMigration
-                                              (createDatabaseMig
-                                                  postgresCinfo
-                                                      { DB.connectDatabase =
-                                                          previousDbName
-                                                      }
-                                                  ("new_database_" <> show i)
-                                                  0 {- no pg_sleep, other test already tests this -}
-                                                  i
-                                              )
-                                              (getIncreasingTimestamp 0)
-                                        | previousDbName <- if i == 0
-                                            then ["postgres"]
-                                            else
-                                                [ "new_database_"
-                                                      <> show (i - 1)
-                                                ]
-                                        ]
-                                    CreateCountCheckingMig inTxn ->
-                                        [ AddedSqlMigration
-                                              (createCountCheckingMig
-                                                      migOrder
-                                                      "count-checking-mig"
-                                                  )
-                                                  { migrationInTxn = inTxn
-                                                  }
-                                              (getIncreasingTimestamp 0)
-                                        ]
-
-                                    CreateCountCheckingMigDifferentUser inTxn
-                                        -> [ AddedSqlMigration
-                                                     (createCountCheckingMig
-                                                             migOrder
-                                                             "count-checking-custom-user-mig"
-                                                         )
-                                                         { migrationCustomConnInfo =
-                                                             Just
-                                                                 defaultConnInfo
-                                                                     { DB.connectUser =
-                                                                         "codd-test-user"
-                                                                     }
-                                                         , migrationInTxn =
-                                                             inTxn
-                                                         }
-                                                 $ getIncreasingTimestamp 0
-                                           ]
-                              )
-
-                          finallyDrop "codd-test-db"
-                              $ finallyDrop "new_database_0"
-                              $ finallyDrop "new_database_1"
-                              $ finallyDrop "new_database_2"
-                              $ finallyDrop "new_database_3"
-                              $ void @IO
-                              $ do
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
-                                        (testSettings
-                                            { sqlMigrations = Right allMigs
-                                            }
-                                        )
-                                        testConnTimeout
-                                        (const $ pure ())
-                                    withConnection defaultConnInfo
-                                                   testConnTimeout
-                                        $ \conn -> do
-                                        -- Check all migrations were applied in order
-                                              runMigs :: [(Int, FilePath)] <-
-                                                  DB.query
-                                                      conn
-                                                      "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
-                                                      ()
-                                              map snd runMigs
-                                                  `shouldBe` map
-                                                                 ( migrationName
-                                                                 . addedSqlMig
-                                                                 )
-                                                                 allMigs
-                                              runMigs
-                                                  `shouldBeStrictlySortedOn` fst
+                          testSettings    <- testCoddSettings
+                          createCoddTestDbMigs :: AddedSqlMigration IO <-
+                              createTestUserMigPol @IO
+                          pure
+                              $ forAll
+                                    (diversifyAppCheckMigs
+                                        defaultConnInfo
+                                        testSettings
+                                        createCoddTestDbMigs
+                                    )
+                              $ \(DiverseMigrationOrder allMigs) ->
+                                    finallyDrop "codd-test-db"
+                                        $ finallyDrop "new_database_0"
+                                        $ finallyDrop "new_database_1"
+                                        $ finallyDrop "new_database_2"
+                                        $ finallyDrop "new_database_3"
+                                        $ void
+                                        $ do
+                                              runStdoutLoggingT
+                                                  $ applyMigrationsNoCheck
+                                                        testSettings
+                                                        (Just $ map
+                                                            (hoistAddedSqlMigration
+                                                                lift
+                                                            )
+                                                            allMigs
+                                                        )
+                                                        testConnTimeout
+                                                        (const $ pure ())
+                                              withConnection defaultConnInfo
+                                                             testConnTimeout
+                                                  $ \conn -> do
+                                                  -- Check all migrations were applied in order
+                                                        runMigs :: [ ( Int
+                                                              , FilePath
+                                                              )
+                                                            ] <-
+                                                            DB.query
+                                                                conn
+                                                                "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                                ()
+                                                        map snd runMigs
+                                                            `shouldBe` map
+                                                                           (migrationName
+                                                                           . addedSqlMig
+                                                                           )
+                                                                           allMigs
+                                                        runMigs
+                                                            `shouldBeStrictlySortedOn` fst
 
 
 -- | Concatenates two lists, generates a shuffle of that
@@ -884,10 +764,118 @@ mergeShuffle l1 l2 f = go l1 l2 f (0 :: Int)
 
 data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig Bool | CreateCountCheckingMigDifferentUser Bool | CreateDbCreationMig Int
 
+-- | Holds migrations that test codd_schema's internal management while migrations are applied.
+-- Look at the `diversifyAppCheckMigs` function, which generates migrations that explore a combination space
+-- with the intent of checking codd's migration application internals are robust.
+newtype DiverseMigrationOrder m = DiverseMigrationOrder {
+    migrationsInOrder :: [AddedSqlMigration m]
+}
+
+instance Show (DiverseMigrationOrder m) where
+    show (DiverseMigrationOrder migs) =
+        concatMap (show . migrationName . addedSqlMig) migs
+
+
+diversifyAppCheckMigs
+    :: MonadThrow m
+    => DB.ConnectInfo
+    -> CoddSettings
+    -> AddedSqlMigration m
+    -> Gen (DiverseMigrationOrder m)
+diversifyAppCheckMigs defaultConnInfo testSettings createCoddTestDbMigs = do
+    -- We want to diversify the order of migrations we apply.
+    -- Meaning we want to test regexp-like sequences
+    -- like (custom-connection-mig | default-connection-mig)+
+    -- However, some custom-connection migrations need to run
+    -- in the right relative order between them, and any default-connection
+    -- migrations need to run after the mig that creates "codd-test-db".
+    -- So the format is actually approximately:
+    -- 1. migs <- [create-codd-test-db] ++ Perm{default-conn-migs}
+    -- 2. Merge [create-database-migs] and `migs` into another list
+    --    preserving relative order of migs from each list randomly.
+
+    -- Also, we want - to the extent that is possible - to ensure
+    -- codd_schema.sql_migrations is up-to-date and with rows in
+    -- the correct order.
+    -- We do that by having default-conn-migs check COUNT(*)
+    -- for that table. We also test same-database-migs with different
+    -- users wrt that.
+
+    -- Finally we check the order of migrations in codd_schema.sql_migrations
+    -- after having all migrations applied.
+    let postgresCinfo = defaultConnInfo { DB.connectDatabase = "postgres"
+                                        , DB.connectUser     = "postgres"
+                                        }
+
+    -- A small number of count-checking migrations is *important*
+    -- to ensure we have statistical diversity in terms of relative
+    -- position between different types of migrations.
+    -- Otherwise, we'd have count-checking migs as the last migrations
+    -- and at the earliest position almost every time, when we could have
+    -- custom-connection-string ones there.
+    createDbAndFirstDefaultConnMig <-
+        sequenceA
+            [pure CreateCoddTestDb, CreateCountCheckingMig <$> arbitrary @Bool]
+
+    countCheckingMigs <- QC.resize 5 $ QC.listOf $ QC.elements
+        [ CreateCountCheckingMig True
+        , CreateCountCheckingMig False
+        , CreateCountCheckingMigDifferentUser True
+        , CreateCountCheckingMigDifferentUser False
+        ]
+
+    migsInOrder <-
+        fmap (fixMigsOrder . concat)
+        $ mergeShuffle (createDbAndFirstDefaultConnMig ++ countCheckingMigs)
+                       (map CreateDbCreationMig [0 .. 3])
+        $ \migOrder migType -> case migType of
+              CreateCoddTestDb -> [createCoddTestDbMigs]
+              CreateDbCreationMig i ->
+                  [ AddedSqlMigration
+                        (createDatabaseMig
+                            postgresCinfo { DB.connectDatabase = previousDbName
+                                          }
+                            ("new_database_" <> show i)
+                            0 {- no pg_sleep, another test already tests this -}
+                            i
+                        )
+                        (getIncreasingTimestamp 0)
+                  | previousDbName <- if i == 0
+                      then ["postgres"]
+                      else ["new_database_" <> show (i - 1)]
+                  ]
+              CreateCountCheckingMig inTxn ->
+                  [ AddedSqlMigration
+                        (createCountCheckingMig migOrder "count-checking-mig")
+                            { migrationInTxn = inTxn
+                            }
+                        (getIncreasingTimestamp 0)
+                  ]
+
+              CreateCountCheckingMigDifferentUser inTxn ->
+                  [ AddedSqlMigration
+                            (createCountCheckingMig
+                                    migOrder
+                                    "count-checking-custom-user-mig"
+                                )
+                                { migrationCustomConnInfo = Just defaultConnInfo
+                                    { DB.connectUser = "codd-test-user"
+                                    }
+                                , migrationInTxn          = inTxn
+                                }
+                        $ getIncreasingTimestamp 0
+                  ]
+    pure $ DiverseMigrationOrder migsInOrder
+
 
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
 runMVarLogger logsmv m = runLoggingT
     m
-    (\_loc _source _level str ->
-        modifyMVar_ logsmv (\l -> pure $ l ++ [decodeUtf8 $ fromLogStr str])
+    (\_loc _source _level str -> modifyMVar_
+        logsmv
+        (\l -> do
+            let s = decodeUtf8 $ fromLogStr str
+            liftIO $ Text.hPutStrLn stdout s
+            pure $ l ++ [s]
+        )
     )

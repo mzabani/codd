@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e6b8d58bfaad853ec60e127bb86cc0179b511d071b4452df2bb0ad7a3af2d5f2
+-- hash: f6805451c1b96ceba8a03ac5efb54d3efefeb99294523677052e47c980275354
 
 name:           codd
 version:        0.1.0.0
@@ -93,6 +93,7 @@ library
     , postgresql-libpq
     , postgresql-simple
     , resourcet
+    , streaming
     , text
     , time
     , unliftio
@@ -194,6 +195,9 @@ test-suite codd-test
     , monad-logger
     , mtl
     , postgresql-simple
+    , random
+    , resourcet
+    , streaming
     , text
     , time
     , unliftio

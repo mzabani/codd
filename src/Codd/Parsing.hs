@@ -2,22 +2,25 @@ module Codd.Parsing
   ( SqlMigration(..)
   , AddedSqlMigration(..)
   , CoddCommentParseResult(..)
+  , FileStream(..)
   , SqlPiece(..)
   , ParsedSql(..)
-  , ParsingOptions(..)
+  , PureStream(..)
   , connStringParser
+  , hoistAddedSqlMigration
+  , isCommentPiece
   , isTransactionEndingPiece
+  , isWhiteSpacePiece
   , mapSqlMigration
-  , nothingIfEmptyQuery
   , piecesToText
   , sqlPieceText
   , parsedSqlText
   , parseSqlMigration
-  , parseSqlMigrationOpts
   , parseWithEscapeCharProper
   , parseAddedSqlMigration
+  , parseAndClassifyMigration
   , parseMigrationTimestamp
-  , parseSqlPieces
+  , parseSqlPiecesStreaming
   , toMigrationTimestamp
   ) where
 
@@ -26,6 +29,7 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
+import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , anyChar
                                                 , asciiCI
@@ -35,8 +39,6 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , endOfLine
                                                 , many'
                                                 , many1
-                                                , manyTill
-                                                , match
                                                 , parseOnly
                                                 , peekChar
                                                 , sepBy1
@@ -46,14 +48,13 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , takeWhile1
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
-import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
+import           Data.Kind                      ( Type )
 import           Data.List                      ( nub )
-import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.List.NonEmpty            as NE
 import           Data.Maybe                     ( mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( fromGregorianValid
                                                 , secondsToDiffTime
                                                 )
@@ -62,72 +63,215 @@ import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Prelude                 hiding ( takeWhile )
-import qualified Prelude
+import           Streaming                      ( MFunctor(hoist)
+                                                , Of(..)
+                                                )
+import qualified Streaming.Prelude             as Streaming
+import           Streaming.Prelude              ( Stream )
+import           UnliftIO                       ( MonadIO
+                                                , liftIO
+                                                )
+import           UnliftIO.Exception             ( Exception )
+import           UnliftIO.Resource              ( ReleaseKey )
 
 
-data ParsedSql = ParseFailSqlText !Text | WellParsedSql !Text !(NonEmpty SqlPiece)
-  deriving stock (Eq, Show)
+-- | Contains either SQL parsed in pieces or the full original SQL contents
+-- for cases where parsing was foregone.
+data ParsedSql m =
+  UnparsedSql
+  !Text
+  -- ^ The full file contents
+  | WellParsedSql (Stream (Of SqlPiece) m ())
 
-data SqlMigration = SqlMigration
+data SqlMigration m = SqlMigration
   { migrationName           :: FilePath
-  , migrationSql            :: Maybe ParsedSql
+  , migrationSql            :: ParsedSql m
   , migrationInTxn          :: Bool
   , migrationCustomConnInfo :: Maybe ConnectInfo
   }
-  deriving stock (Eq, Show)
 
-data AddedSqlMigration = AddedSqlMigration
-  { addedSqlMig       :: SqlMigration
+data AddedSqlMigration m = AddedSqlMigration
+  { addedSqlMig       :: SqlMigration m
   , addedSqlTimestamp :: DB.UTCTimestamp
   }
-  deriving stock Show
+
+data FileStream m = FileStream
+  { filePath   :: FilePath
+  , releaseKey :: ReleaseKey
+  , fileStream :: Stream (Of Text) m ()
+  }
+
+-- | Pure streams can be consumed as many times
+-- as necessary because consuming doesn't advance
+-- any stream state, unlike `FileStream`.
+newtype PureStream m = PureStream {
+    unPureStream :: Stream (Of Text) m ()
+}
+  deriving newtype (Semigroup)
+
+class MigrationStream (m :: Type -> Type) (s :: Type) where
+    readFullContents :: s -> m Text
+    migStream :: s -> Stream (Of Text) m ()
+
+instance Monad m => MigrationStream m (PureStream m) where
+  readFullContents PureStream { unPureStream } =
+    Streaming.fold_ (<>) "" id unPureStream
+  migStream PureStream { unPureStream } = unPureStream
+
+instance MonadIO m => MigrationStream m (FileStream m) where
+  -- | Reads entire file from disk again as so to
+  -- be immune to the state of the Stream.
+  readFullContents FileStream { filePath } = liftIO $ Text.readFile filePath
+  migStream FileStream { fileStream } = fileStream
+
+-- TODO: This should probably not be in Parsing.hs
+hoistAddedSqlMigration
+  :: (Monad m, Monad n)
+  => (forall x . m x -> n x)
+  -> AddedSqlMigration m
+  -> AddedSqlMigration n
+hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) = AddedSqlMigration
+  (hoistSqlMig sqlMig)
+  tst
+ where
+  hoistSqlMig mig = mig { migrationSql = hoistParsedSql $ migrationSql mig }
+  hoistParsedSql (UnparsedSql   t     ) = UnparsedSql t
+  hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
 mapSqlMigration
-  :: (SqlMigration -> SqlMigration) -> AddedSqlMigration -> AddedSqlMigration
+  :: (SqlMigration m -> SqlMigration m)
+  -> AddedSqlMigration m
+  -> AddedSqlMigration m
 mapSqlMigration f (AddedSqlMigration sqlMig tst) =
   AddedSqlMigration (f sqlMig) tst
 
-newtype SectionOption = OptInTxn Bool
+data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)
 
-data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinPiece !Text !Text !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
+data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRow !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
-parseSqlPieces :: Text -> Either String (NonEmpty SqlPiece)
-parseSqlPieces = parseOnly (sqlPiecesParser <* endOfInput)
+data ParsingException = ParsingException
+  { sqlFragment :: Text
+  , errorMsg    :: String
+  }
+  deriving stock Show
 
-parsedSqlText :: ParsedSql -> Text
-parsedSqlText (ParseFailSqlText t) = t
-parsedSqlText (WellParsedSql t _ ) = t
+instance Exception ParsingException
+
+-- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
+parseSqlPiecesStreaming
+  :: forall m
+   . MonadThrow m
+  => Stream (Of Text) m ()
+  -> Stream (Of SqlPiece) m ()
+parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
+ where
+  mkErrorMsg errorMsg =
+    "An internal parsing error occurred. This is most likely a bug in codd. Please file a bug report.\
+    \ In the meantime, you can add this migration by writing \"-- codd: no-parse\" as its very first line.\
+    \ The downside is this migration will be in-txn and COPY will not be supported. It will also be put in\
+    \ memory all at once instead of being read and applied in streaming fashion.\
+    \ The more detailed parsing error is: "
+      ++ errorMsg
+    -- Important question: will the unconsumed Text remainders in the parsing Results
+    -- be allocated and take a lot of memory? This probably depends on how lazily these are
+    -- allocated by attoparsec and by Text's internal implementation. We might want to test this
+    -- with very small chunks of Text coming from the input stream to compare.
+    -- NOTE: It's unlikely Text's internal implementation
+    -- copies byte arrays for new instances. It most likely references existing byte arrays
+    -- with some offset and length integers to follow. Double-check just in case.
+  parseOneInc
+    :: ParserState
+    -> Text
+    -> m
+         ( [SqlPiece]
+         , Maybe (Text -> Parsec.Result (SqlPiece, ParserState))
+         , ParserState
+         )
+  parseOneInc parserState t = if t == ""
+    then pure ([], Nothing, parserState)
+    else case Parsec.parse (sqlPieceParser parserState) t of
+      Parsec.Fail _ _ errorMsg ->
+        throwM $ ParsingException t $ mkErrorMsg errorMsg
+      Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
+        first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
+      Parsec.Partial continue -> pure ([], Just continue, parserState)
+
+  parseResultsStream :: Stream (Of [SqlPiece]) m ()
+  parseResultsStream =
+    Streaming.scanM
+        (\(_, !mContinue, !parserState) !textPiece -> case mContinue of
+          Nothing       -> parseOneInc parserState textPiece
+           -- TODO: The following case is almost essentially "parseOneInc".
+           -- Reuse more code!
+          Just continue -> case continue textPiece of
+            Parsec.Fail _ _ errorMsg ->
+              throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
+            Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
+              first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
+            Parsec.Partial nextContinue ->
+              pure ([], Just nextContinue, parserState)
+        )
+        (pure ([], Nothing, OutsideCopy))
+        (pure . fst3)
+    -- SQL files' last statement don't need to end with a semi-colon, and because of
+    -- that they could end up as a partial match in those cases.
+    -- When applying parsing continuations the empty string is used to signal/match
+    -- endOfInput. So we append a final empty string to the original stream to
+    -- parse the last SQL statement properly regardless of semi-colon.
+    -- Also, because empty strings are so special, we filter them out from the
+    -- input stream just in case.
+      $  Streaming.filter (/= "") contents
+      <> Streaming.yield ""
+
+  fst3 (a, _, _) = a
+  first3 f (a, b, c) = (f a, b, c)
+
+parsedSqlText :: Monad m => ParsedSql m -> m Text
+parsedSqlText (UnparsedSql t) = pure t
+parsedSqlText (WellParsedSql s) =
+  Streaming.fold_ (<>) "" id $ Streaming.map sqlPieceText s
 
 sqlPieceText :: SqlPiece -> Text
-sqlPieceText (CommentPiece        s      ) = s
-sqlPieceText (WhiteSpacePiece     s      ) = s
-sqlPieceText (BeginTransaction    s      ) = s
-sqlPieceText (RollbackTransaction s      ) = s
-sqlPieceText (CommitTransaction   s      ) = s
-sqlPieceText (OtherSqlPiece       s      ) = s
-sqlPieceText (CopyFromStdinPiece s1 s2 s3) = s1 <> s2 <> s3
+sqlPieceText (CommentPiece           s) = s
+sqlPieceText (WhiteSpacePiece        s) = s
+sqlPieceText (BeginTransaction       s) = s
+sqlPieceText (RollbackTransaction    s) = s
+sqlPieceText (CommitTransaction      s) = s
+sqlPieceText (OtherSqlPiece          s) = s
+sqlPieceText (CopyFromStdinStatement s) = s
+sqlPieceText (CopyFromStdinRow       s) = s
+sqlPieceText (CopyFromStdinEnd       s) = s
 
-sqlPiecesParser :: Parser (NonEmpty SqlPiece)
-sqlPiecesParser = do
-  pcs <- manyTill sqlPieceParser endOfInput
-  case pcs of
-    []       -> fail "SQL migration is empty"
-    (p : ps) -> pure (p :| ps)
+data ParserState = OutsideCopy | InsideCopy
+
+sqlPieceParser :: ParserState -> Parser (SqlPiece, ParserState)
+sqlPieceParser parserState = case parserState of
+  OutsideCopy -> outsideCopyParser
+  InsideCopy  -> copyFromStdinAfterStatementParser
  where
-  sqlPieceParser =
-    CommentPiece
+  outsideCopyParser =
+    (, OutsideCopy)
+      .   CommentPiece
       <$> commentParser
-      <|> (WhiteSpacePiece <$> takeWhile1 Char.isSpace)
-      <|> copyFromStdinParser
-      <|> BeginTransaction
+      <|> (, OutsideCopy)
+      .   WhiteSpacePiece
+      <$> takeWhile1 Char.isSpace
+      <|> (, InsideCopy)
+      <$> copyFromStdinStatementParser
+      <|> (, OutsideCopy)
+      .   BeginTransaction
       <$> beginTransactionParser
-      <|> RollbackTransaction
+      <|> (, OutsideCopy)
+      .   RollbackTransaction
       <$> rollbackTransactionParser
-      <|> CommitTransaction
+      <|> (, OutsideCopy)
+      .   CommitTransaction
       <$> commitTransactionParser
-      <|> (OtherSqlPiece <$> anySqlPieceParser)
+      <|> (, OutsideCopy)
+      .   OtherSqlPiece
+      <$> anySqlPieceParser
   beginTransactionParser =
     spaceSeparatedTokensToParser [CITextToken "BEGIN", AllUntilEndOfStatement]
       <|> spaceSeparatedTokensToParser
@@ -194,8 +338,8 @@ spaceSeparatedTokensToParser allTokens = case allTokens of
     pure $ firstEl <> otherEls
 
 -- Urgh.. parsing statements precisely would benefit a lot from importing the lex parser
-copyFromStdinParser :: Parser SqlPiece
-copyFromStdinParser = do
+copyFromStdinStatementParser :: Parser SqlPiece
+copyFromStdinStatementParser = do
   stmt <- spaceSeparatedTokensToParser
     [ CITextToken "COPY"
     , SqlIdentifier
@@ -205,36 +349,26 @@ copyFromStdinParser = do
     , CITextToken "STDIN"
     , AllUntilEndOfStatement
     ]
-  seol                     <- eol
-  -- The first alternatie handles a special case: COPY without data (very common in DB dumps)
-  (copyData, parsedSuffix) <-
-    ("", )
+  seol <- eol
+  pure $ CopyFromStdinStatement $ stmt <> seol
+
+-- | Parser to be used after "COPY FROM STDIN..." has been parsed with `copyFromStdinStatementParser`.
+copyFromStdinAfterStatementParser :: Parser (SqlPiece, ParserState)
+copyFromStdinAfterStatementParser =
+  -- The first alternative handles a special case: COPY without data (very common in DB dumps)
+  (, OutsideCopy)
+    .   CopyFromStdinEnd
     <$> terminatorOnly
-    <|> parseUntilSuffix '\n' newlineAndTerminator
-    <|> parseUntilSuffix '\r' newlineAndTerminator -- Sorry Windows users, but you come second..
-  pure $ CopyFromStdinPiece (stmt <> seol) copyData parsedSuffix
+    <|> (   (, InsideCopy)
+        .   CopyFromStdinRow
+        <$> ((<>) <$> parseWithEscapeCharPreserve (== '\n') <*> string "\n")
+        )
+
  where
-  newlineAndTerminator = do
-    eol1 <- eol
-    t    <- terminatorOnly
-    pure $ eol1 <> t
   terminatorOnly = do
     s    <- string "\\."
     eol2 <- eol <|> ("" <$ endOfInput)
     pure $ s <> eol2
-
--- | Parse until finding the suffix string, returning both contents and suffix separately, in this order.
---   Can return an empty string for the contents.
-parseUntilSuffix :: Char -> Parser Text -> Parser (Text, Text)
-parseUntilSuffix suffixFirstChar wholeSuffix = do
-  s                         <- takeWhile (/= suffixFirstChar)
-  (parsedSuffix, succeeded) <- (, True) <$> wholeSuffix <|> pure ("", False)
-  if succeeded
-    then pure (s, parsedSuffix)
-    else do
-      nc                        <- char suffixFirstChar
-      (remain, recParsedSuffix) <- parseUntilSuffix suffixFirstChar wholeSuffix
-      pure (Text.snoc s nc <> remain, recParsedSuffix)
 
 -- | Parses 0 or more consecutive white-space or comments
 commentOrSpaceParser :: Bool -> Parser Text
@@ -400,13 +534,18 @@ connStringParser = do
 optionParser :: Parser SectionOption
 optionParser = do
   skipJustSpace
-  x <- inTxn <|> noTxn <|> fail
-    "Valid options after '-- codd:' are 'in-txn' or 'no-txn'"
+  x <-
+    inTxn
+    <|> noTxn
+    <|> noParse
+    <|> fail
+          "Valid options after '-- codd:' are 'in-txn', 'no-txn' or 'no-parse' (the last implies in-txn)"
   skipJustSpace
   return x
  where
-  inTxn = string "in-txn" >> pure (OptInTxn True)
-  noTxn = string "no-txn" >> pure (OptInTxn False)
+  inTxn   = string "in-txn" >> pure (OptInTxn True)
+  noTxn   = string "no-txn" >> pure (OptInTxn False)
+  noParse = string "no-parse" >> pure (OptNoParse True)
 
 
 skipJustSpace :: Parser ()
@@ -457,82 +596,112 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
--- | Looks only at comments that precede the first SQL statement and
+-- | Parses only comments and white-space that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
-extractCoddOpts
-  :: [SqlPiece] -> Either String ([SectionOption], Maybe ConnectInfo)
-extractCoddOpts ps =
-  let
-    firstComments = filter isCommentPiece
-      $ Prelude.takeWhile (\p -> isCommentPiece p || isWhiteSpacePiece p) ps
-    allOptSections = mapMaybe
-      ( (\case
-          Left  _    -> Nothing
-          Right opts -> Just opts
+parseAndClassifyMigration
+  :: (MonadThrow m, MigrationStream m s)
+  => s
+  -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
+parseAndClassifyMigration sqlStream = do
+  -- There is no easy way to avoid parsing at least up until and including
+  -- the first sql statement.
+  -- This means always advancing `sqlStream` beyond its first sql statement
+  -- too.
+  -- We are relying a lot on the parser to do a good job, which it apparently does,
+  -- but it may be interesting to think of alternatives here.
+  consumedPieces :> sqlPiecesBodyStream <-
+    Streaming.toList
+    $ Streaming.span (\p -> isCommentPiece p || isWhiteSpacePiece p)
+    $ parseSqlPiecesStreaming
+    $ migStream sqlStream
+  let firstComments  = filter isCommentPiece consumedPieces
+      allOptSections = mapMaybe
+        ( (\case
+            Left  _    -> Nothing
+            Right opts -> Just opts
+          )
+        . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
         )
-      . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
-      )
-      firstComments
-    customConnString = mapMaybe
-      ( (\case
-          Left  _        -> Nothing
-          Right connInfo -> Just connInfo
+        firstComments
+      customConnString = mapMaybe
+        ( (\case
+            Left  _        -> Nothing
+            Right connInfo -> Just connInfo
+          )
+        . ( parseOnly (coddConnStringCommentParser <* endOfInput)
+          . sqlPieceText
+          )
         )
-      . (parseOnly (coddConnStringCommentParser <* endOfInput) . sqlPieceText)
-      )
-      firstComments
-    headMay []      = Nothing
-    headMay (x : _) = Just x
-  in
-    -- Urgh.. is there no better way of pattern matching the stuff below?
-    case (allOptSections, customConnString) of
-      (_ : _ : _, _) ->
-        Left
-          "There must be at most one '-- codd:' comment in the first lines of a migration"
-      (_, _ : _ : _) ->
-        Left
-          "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
-      _ -> case (headMay allOptSections, headMay customConnString) of
-        (Just (CoddCommentWithGibberish badOptions), _) ->
-          Left
-            $ "The options '"
-            <> Text.unpack badOptions
-            <> "' are invalid. Valid options are a comma-separated list of 'in-txn', 'no-txn', 'force'"
-        (_, Just (CoddCommentWithGibberish badConn)) ->
-          Left
-            $ "The connection string '"
-            <> Text.unpack badConn
-            <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
-        (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
-          Right (opts, Just conn)
-        (Just (CoddCommentSuccess opts), Nothing) -> Right (opts, Nothing)
-        (Nothing, Just (CoddCommentSuccess conn)) -> Right ([], Just conn)
-        (Nothing, Nothing) -> Right ([], Nothing)
+        firstComments
+      headMay []      = Nothing
+      headMay (x : _) = Just x
+
+  -- Urgh.. is there no better way of pattern matching the stuff below?
+  eExtr <- case (allOptSections, customConnString) of
+    (_ : _ : _, _) ->
+      pure
+        $ Left
+            "There must be at most one '-- codd:' comment in the first lines of a migration"
+    (_, _ : _ : _) ->
+      pure
+        $ Left
+            "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+    _ -> case (headMay allOptSections, headMay customConnString) of
+      (Just (CoddCommentWithGibberish badOptions), _) ->
+        pure
+          $  Left
+          $  "The options '"
+          <> Text.unpack badOptions
+          <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
+      (_, Just (CoddCommentWithGibberish badConn)) ->
+        pure
+          $  Left
+          $  "The connection string '"
+          <> Text.unpack badConn
+          <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
+      (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
+        pure $ Right (opts, Just conn)
+      (Just (CoddCommentSuccess opts), Nothing) -> pure $ Right (opts, Nothing)
+      (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
+      (Nothing, Nothing) -> pure $ Right ([], Nothing)
+
+  case eExtr of
+    Left err -> pure $ Left err
+    Right (opts, customConnStr)
+      |
+      -- Detect "-- codd: no-parse"
+        OptNoParse True `elem` opts -> do
+        -- Remember: the original Stream (Of Text) has already been advanced
+        -- beyond its first SQL statement, but **only** if this is an IO-based
+        -- Stream. If this is a pure Stream it will start from the beginning when
+        -- consumed. That is why we prefer to use a special action to retrieve
+        -- the full migration's contents.
+        fullMigContents <- readFullContents sqlStream
+        pure $ Right (opts, customConnStr, UnparsedSql fullMigContents)
+      | otherwise -> pure $ Right
+        ( opts
+        , customConnStr
+        -- Prepend consumedPieces to preserve the property that SqlMigration objects
+        -- will hold the full original SQL.
+        , WellParsedSql $ Streaming.each consumedPieces <> sqlPiecesBodyStream
+        )
 
 
 
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
-migrationParserSimpleWorkflow
-  :: Parser ([SectionOption], Maybe ConnectInfo, ParsedSql)
-migrationParserSimpleWorkflow = do
-  (text, sqlPieces) <- match sqlPiecesParser
-  when (text /= piecesToText sqlPieces)
-    $ fail
-        "An internal error happened when parsing. Use '--no-parse' when adding to treat it as in-txn without support for COPY FROM STDIN if that's ok. Also, please report this as a bug."
-  case extractCoddOpts (NE.toList sqlPieces) of
-    Left err -> fail err
-    Right (opts, customConnStr) ->
-      pure (opts, customConnStr, WellParsedSql text sqlPieces)
-
-parseSqlMigration :: String -> Text -> Either Text SqlMigration
-parseSqlMigration name t = first Text.pack migE >>= toMig
+parseSqlMigration
+  :: forall m s
+   . (MonadThrow m, MigrationStream m s)
+  => String
+  -> s
+  -> m (Either String (SqlMigration m))
+parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
  where
-  migE = parseOnly (migrationParserSimpleWorkflow <* endOfInput) t
   dupOpts opts = length (nub opts) < length opts
-  checkOpts :: [SectionOption] -> Maybe Text
+  checkOpts :: [SectionOption] -> Maybe String
   checkOpts opts
     | inTxn opts && noTxn opts = Just
       "Choose either in-txn, no-txn or leave blank for the default of in-txn"
@@ -541,47 +710,29 @@ parseSqlMigration name t = first Text.pack migE >>= toMig
   inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
   noTxn opts = OptInTxn False `elem` opts
 
-  mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql) -> SqlMigration
+  mkMig :: ([SectionOption], Maybe ConnectInfo, ParsedSql m) -> SqlMigration m
   mkMig (opts, customConnString, sql) = SqlMigration
     { migrationName           = name
-    , migrationSql            = Just sql
+    , migrationSql            = sql
     , migrationInTxn          = inTxn opts
     , migrationCustomConnInfo = customConnString
     }
 
   toMig
-    :: ([SectionOption], Maybe ConnectInfo, ParsedSql)
-    -> Either Text SqlMigration
+    :: ([SectionOption], Maybe ConnectInfo, ParsedSql m)
+    -> Either String (SqlMigration m)
   toMig x@(ops, _, _) = case checkOpts ops of
     Just err -> Left err
     _        -> Right $ mkMig x
 
-data ParsingOptions = NoParse | DoParse
-  deriving stock (Eq)
-
-parseSqlMigrationOpts
-  :: ParsingOptions -> String -> Text -> Either Text SqlMigration
-parseSqlMigrationOpts popts name sql = case popts of
-  NoParse ->
-    Right $ SqlMigration name (Just $ ParseFailSqlText sql) True Nothing
-  _ -> parseSqlMigration name sql
-
 parseAddedSqlMigration
-  :: ParsingOptions -> String -> Text -> Either Text AddedSqlMigration
-parseAddedSqlMigration popts name t =
-  AddedSqlMigration
-    <$> parseSqlMigrationOpts popts name t
-    <*> parseMigrationTimestamp name
-
--- | This is supposed to be using a different parser which would double-check our parser in our tests. It's here only until
--- we find a way to remove it.
-nothingIfEmptyQuery :: Text -> Maybe ParsedSql
-nothingIfEmptyQuery t = case (parseSqlPieces t, t) of
-  (Left  _  , "") -> Nothing
-  (Left  _  , _ ) -> Just $ ParseFailSqlText t
-  (Right pcs, _ ) -> if all (\x -> isWhiteSpacePiece x || isCommentPiece x) pcs
-    then Nothing
-    else Just (WellParsedSql t pcs)
+  :: (MonadThrow m, MigrationStream m s)
+  => String
+  -> s
+  -> m (Either String (AddedSqlMigration m))
+parseAddedSqlMigration name s = do
+  sqlMig <- parseSqlMigration name s
+  pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 
 -- | Converts an arbitrary UTCTime (usually the system's clock when adding a migration) to a Postgres timestamptz
 -- in by rounding it to the nearest second to ensure Haskell and Postgres times both behave well. Returns both the rounded UTCTime
@@ -591,8 +742,8 @@ toMigrationTimestamp (UTCTime day diffTime) =
   let t = UTCTime day (fromInteger $ round diffTime) in (t, DB.Finite t)
 
 -- | Parses the UTC timestamp from a migration's name.
-parseMigrationTimestamp :: String -> Either Text DB.UTCTimestamp
-parseMigrationTimestamp name = first Text.pack $ parseOnly
+parseMigrationTimestamp :: String -> Either String DB.UTCTimestamp
+parseMigrationTimestamp name = parseOnly
   (migTimestampParser <|> fail
     ("Could not find migration timestamp from its name: '" <> name <> "'")
   )

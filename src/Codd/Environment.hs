@@ -6,8 +6,7 @@ module Codd.Environment
     ) where
 
 import           Codd.Hashing.Types             ( DbHashes )
-import           Codd.Parsing                   ( AddedSqlMigration
-                                                , connStringParser
+import           Codd.Parsing                   ( connStringParser
                                                 , parseWithEscapeCharProper
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
@@ -41,9 +40,9 @@ import           UnliftIO.Environment           ( lookupEnv )
 data CoddSettings = CoddSettings
     { migsConnString   :: ConnectInfo
     -- ^ The Connection String which will be used to run migrations.
-    , sqlMigrations    :: Either [FilePath] [AddedSqlMigration]
-    -- ^ A list of directories with .sql files or a list of ordered Sql Migrations.
-    --   When using Directory Paths, all .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
+    , sqlMigrations    :: [FilePath]
+    -- ^ A list of directories with .sql files.
+    --   All .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
     , onDiskHashes     :: Either FilePath DbHashes
     -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
@@ -61,6 +60,34 @@ data CoddSettings = CoddSettings
     -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
     -- by setting this to False.
     }
+
+-- coerceCoddSettings :: CoddSettings -> CoddSettings
+-- coerceCoddSettings CoddSettings {..} = CoddSettings
+--     { migsConnString
+--     , sqlMigrations    = copySqlMigs sqlMigrations
+--     , onDiskHashes
+--     , schemasToHash
+--     , extraRolesToHash
+--     , retryPolicy
+--     , txnIsolationLvl
+--     , checksumAlgo
+--     , hashedChecksums
+--     }
+--   where
+--     copySqlMigs
+--         :: Either [FilePath] [AddedSqlMigration m]
+--         -> Either [FilePath] [AddedSqlMigration n]
+--     copySqlMigs (Left  fp  ) = Left fp
+--     copySqlMigs (Right migs) = Right $ map copySqlMig migs
+
+--     copySqlMig :: AddedSqlMigration m -> AddedSqlMigration n
+--     copySqlMig (AddedSqlMigration SqlMigration {..} sqlTs) = AddedSqlMigration
+--         SqlMigration { migrationName
+--                      , migrationSql            = Nothing
+--                      , migrationInTxn
+--                      , migrationCustomConnInfo
+--                      }
+--         sqlTs
 
 -- | Considers backslash as an espace character for space.
 spaceSeparatedObjNameParser :: Parser [Text]
@@ -185,7 +212,7 @@ getCoddSettings = do
                              (parseVar checksumAlgoParser)
                              "CODD_CHECKSUM_ALGO"
     pure CoddSettings { migsConnString   = adminConnInfo
-                      , sqlMigrations    = Left sqlMigrationPaths
+                      , sqlMigrations    = sqlMigrationPaths
                       , onDiskHashes     = Left onDiskHashesDir
                       , schemasToHash    = schemasToHash
                       , extraRolesToHash = extraRolesToHash

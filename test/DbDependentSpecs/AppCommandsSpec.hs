@@ -21,6 +21,7 @@ import           Codd.Query                     ( execvoid_
 import           Control.Monad.Logger           ( LoggingT
                                                 , runStdoutLoggingT
                                                 )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( isInfixOf )
 import qualified Data.Map                      as Map
 import qualified Database.PostgreSQL.Simple    as DB
@@ -39,12 +40,11 @@ import           Test.Hspec                     ( Spec
 import           UnliftIO                       ( IOException )
 
 
-migThatWontRun :: AddedSqlMigration
+migThatWontRun :: MonadThrow m => AddedSqlMigration m
 migThatWontRun = AddedSqlMigration
     SqlMigration
         { migrationName           = "create-things.sql"
-        , migrationSql            = Just
-                                    $  mkValidSql
+        , migrationSql            = mkValidSql
                                     $  "CREATE USER \"user-that-wont-exist\";\n"
                                     <> "CREATE TABLE table_that_wont_exist();\n"
                                     <> "CREATE SCHEMA schema_that_wont_exist;"
@@ -55,10 +55,9 @@ migThatWontRun = AddedSqlMigration
 
 doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
-    vanillaTestSettings <- testCoddSettings []
+    vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
@@ -84,10 +83,9 @@ doesNotCreateDB act = do
 doesNotModifyExistingDb
     :: (CoddSettings -> LoggingT IO a) -> (IO a -> IO ()) -> IO ()
 doesNotModifyExistingDb act assert = do
-    vanillaTestSettings <- testCoddSettings []
+    vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
-            , sqlMigrations  = Right [migThatWontRun]
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"

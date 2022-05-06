@@ -7,11 +7,13 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
-import           Control.Monad                  ( forM_
+import           Control.Monad                  ( (>=>)
+                                                , forM_
                                                 , void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Maybe                     ( isJust )
 import           Data.Text                      ( unpack )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -22,10 +24,11 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 )
 import           Test.Hspec
 
-createTableMig, addColumnMig, dropColumnMig, dropTableMig :: AddedSqlMigration
+createTableMig, addColumnMig, dropColumnMig, dropTableMig
+    :: MonadThrow m => AddedSqlMigration m
 createTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-create-table.sql"
-                 , migrationSql = Just $ mkValidSql "CREATE TABLE anytable ();"
+                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -33,8 +36,8 @@ createTableMig = AddedSqlMigration
 addColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0002-add-column.sql"
-        , migrationSql            = Just
-            $ mkValidSql "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
@@ -42,15 +45,15 @@ addColumnMig = AddedSqlMigration
 dropColumnMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0003-drop-column.sql"
-        , migrationSql            = Just
-            $ mkValidSql "ALTER TABLE anytable DROP COLUMN anycolumn;"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable DROP COLUMN anycolumn;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
     (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration
     SqlMigration { migrationName           = "0004-drop-table.sql"
-                 , migrationSql = Just $ mkValidSql "DROP TABLE anytable;"
+                 , migrationSql            = mkValidSql "DROP TABLE anytable;"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  }
@@ -58,7 +61,6 @@ dropTableMig = AddedSqlMigration
 
 spec :: Spec
 spec = do
-    let mkDbInfo baseDbInfo migs = baseDbInfo { sqlMigrations = Right migs }
     describe "DbDependentSpecs"
         $ describe "Analysis tests"
         $ context "Transaction modifying migrations"
@@ -69,7 +71,7 @@ spec = do
                         let badMigs = map
                                 (\c -> SqlMigration
                                     { migrationName           = "0000-begin.sql"
-                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
                                     }
@@ -79,7 +81,7 @@ spec = do
                             goodMigs = map
                                 (\c -> SqlMigration
                                     { migrationName           = "0000-begin.sql"
-                                    , migrationSql = Just $ mkValidSql c
+                                    , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
                                     }
@@ -90,33 +92,43 @@ spec = do
                                 , "BEGIN; BEGIN; SELECT 1; COMMIT"
                                 ]
 
-                        forM_ badMigs $ \mig ->
-                            checkMigration mig `shouldSatisfy` \case
-                                Right (MigrationCheck (Just _)) -> True
-                                _                               -> False
+                        forM_
+                            badMigs
+                            (   checkMigration
+                            >=> (`shouldSatisfy` \case
+                                    Right (MigrationCheck (Just _)) -> True
+                                    _                               -> False
+                                )
+                            )
 
-                        forM_ goodMigs $ \mig ->
-                            checkMigration mig `shouldSatisfy` \case
-                                Right (MigrationCheck Nothing) -> True
-                                _                              -> False
+                        forM_ goodMigs
+                            $   checkMigration
+                            >=> (`shouldSatisfy` \case
+                                    Right (MigrationCheck Nothing) -> True
+                                    _                              -> False
+                                )
 
               it "in-txn migration containing COMMIT detected correctly" $ do
                   let commitTxnMig = SqlMigration
                           { migrationName           = "0000-commit.sql"
-                          , migrationSql = Just $ mkValidSql "COMMIT;"
+                          , migrationSql            = mkValidSql "COMMIT;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }
-                  checkMigration commitTxnMig `shouldSatisfy` \case
-                      Right (MigrationCheck (Just _)) -> True
-                      _                               -> False
+                  checkMigration commitTxnMig
+                      >>= (`shouldSatisfy` \case
+                              Right (MigrationCheck (Just _)) -> True
+                              _                               -> False
+                          )
               it "in-txn migration containing ROLLBACK detected correctly" $ do
                   let rollbackTxnMig = SqlMigration
                           { migrationName           = "0000-rollback.sql"
-                          , migrationSql = Just $ mkValidSql "ROLLBACK;"
+                          , migrationSql            = mkValidSql "ROLLBACK;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
                           }
-                  checkMigration rollbackTxnMig `shouldSatisfy` \case
-                      Right (MigrationCheck (Just _)) -> True
-                      _                               -> False
+                  checkMigration rollbackTxnMig
+                      >>= (`shouldSatisfy` \case
+                              Right (MigrationCheck (Just _)) -> True
+                              _                               -> False
+                          )

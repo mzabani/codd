@@ -15,6 +15,7 @@ import           Control.Monad                  ( void
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( nubBy )
 import           Data.Text                      ( unpack )
 import           Data.Time.Calendar             ( fromGregorian )
@@ -31,19 +32,18 @@ import           DbUtils                        ( aroundDatabaseWithMigs
                                                 , shouldBeStrictlySortedOn
                                                 , testCoddSettings
                                                 , testConnTimeout
-                                                , withDbAndDrop
+                                                , withCoddDbAndDrop
                                                 )
 import           Test.Hspec
 import           UnliftIO.Concurrent            ( threadDelay )
 
-timestampsMig, lotsOfObjectsMigration :: AddedSqlMigration
+timestampsMig, lotsOfObjectsMigration :: MonadThrow m => AddedSqlMigration m
 timestampsMig = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-create-timestamps-table.sql"
         , migrationSql            =
-            Just
-                $ mkValidSql
-                      "CREATE TABLE timestamps (seq_number int not null, tm1 timestamptz not null, tm2 timestamptz not null, UNIQUE (seq_number), UNIQUE(tm1), UNIQUE(tm2));"
+            mkValidSql
+                "CREATE TABLE timestamps (seq_number int not null, tm1 timestamptz not null, tm2 timestamptz not null, UNIQUE (seq_number), UNIQUE(tm1), UNIQUE(tm2));"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         }
@@ -52,8 +52,7 @@ lotsOfObjectsMigration = AddedSqlMigration
     SqlMigration
         { migrationName           = "0000-create-lots-of-objects.sql"
         , migrationSql            =
-            Just
-            $ mkValidSql
+            mkValidSql
             $ "CREATE TABLE anytable (id serial primary key, col1 timestamptz not null, col2 text CHECK (col2 <> ''), UNIQUE (col1), UNIQUE(col1, col2));"
             <> "CREATE EXTENSION intarray; CREATE EXTENSION btree_gist;"
  -- <> "CREATE TABLE other_table (a1 int references timestamps(seq_number), a2 circle, unique(a1, a2), exclude using gist (a1 with =, (a2) with &&));"
@@ -65,7 +64,6 @@ lotsOfObjectsMigration = AddedSqlMigration
 
 spec :: Spec
 spec = do
-    let mkDbInfo baseDbInfo migs = baseDbInfo { sqlMigrations = Right migs }
     describe "DbDependentSpecs" $ do
         describe "Invariants tests" $ do
             aroundDatabaseWithMigs [timestampsMig]
@@ -157,15 +155,15 @@ spec = do
             it "Timing does not affect hashing" $ do
                     -- One possible impurity is the time certain objects are added to the Database. So we apply our migrations with a few seconds
                     -- in between and check the hashes match
-                dbInfo    <- testCoddSettings [lotsOfObjectsMigration]
-                dbHashes1 <- runStdoutLoggingT $ withDbAndDrop
-                    dbInfo
+                dbInfo    <- testCoddSettings
+                dbHashes1 <- runStdoutLoggingT $ withCoddDbAndDrop
+                    [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readHashesFromDatabaseWithSettings dbInfo
                     )
                 threadDelay (5 * 1000 * 1000)
-                dbHashes2 <- runStdoutLoggingT $ withDbAndDrop
-                    dbInfo
+                dbHashes2 <- runStdoutLoggingT $ withCoddDbAndDrop
+                    [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readHashesFromDatabaseWithSettings dbInfo
                     )
