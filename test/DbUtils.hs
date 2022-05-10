@@ -11,6 +11,7 @@ import           Codd.Internal                  ( PendingMigrations
                                                 , withConnection
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , EnvVars
                                                 , ParsedSql(..)
                                                 , PureStream
                                                 , SqlMigration(..)
@@ -88,7 +89,7 @@ mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
 withCoddDbAndDrop
-    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m)
+    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m)
     => [AddedSqlMigration m]
     -> (ConnectInfo -> m a)
     -> m a

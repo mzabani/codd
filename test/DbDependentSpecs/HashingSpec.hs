@@ -23,6 +23,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 , multiQueryStatement_
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , EnvVars
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -109,7 +110,7 @@ hoistMU f (MU sqlMig tst, change) =
   (MU (hoistAddedSqlMigration f sqlMig) tst, change)
 
 migrationsAndHashChange
-  :: forall m . MonadThrow m => m [(MU (AddedSqlMigration m), DbChange)]
+  :: forall m . (MonadThrow m, EnvVars m) => m [(MU (AddedSqlMigration m), DbChange)]
 migrationsAndHashChange = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-

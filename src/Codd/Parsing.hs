@@ -2,6 +2,7 @@ module Codd.Parsing
   ( SqlMigration(..)
   , AddedSqlMigration(..)
   , CoddCommentParseResult(..)
+  , EnvVars(..)
   , FileStream(..)
   , SqlPiece(..)
   , ParsedSql(..)
@@ -29,6 +30,8 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
+import Control.Monad.Logger (LoggingT)
+import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , anyChar
@@ -51,7 +54,9 @@ import qualified Data.Attoparsec.Text          as Parsec
 import qualified Data.Char                     as Char
 import           Data.Kind                      ( Type )
 import           Data.List                      ( nub )
-import           Data.Maybe                     ( mapMaybe )
+import Data.Map (Map)
+import qualified Data.Map as Map
+import           Data.Maybe                     ( listToMaybe, mapMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
@@ -71,8 +76,9 @@ import           Streaming.Prelude              ( Stream )
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
+import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
-import           UnliftIO.Resource              ( ReleaseKey )
+import           UnliftIO.Resource              ( ReleaseKey, ResourceT )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -159,6 +165,26 @@ data ParsingException = ParsingException
 
 instance Exception ParsingException
 
+-- | This class indicates the ability to query environment variables.
+-- It might seem overly polymorphic to have such a thing, but
+-- `parseSqlPiecesStreaming` would be pure if not only for querying
+-- env vars and being able to throw exceptions!
+-- TODO: It should probably be in Codd.Environment, but that forms
+-- a cycle as of today.
+class EnvVars m where
+    -- | Returns a map with a key for every asked-for environment
+    -- variable, with empty values if they are undefined.
+    getEnvVars :: [Text] -> m (Map Text Text)
+
+instance EnvVars IO where
+    getEnvVars vars = Map.fromList <$> traverse (\var -> lookupEnv (Text.unpack var) >>= \mVal -> pure (var, maybe "" Text.pack mVal)) vars
+
+instance (Monad m, EnvVars m) => EnvVars (ResourceT m) where
+  getEnvVars vars = lift $ getEnvVars vars
+
+instance (Monad m, EnvVars m) => EnvVars (LoggingT m) where
+  getEnvVars vars = lift $ getEnvVars vars
+
 -- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
 parseSqlPiecesStreaming
   :: forall m
@@ -243,6 +269,18 @@ sqlPieceText (OtherSqlPiece          s) = s
 sqlPieceText (CopyFromStdinStatement s) = s
 sqlPieceText (CopyFromStdinRow       s) = s
 sqlPieceText (CopyFromStdinEnd       s) = s
+
+mapSqlPiece :: (Text -> Text) -> SqlPiece -> SqlPiece
+mapSqlPiece f = \case
+  CommentPiece           s -> CommentPiece (f s)
+  WhiteSpacePiece        s -> WhiteSpacePiece (f s)
+  BeginTransaction       s -> BeginTransaction (f s)
+  RollbackTransaction    s -> RollbackTransaction (f s)
+  CommitTransaction      s -> CommitTransaction (f s)
+  OtherSqlPiece          s -> OtherSqlPiece (f s)
+  CopyFromStdinStatement s -> CopyFromStdinStatement (f s)
+  CopyFromStdinRow       s -> CopyFromStdinRow (f s)
+  CopyFromStdinEnd       s -> CopyFromStdinEnd (f s)
 
 data ParserState = OutsideCopy | InsideCopy
 
@@ -583,6 +621,24 @@ coddConnStringCommentParser = do
     endOfLine
     pure $ CoddCommentSuccess connInfo
 
+-- | Parses a "-- codd-env-vars: VAR1, VAR2, ..." line. Consumes all available input
+-- in case of malformed options.
+-- Based on https://stackoverflow.com/a/2821201, but our regex for env vars is
+-- even a bit more lax than the proposed one. It is [a-zA-Z_0-9]+
+coddEnvVarsCommentParser :: Parser (CoddCommentParseResult [Text])
+coddEnvVarsCommentParser = do
+  void $ string "--"
+  skipJustSpace
+  void $ string "codd-env-vars:"
+  skipJustSpace
+  parseVarNames <|> CoddCommentWithGibberish . Text.stripEnd <$> Parsec.takeText
+ where
+  parseVarNames = do
+    vars <- singleVarNameParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
+    endOfLine
+    pure $ CoddCommentSuccess vars
+  singleVarNameParser = Parsec.takeWhile1 (\c -> c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c >= '0' && c <= '9')
+
 isWhiteSpacePiece :: SqlPiece -> Bool
 isWhiteSpacePiece (WhiteSpacePiece _) = True
 isWhiteSpacePiece _                   = False
@@ -600,7 +656,7 @@ isTransactionEndingPiece _                       = False
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
 parseAndClassifyMigration
-  :: (MonadThrow m, MigrationStream m s)
+  :: (MonadThrow m, MigrationStream m s, EnvVars m)
   => s
   -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
 parseAndClassifyMigration sqlStream = do
@@ -616,76 +672,94 @@ parseAndClassifyMigration sqlStream = do
     $ parseSqlPiecesStreaming
     $ migStream sqlStream
   let firstComments  = filter isCommentPiece consumedPieces
-      allOptSections = mapMaybe
+      envVarParseResults = mapMaybe
         ( (\case
             Left  _    -> Nothing
-            Right opts -> Just opts
+            Right parseRes -> Just parseRes
           )
-        . (parseOnly (coddCommentParser <* endOfInput) . sqlPieceText)
+        . (parseOnly (coddEnvVarsCommentParser <* endOfInput) . sqlPieceText)
         )
         firstComments
-      customConnString = mapMaybe
-        ( (\case
-            Left  _        -> Nothing
-            Right connInfo -> Just connInfo
-          )
-        . ( parseOnly (coddConnStringCommentParser <* endOfInput)
-          . sqlPieceText
-          )
-        )
-        firstComments
-      headMay []      = Nothing
-      headMay (x : _) = Just x
+      malformedEnvVarComment = listToMaybe [ line | CoddCommentWithGibberish line <- envVarParseResults ]
+  case malformedEnvVarComment of
+    Just badLine -> pure $ Left $ "Malformed -- codd-env-vars comment. Make sure there is at least one environment variable, that they are separated by a comma and that they only contain letters, numbers and underscore. Original comment: " <> Text.unpack badLine
+    Nothing -> do
+      envVars <- getEnvVars $ mconcat [ vars | CoddCommentSuccess vars <- envVarParseResults ]
+      let
+          textReplaceEnvVars :: Text -> Text
+          textReplaceEnvVars =
+            Map.foldlWithKey' (\accF var val -> Text.replace ("${" <> var <> "}") val . accF) id envVars
+          allOptSections = mapMaybe
+            ( (\case
+                Left  _    -> Nothing
+                Right opts -> Just opts
+              )
+            . (parseOnly (coddCommentParser <* endOfInput) . textReplaceEnvVars . sqlPieceText)
+            )
+            firstComments
+          customConnString = mapMaybe
+            ( (\case
+                Left  _        -> Nothing
+                Right connInfo -> Just connInfo
+              )
+            . ( parseOnly (coddConnStringCommentParser <* endOfInput)
+              . textReplaceEnvVars
+              . sqlPieceText
+              )
+            )
+            firstComments
+          headMay []      = Nothing
+          headMay (x : _) = Just x
 
-  -- Urgh.. is there no better way of pattern matching the stuff below?
-  eExtr <- case (allOptSections, customConnString) of
-    (_ : _ : _, _) ->
-      pure
-        $ Left
-            "There must be at most one '-- codd:' comment in the first lines of a migration"
-    (_, _ : _ : _) ->
-      pure
-        $ Left
-            "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
-    _ -> case (headMay allOptSections, headMay customConnString) of
-      (Just (CoddCommentWithGibberish badOptions), _) ->
-        pure
-          $  Left
-          $  "The options '"
-          <> Text.unpack badOptions
-          <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
-      (_, Just (CoddCommentWithGibberish badConn)) ->
-        pure
-          $  Left
-          $  "The connection string '"
-          <> Text.unpack badConn
-          <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
-      (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
-        pure $ Right (opts, Just conn)
-      (Just (CoddCommentSuccess opts), Nothing) -> pure $ Right (opts, Nothing)
-      (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
-      (Nothing, Nothing) -> pure $ Right ([], Nothing)
+      -- Urgh.. is there no better way of pattern matching the stuff below?
+      eExtr <- case (allOptSections, customConnString) of
+        (_ : _ : _, _) ->
+          pure
+            $ Left
+                "There must be at most one '-- codd:' comment in the first lines of a migration"
+        (_, _ : _ : _) ->
+          pure
+            $ Left
+                "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+        _ -> case (headMay allOptSections, headMay customConnString) of
+          (Just (CoddCommentWithGibberish badOptions), _) ->
+            pure
+              $  Left
+              $  "The options '"
+              <> Text.unpack badOptions
+              <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
+          (_, Just (CoddCommentWithGibberish badConn)) ->
+            pure
+              $  Left
+              $  "The connection string '"
+              <> Text.unpack badConn
+              <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
+          (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
+            pure $ Right (opts, Just conn)
+          (Just (CoddCommentSuccess opts), Nothing) -> pure $ Right (opts, Nothing)
+          (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
+          (Nothing, Nothing) -> pure $ Right ([], Nothing)
 
-  case eExtr of
-    Left err -> pure $ Left err
-    Right (opts, customConnStr)
-      |
-      -- Detect "-- codd: no-parse"
-        OptNoParse True `elem` opts -> do
-        -- Remember: the original Stream (Of Text) has already been advanced
-        -- beyond its first SQL statement, but **only** if this is an IO-based
-        -- Stream. If this is a pure Stream it will start from the beginning when
-        -- consumed. That is why we prefer to use a special action to retrieve
-        -- the full migration's contents.
-        fullMigContents <- readFullContents sqlStream
-        pure $ Right (opts, customConnStr, UnparsedSql fullMigContents)
-      | otherwise -> pure $ Right
-        ( opts
-        , customConnStr
-        -- Prepend consumedPieces to preserve the property that SqlMigration objects
-        -- will hold the full original SQL.
-        , WellParsedSql $ Streaming.each consumedPieces <> sqlPiecesBodyStream
-        )
+      case eExtr of
+        Left err -> pure $ Left err
+        Right (opts, customConnStr)
+          |
+          -- Detect "-- codd: no-parse"
+            OptNoParse True `elem` opts -> do
+            -- Remember: the original Stream (Of Text) has already been advanced
+            -- beyond its first SQL statement, but **only** if this is an IO-based
+            -- Stream. If this is a pure Stream it will start from the beginning when
+            -- consumed. That is why we prefer to use a special action to retrieve
+            -- the full migration's contents.
+            fullMigContents <- readFullContents sqlStream
+            pure $ Right (opts, customConnStr, UnparsedSql fullMigContents)
+          | otherwise -> pure $ Right
+            ( opts
+            , customConnStr
+            -- Prepend consumedPieces to preserve the property that SqlMigration objects
+            -- will hold the full original SQL.
+            , WellParsedSql $ Streaming.map (mapSqlPiece textReplaceEnvVars) $ Streaming.each consumedPieces <> sqlPiecesBodyStream
+            )
 
 
 
@@ -694,7 +768,7 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 
 parseSqlMigration
   :: forall m s
-   . (MonadThrow m, MigrationStream m s)
+   . (MonadThrow m, MigrationStream m s, EnvVars m)
   => String
   -> s
   -> m (Either String (SqlMigration m))
@@ -726,7 +800,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
     _        -> Right $ mkMig x
 
 parseAddedSqlMigration
-  :: (MonadThrow m, MigrationStream m s)
+  :: (MonadThrow m, MigrationStream m s, EnvVars m)
   => String
   -> s
   -> m (Either String (AddedSqlMigration m))

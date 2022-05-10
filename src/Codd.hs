@@ -16,6 +16,7 @@ import           Codd.Internal                  ( collectAndApplyMigrations
                                                 , strictCheckLastAction
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration
+                                                , EnvVars
                                                 , hoistAddedSqlMigration
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
@@ -41,7 +42,7 @@ data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | Che
 -- the Database's checksums if they're not the ones expected or a success result otherwise.
 -- Throws an exception if a migration fails or if checksums mismatch and strict-checking is enabled.
 applyMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m, EnvVars m)
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
@@ -79,7 +80,7 @@ applyMigrations dbInfo@CoddSettings { onDiskHashes } mOverrideMigs connectTimeou
 -- otherwise.
 -- Throws an exception if a migration fails.
 applyMigrationsNoCheck
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m, EnvVars m)
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.

@@ -2,6 +2,7 @@ module Codd.Environment
     ( CoddSettings(..)
     , getAdminConnInfo
     , getCoddSettings
+    , parseEnv
     , retryPolicyParser
     ) where
 
@@ -174,6 +175,8 @@ parseEnv defaultValue parser var = do
                     ++ "': "
                     ++ Text.unpack err
             Right x -> pure x
+
+
 
 getAdminConnInfo :: MonadIO m => m ConnectInfo
 getAdminConnInfo = do
