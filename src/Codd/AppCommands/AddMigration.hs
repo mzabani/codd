@@ -15,7 +15,9 @@ import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( streamingReadFile )
-import           Codd.Parsing                   ( EnvVars, parseSqlMigration )
+import           Codd.Parsing                   ( EnvVars
+                                                , parseSqlMigration
+                                                )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
                                                 , unless

@@ -30,7 +30,9 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Trans            ( MonadTrans, lift )
+import           Control.Monad.Trans            ( MonadTrans
+                                                , lift
+                                                )
 import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , anyChar
@@ -53,9 +55,11 @@ import qualified Data.Attoparsec.Text          as Parsec
 import qualified Data.Char                     as Char
 import           Data.Kind                      ( Type )
 import           Data.List                      ( nub )
-import Data.Map (Map)
-import qualified Data.Map as Map
-import           Data.Maybe                     ( listToMaybe, mapMaybe )
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
+import           Data.Maybe                     ( listToMaybe
+                                                , mapMaybe
+                                                )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
@@ -176,7 +180,13 @@ class EnvVars m where
     getEnvVars :: [Text] -> m (Map Text Text)
 
 instance EnvVars IO where
-    getEnvVars vars = Map.fromList <$> traverse (\var -> lookupEnv (Text.unpack var) >>= \mVal -> pure (var, maybe "" Text.pack mVal)) vars
+  getEnvVars vars =
+    Map.fromList
+      <$> traverse
+            (\var -> lookupEnv (Text.unpack var)
+              >>= \mVal -> pure (var, maybe "" Text.pack mVal)
+            )
+            vars
 
 instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
   getEnvVars = lift . getEnvVars
@@ -630,10 +640,27 @@ coddEnvVarsCommentParser = do
   parseVarNames <|> CoddCommentWithGibberish . Text.stripEnd <$> Parsec.takeText
  where
   parseVarNames = do
-    vars <- singleVarNameParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
+    vars <-
+      singleVarNameParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
     endOfLine
     pure $ CoddCommentSuccess vars
-  singleVarNameParser = Parsec.takeWhile1 (\c -> c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c >= '0' && c <= '9')
+  singleVarNameParser = Parsec.takeWhile1
+    (\c ->
+      c
+        >= 'a'
+        && c
+        <= 'z'
+        || c
+        >= 'A'
+        && c
+        <= 'Z'
+        || c
+        == '_'
+        || c
+        >= '0'
+        && c
+        <= '9'
+    )
 
 isWhiteSpacePiece :: SqlPiece -> Bool
 isWhiteSpacePiece (WhiteSpacePiece _) = True
@@ -667,30 +694,41 @@ parseAndClassifyMigration sqlStream = do
     $ Streaming.span (\p -> isCommentPiece p || isWhiteSpacePiece p)
     $ parseSqlPiecesStreaming
     $ migStream sqlStream
-  let firstComments  = filter isCommentPiece consumedPieces
-      envVarParseResults = mapMaybe
-        ( (\case
-            Left  _    -> Nothing
-            Right parseRes -> Just parseRes
-          )
-        . (parseOnly (coddEnvVarsCommentParser <* endOfInput) . sqlPieceText)
+  let
+    firstComments      = filter isCommentPiece consumedPieces
+    envVarParseResults = mapMaybe
+      ( (\case
+          Left  _        -> Nothing
+          Right parseRes -> Just parseRes
         )
-        firstComments
-      malformedEnvVarComment = listToMaybe [ line | CoddCommentWithGibberish line <- envVarParseResults ]
+      . (parseOnly (coddEnvVarsCommentParser <* endOfInput) . sqlPieceText)
+      )
+      firstComments
+    malformedEnvVarComment =
+      listToMaybe [ line | CoddCommentWithGibberish line <- envVarParseResults ]
   case malformedEnvVarComment of
-    Just badLine -> pure $ Left $ "Malformed -- codd-env-vars comment. Make sure there is at least one environment variable, that they are separated by a comma and that they only contain letters, numbers and underscore. Original comment: " <> Text.unpack badLine
+    Just badLine ->
+      pure
+        $ Left
+        $ "Malformed -- codd-env-vars comment. Make sure there is at least one environment variable, that they are separated by a comma and that they only contain letters, numbers and underscore. Original comment: "
+        <> Text.unpack badLine
     Nothing -> do
-      envVars <- getEnvVars $ mconcat [ vars | CoddCommentSuccess vars <- envVarParseResults ]
-      let
-          textReplaceEnvVars :: Text -> Text
-          textReplaceEnvVars =
-            Map.foldlWithKey' (\accF var val -> Text.replace ("${" <> var <> "}") val . accF) id envVars
+      envVars <- getEnvVars
+        $ mconcat [ vars | CoddCommentSuccess vars <- envVarParseResults ]
+      let textReplaceEnvVars :: Text -> Text
+          textReplaceEnvVars = Map.foldlWithKey'
+            (\accF var val -> Text.replace ("${" <> var <> "}") val . accF)
+            id
+            envVars
           allOptSections = mapMaybe
             ( (\case
                 Left  _    -> Nothing
                 Right opts -> Just opts
               )
-            . (parseOnly (coddCommentParser <* endOfInput) . textReplaceEnvVars . sqlPieceText)
+            . ( parseOnly (coddCommentParser <* endOfInput)
+              . textReplaceEnvVars
+              . sqlPieceText
+              )
             )
             firstComments
           customConnString = mapMaybe
@@ -732,8 +770,10 @@ parseAndClassifyMigration sqlStream = do
               <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
           (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
             pure $ Right (opts, Just conn)
-          (Just (CoddCommentSuccess opts), Nothing) -> pure $ Right (opts, Nothing)
-          (Nothing, Just (CoddCommentSuccess conn)) -> pure $ Right ([], Just conn)
+          (Just (CoddCommentSuccess opts), Nothing) ->
+            pure $ Right (opts, Nothing)
+          (Nothing, Just (CoddCommentSuccess conn)) ->
+            pure $ Right ([], Just conn)
           (Nothing, Nothing) -> pure $ Right ([], Nothing)
 
       case eExtr of
@@ -754,7 +794,10 @@ parseAndClassifyMigration sqlStream = do
             , customConnStr
             -- Prepend consumedPieces to preserve the property that SqlMigration objects
             -- will hold the full original SQL.
-            , WellParsedSql $ Streaming.map (mapSqlPiece textReplaceEnvVars) $ Streaming.each consumedPieces <> sqlPiecesBodyStream
+            , WellParsedSql
+            $  Streaming.map (mapSqlPiece textReplaceEnvVars)
+            $  Streaming.each consumedPieces
+            <> sqlPiecesBodyStream
             )
 
 
