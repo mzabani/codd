@@ -30,8 +30,7 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
-import Control.Monad.Logger (LoggingT)
-import           Control.Monad.Trans            ( lift )
+import           Control.Monad.Trans            ( MonadTrans, lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , anyChar
@@ -78,7 +77,7 @@ import           UnliftIO                       ( MonadIO
                                                 )
 import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
-import           UnliftIO.Resource              ( ReleaseKey, ResourceT )
+import           UnliftIO.Resource              ( ReleaseKey )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -179,11 +178,8 @@ class EnvVars m where
 instance EnvVars IO where
     getEnvVars vars = Map.fromList <$> traverse (\var -> lookupEnv (Text.unpack var) >>= \mVal -> pure (var, maybe "" Text.pack mVal)) vars
 
-instance (Monad m, EnvVars m) => EnvVars (ResourceT m) where
-  getEnvVars vars = lift $ getEnvVars vars
-
-instance (Monad m, EnvVars m) => EnvVars (LoggingT m) where
-  getEnvVars vars = lift $ getEnvVars vars
+instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
+  getEnvVars = lift . getEnvVars
 
 -- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
 parseSqlPiecesStreaming
