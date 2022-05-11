@@ -170,7 +170,7 @@ instance Exception ParsingException
 
 -- | This class indicates the ability to query environment variables.
 -- It might seem overly polymorphic to have such a thing, but
--- `parseSqlPiecesStreaming` would be pure if not only for querying
+-- `parseAndClassifyMigration` would be pure if not only for querying
 -- env vars and being able to throw exceptions!
 -- TODO: It should probably be in Codd.Environment, but that forms
 -- a cycle as of today.

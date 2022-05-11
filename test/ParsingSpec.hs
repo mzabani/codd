@@ -5,12 +5,14 @@ import           Codd.Internal                  ( BlockOfMigrations(..)
                                                 , parseMigrationFiles
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , EnvVars(..)
                                                 , ParsedSql(..)
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
                                                 , isCommentPiece
                                                 , isWhiteSpacePiece
+                                                , parseAndClassifyMigration
                                                 , parseSqlMigration
                                                 , parseSqlPiecesStreaming
                                                 , parsedSqlText
@@ -21,12 +23,20 @@ import           Control.Monad                  ( (>=>)
                                                 , forM_
                                                 , when
                                                 )
+import           Control.Monad.Identity         ( Identity(runIdentity) )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
+import           Control.Monad.Reader           ( ReaderT(..)
+                                                , ask
+                                                )
+import           Control.Monad.Trans            ( MonadTrans )
+import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
 import qualified Data.Char                     as Char
 import           Data.Either                    ( isLeft )
 import qualified Data.List                     as List
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
+import           Data.Map                       ( Map )
+import qualified Data.Map                      as Map
 import           Data.Maybe                     ( fromMaybe
                                                 , isJust
                                                 )
@@ -259,6 +269,35 @@ shouldReturnLeft mv = mv >>= \case
   Left  _ -> pure ()
   Right _ -> liftIO $ expectationFailure "Got Right but was expecting Left"
 
+
+{- A quick-n-dirty transformer to serve as a mock of the EnvVars monad -}
+newtype EnvVarsT m a = EnvVarsT { runEnvVarsT :: Map Text Text -> m a }
+  deriving stock (Functor)
+
+-- | This isn't really overlapping. The compiler says so probably
+-- because instance resolution doesn't check constraints.
+instance {-# OVERLAPPING #-} EnvVars (EnvVarsT Identity) where
+  -- Important invariant: 
+  -- All asked-for environment variables must appear in the result Map.
+  getEnvVars vars = EnvVarsT $ \r -> pure $ foldr
+    (\k res -> let v = Map.findWithDefault "" k r in Map.insert k v res)
+    mempty
+    vars
+
+instance Monad m => MonadThrow (EnvVarsT m) where
+  throwM = error "throwM not implemented"
+
+instance Applicative m => Applicative (EnvVarsT m) where
+  pure v = EnvVarsT $ const (pure v)
+  EnvVarsT run1 <*> EnvVarsT run2 = EnvVarsT $ \r -> run1 r <*> run2 r
+{- ------------------------------------------------------------------- -}
+
+instance Monad m => Monad (EnvVarsT m) where
+  EnvVarsT run1 >>= f = EnvVarsT $ \r -> do
+    v <- run1 r
+    let EnvVarsT run2 = f v
+    run2 r
+
 spec :: Spec
 spec = do
   describe "Parsing tests" $ do
@@ -455,6 +494,45 @@ spec = do
               , DB.connectPassword = ""
               , DB.connectDatabase = "codd-experiments"
               }
+
+      it "-- codd-env-vars templating" $ do
+        let
+          sqlWithVars
+            = "-- codd: no-txn\n\
+                  \-- codd-connection: postgres://${PGSUPERUSER}@${PGHOST}:${PGPORT}/postgres\n\
+                  \-- codd-env-vars: PGSUPERUSER ,PGHOST,PGUSER, PGPORT  , UNDEFINED_VAR23, PGDATABASE\n\
+                  \CREATE DATABASE ${PGDATABASE};\n\
+                  \SELECT \"${PGUSER}\";\n\
+                  \SELECT ${NOTAVARIABLE};\n\
+                  \SELECT ${UNDEFINED_VAR23}"
+          vars = Map.fromList
+            [ ("PGSUPERUSER", "dbsuperuser")
+            , ("PGHOST"     , "someaddress")
+            , ("PGPORT"     , "5432")
+            , ("PGUSER"     , "codd_user")
+            , ("PGDATABASE" , "codd_db")
+            ]
+          templatedSql
+            = "-- codd: no-txn\n\
+                  \-- codd-connection: postgres://dbsuperuser@someaddress:5432/postgres\n\
+                  \-- codd-env-vars: PGSUPERUSER ,PGHOST,PGUSER, PGPORT  , UNDEFINED_VAR23, PGDATABASE\n\
+                  \CREATE DATABASE codd_db;\n\
+                  \SELECT \"codd_user\";\n\
+                  \SELECT ${NOTAVARIABLE};\n\
+                  \SELECT " -- Declared in the header but not defined is replaced by empty
+
+        -- EnvVarsT over Identity is our way to mock environment variables
+        let parsedSql = runIdentity $ flip runEnvVarsT vars $ do
+              res <-
+                parseAndClassifyMigration
+                $ PureStream @(EnvVarsT Identity)
+                $ Streaming.yield sqlWithVars
+              case res of
+                Left  err                   -> error err
+                Right (_, _, UnparsedSql _) -> error "Got UnparsedSql"
+                Right (_, _, WellParsedSql pieces) ->
+                  mconcat . map sqlPieceText <$> Streaming.toList_ pieces
+        parsedSql `shouldBe` templatedSql
 
     context "Invalid SQL Migrations" $ do
       it "Sql Migration Parser never blocks for random text" $ do
