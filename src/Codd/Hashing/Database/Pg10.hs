@@ -363,7 +363,7 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                 -- is compiled, so we ignore this column in those cases.
                 -- Note that this means that functions with different implementations could be considered equal,
                 -- but I don't know a good way around this
-                    , "CASE WHEN pg_language.lanispl THEN prosrc END"
+                    , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
                 -- Only include the owner of the function if this
                 -- is not a range type constructor or if strict-range-ctor-ownership
                 -- is enabled. Read why in DATABASE-EQUALITY.md

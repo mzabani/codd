@@ -110,7 +110,9 @@ hoistMU f (MU sqlMig tst, change) =
   (MU (hoistAddedSqlMigration f sqlMig) tst, change)
 
 migrationsAndHashChange
-  :: forall m . (MonadThrow m, EnvVars m) => m [(MU (AddedSqlMigration m), DbChange)]
+  :: forall m
+   . (MonadThrow m, EnvVars m)
+  => m [(MU (AddedSqlMigration m), DbChange)]
 migrationsAndHashChange = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-
@@ -451,6 +453,21 @@ migrationsAndHashChangeText = flip execState [] $ do
                                                                            \BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
     $ ChangeEq
         [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+
+  -- SQL bodied functions are also checksummed
+  addMig_
+      "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
+          \SELECT i + 1; \n $$ LANGUAGE sql;"
+      "DROP FUNCTION increment_sql(integer)"
+    $ ChangeEq [("schemas/public/routines/increment_sql;int4", OnlyRight)]
+
+  addMig_
+      "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
+           \SELECT i + 2; \n $$ LANGUAGE sql;"
+      "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
+          \SELECT i + 1; \n $$ LANGUAGE sql;"
+    $ ChangeEq
+        [("schemas/public/routines/increment_sql;int4", BothButDifferent)]
 
   addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
           "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
