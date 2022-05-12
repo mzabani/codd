@@ -14,6 +14,7 @@ import           Codd.Internal.MultiQueryStatement
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration (..), retryFold )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
+                                                , EnvVars(..)
                                                 , FileStream(..)
                                                 , ParsedSql (..)
                                                 , SqlMigration(..)
@@ -189,7 +190,7 @@ data PendingMigrations m = PendingMigrations {
 }
 
 collectAndApplyMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
+    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m, EnvVars m)
     => ([BlockOfMigrations m] -> DB.Connection -> m a)
     -> CoddSettings
     -> Maybe [AddedSqlMigration m]
@@ -267,7 +268,7 @@ createCoddSchema txnIsolationLvl conn = catchJust (\e -> if isPermissionDeniedEr
 
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
-collectPendingMigrations :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
+collectPendingMigrations :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m, EnvVars m)
     => DB.ConnectInfo
     -> Either [FilePath] [AddedSqlMigration m]
     -> TxnIsolationLvl
@@ -343,7 +344,7 @@ closeFileStream :: MonadResource m => FileStream m -> m ()
 closeFileStream (FileStream _ releaseKey _) = release releaseKey
 
 parseMigrationFiles
-    :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m)
+    :: forall m. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m, EnvVars m)
     => [FilePath]
     -> Either [FilePath] [AddedSqlMigration m]
     -> m [BlockOfMigrations m]

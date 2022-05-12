@@ -15,7 +15,9 @@ import           Codd.Hashing                   ( persistHashesToDisk
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Internal                  ( streamingReadFile )
-import           Codd.Parsing                   ( parseSqlMigration )
+import           Codd.Parsing                   ( EnvVars
+                                                , parseSqlMigration
+                                                )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
                                                 , unless
@@ -48,7 +50,7 @@ newtype AddMigrationOptions = AddMigrationOptions
 
 addMigration
   :: forall m
-   . (MonadUnliftIO m, MonadLoggerIO m, MonadThrow m)
+   . (MonadUnliftIO m, MonadLoggerIO m, MonadThrow m, EnvVars m)
   => CoddSettings
   -> AddMigrationOptions
   -> Maybe FilePath

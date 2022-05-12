@@ -24,6 +24,7 @@ in hsPkgs.shellFor {
   tools = {
     cabal = "3.4.0.0";
     hlint = "2.2.11";
+    haskell-language-server = "latest";
   };
   # See overlays/tools.nix for more details
 
