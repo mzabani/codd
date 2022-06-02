@@ -8,6 +8,8 @@ import           Codd.Hashing.Database.Model    ( HashQuery(..)
 import qualified Codd.Hashing.Database.Pg10    as Pg10
 import qualified Codd.Hashing.Database.Pg11    as Pg11
 import qualified Codd.Hashing.Database.Pg12    as Pg12
+import qualified Codd.Hashing.Database.Pg13    as Pg13
+import qualified Codd.Hashing.Database.Pg14    as Pg14
 import           Codd.Hashing.Database.SqlGen   ( interspBy
                                                 , parens
                                                 , safeStringConcat
@@ -233,6 +235,14 @@ queryInPiecesToQueryFrag QueryInPieces {..} =
     (Nothing, Just w2) -> Just w2
     (Just w1, Just w2) -> Just $ parens w1 <> " AND " <> parens w2
 
+queryServerMajorVersion :: MonadIO m => DB.Connection -> m Int
+queryServerMajorVersion conn = do
+  strVersion :: Text <-
+    DB.fromOnly <$> unsafeQuery1 conn "SHOW server_version_num" ()
+  case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) strVersion of
+    Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
+    Right (numVersion :: Int) -> pure $ numVersion `div` 10000
+
 readHashesFromDatabaseWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
   => CoddSettings
@@ -240,58 +250,56 @@ readHashesFromDatabaseWithSettings
   -> m DbHashes
 readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
   = do
-  -- Why not just select the version from the Database, parse it and with that get a type version? No configuration needed!
-  -- Extensibility is a problem if we do this, but we can worry about that later, if needed
-    strVersion :: Text <-
-      DB.fromOnly <$> unsafeQuery1 conn "SHOW server_version_num" ()
-    case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) strVersion of
-      Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
-      Right (numVersion :: Int) -> do
-        let majorVersion = numVersion `div` 10000
-            rolesToHash  = alsoInclude
-              [SqlRole . Text.pack . DB.connectUser $ migsConnString]
-              extraRolesToHash
-        case majorVersion of
-          10 -> readHashesFromDatabase Pg10.hashQueryFor
-                                       conn
-                                       schemasToHash
-                                       rolesToHash
-                                       checksumAlgo
-                                       hashedChecksums
-          11 -> readHashesFromDatabase Pg11.hashQueryFor
-                                       conn
-                                       schemasToHash
-                                       rolesToHash
-                                       checksumAlgo
-                                       hashedChecksums
-          12 -> readHashesFromDatabase Pg12.hashQueryFor
-                                       conn
-                                       schemasToHash
-                                       rolesToHash
-                                       checksumAlgo
-                                       hashedChecksums
-          -- Postgres 13 doesn't seem to have any hashable new features compared to 12
-          13 -> readHashesFromDatabase Pg12.hashQueryFor
-                                       conn
-                                       schemasToHash
-                                       rolesToHash
-                                       checksumAlgo
-                                       hashedChecksums
-          v
-            | v <= 13 -> error
-            $  "Unsupported PostgreSQL version "
-            ++ show majorVersion
-            | otherwise -> do
-              logWarnN
-                $ "Not all features of PostgreSQL version "
-                <> Text.pack (show majorVersion)
-                <> " may be supported by codd. Please file an issue for us to support this newer version properly."
-              readHashesFromDatabase Pg12.hashQueryFor
-                                     conn
-                                     schemasToHash
-                                     rolesToHash
-                                     checksumAlgo
-                                     hashedChecksums
+    majorVersion <- queryServerMajorVersion conn
+    let rolesToHash = alsoInclude
+          [SqlRole . Text.pack . DB.connectUser $ migsConnString]
+          extraRolesToHash
+    case majorVersion of
+      10 -> readHashesFromDatabase Pg10.hashQueryFor
+                                   conn
+                                   schemasToHash
+                                   rolesToHash
+                                   checksumAlgo
+                                   hashedChecksums
+      11 -> readHashesFromDatabase Pg11.hashQueryFor
+                                   conn
+                                   schemasToHash
+                                   rolesToHash
+                                   checksumAlgo
+                                   hashedChecksums
+      12 -> readHashesFromDatabase Pg12.hashQueryFor
+                                   conn
+                                   schemasToHash
+                                   rolesToHash
+                                   checksumAlgo
+                                   hashedChecksums
+      13 -> readHashesFromDatabase Pg13.hashQueryFor
+                                   conn
+                                   schemasToHash
+                                   rolesToHash
+                                   checksumAlgo
+                                   hashedChecksums
+      14 -> readHashesFromDatabase Pg14.hashQueryFor
+                                   conn
+                                   schemasToHash
+                                   rolesToHash
+                                   checksumAlgo
+                                   hashedChecksums
+      v
+        | v < 10 -> error
+        $  "Unsupported PostgreSQL version "
+        ++ show majorVersion
+        | otherwise -> do
+          logWarnN
+            $ "Not all features of PostgreSQL version "
+            <> Text.pack (show majorVersion)
+            <> " may be supported by codd. Please file an issue for us to support this newer version properly."
+          readHashesFromDatabase Pg12.hashQueryFor
+                                 conn
+                                 schemasToHash
+                                 rolesToHash
+                                 checksumAlgo
+                                 hashedChecksums
 
 readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
