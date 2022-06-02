@@ -125,7 +125,7 @@ The decision made in _codd_ with **strict-collations** enabled is to checksum bo
 
 ### Range type constructors' ownership
 
-When range types are created, postgres automatically creates two homonymous functions that build values of the newly created type. Let's call these the two constructors of the range type. For example:
+When range types are created, postgres automatically creates two homonymous functions that build values of the newly created type, and two more to build multiranges when using at least Postgres v14. For example:
 
 ````sql
     $ CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);
@@ -143,7 +143,7 @@ When range types are created, postgres automatically creates two homonymous func
 
 For some unknown reason - and I couldn't find this documented anywhere - it seems possible that the _owner_ of these constructors varies from one server to another. On my machine I get `postgres` - my local superuser - as the owner of these functions but on AWS RDS I get the user who created the range type, which is what I would've expected locally as well.
 
-So by default _codd_ does not checksum ownership of range constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_CHECKSUM_ALGO` environment variable.
+So by default _codd_ does not checksum ownership of range and multirange constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_CHECKSUM_ALGO` environment variable.
 
 ## Interesting stuff
 

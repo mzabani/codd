@@ -7,16 +7,7 @@ module Codd.Hashing
     , matchOrd
     ) where
 
-import           Codd.Hashing.Database          ( HashReq(..)
-                                                , Haxl
-                                                , HaxlEnv
-                                                , QueryInPieces(..)
-                                                , SameQueryFormatFetch(..)
-                                                , State(..)
-                                                , getSchemaHash
-                                                , getTablesHashes
-                                                , queryInPiecesToQueryFrag
-                                                , readHashesFromDatabase
+import           Codd.Hashing.Database          ( readHashesFromDatabase
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Hashing.Disk

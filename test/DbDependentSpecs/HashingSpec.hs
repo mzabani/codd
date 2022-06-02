@@ -3,6 +3,7 @@ module DbDependentSpecs.HashingSpec where
 import           Codd                           ( ApplyResult(..)
                                                 , CheckHashes(..)
                                                 , ChecksumsPair(..)
+                                                , CoddSettings(migsConnString)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
@@ -15,6 +16,7 @@ import           Codd.Hashing                   ( DbHashes(..)
                                                 , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
+import           Codd.Hashing.Database          ( queryServerMajorVersion )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction
@@ -112,8 +114,9 @@ hoistMU f (MU sqlMig tst, change) =
 migrationsAndHashChange
   :: forall m
    . (MonadThrow m, EnvVars m)
-  => m [(MU (AddedSqlMigration m), DbChange)]
-migrationsAndHashChange = zipWithM
+  => Int
+  -> m [(MU (AddedSqlMigration m), DbChange)]
+migrationsAndHashChange pgVersion = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-
       either (error "Could not parse SQL migration") id
@@ -130,11 +133,11 @@ migrationsAndHashChange = zipWithM
       , c
       )
   )
-  migrationsAndHashChangeText
+  (migrationsAndHashChangeText pgVersion)
   (map fromInteger [0 ..]) -- This would be a list of DiffTime, which would have 10^-12s resolution and fail in the DB
 
-migrationsAndHashChangeText :: [(MU Text, DbChange)]
-migrationsAndHashChangeText = flip execState [] $ do
+migrationsAndHashChangeText :: Int -> [(MU Text, DbChange)]
+migrationsAndHashChangeText pgVersion = flip execState [] $ do
       -- MISSING:
       -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
       -- EXCLUSION CONSTRAINTS
@@ -905,11 +908,26 @@ migrationsAndHashChangeText = flip execState [] $ do
         "CREATE TYPE floatrange AS RANGE (subtype = float8,subtype_diff = float8mi);"
         "DROP TYPE floatrange;"
       $ ChangeEq
-          [ ("schemas/public/types/floatrange"                      , OnlyRight)
-      -- Two constructor functions created by PG too:
-          , ("schemas/public/routines/floatrange;float8,float8"     , OnlyRight)
-          , ("schemas/public/routines/floatrange;float8,float8,text", OnlyRight)
-          ]
+          -- Range and multirange constructor/types functions created by PG too
+          (  [ ("schemas/public/types/floatrange"                 , OnlyRight)
+             , ("schemas/public/routines/floatrange;float8,float8", OnlyRight)
+             , ( "schemas/public/routines/floatrange;float8,float8,text"
+               , OnlyRight
+               )
+             ]
+          ++ if pgVersion >= 14
+               then
+                 [ ("schemas/public/types/floatmultirange"    , OnlyRight)
+                 , ("schemas/public/routines/floatmultirange;", OnlyRight)
+                 , ( "schemas/public/routines/floatmultirange;floatrange"
+                   , OnlyRight
+                   )
+                 , ( "schemas/public/routines/floatmultirange;_floatrange"
+                   , OnlyRight
+                   )
+                 ]
+               else []
+          )
 
   addMig_
     "CREATE FUNCTION time_subtype_diff(x time, y time) RETURNS float8 AS 'SELECT EXTRACT(EPOCH FROM (x - y))' LANGUAGE sql STRICT IMMUTABLE;"
@@ -930,6 +948,8 @@ migrationsAndHashChangeText = flip execState [] $ do
         , ("schemas/public/routines/floatrange;float8,float8"     , OnlyLeft)
         , ("schemas/public/routines/floatrange;float8,float8,text", OnlyLeft)
         ]
+        -- Multirange constructors are unchanged since the type of their arguments
+        -- is exclusively `floatrange`.
 
   -- Domain types
   addMig_ "CREATE DOMAIN non_empty_text TEXT NOT NULL CHECK (VALUE != '');"
@@ -989,7 +1009,10 @@ lastMaybe (_ : xs) = lastMaybe xs
 newtype NumMigsToReverse = NumMigsToReverse Int deriving stock (Show)
 instance Arbitrary NumMigsToReverse where
   arbitrary = NumMigsToReverse
-    <$> chooseBoundedIntegral (5, length migrationsAndHashChangeText - 1)
+   -- TODO: We know the number of migrations does not depend on the server's version,
+   -- but this is really ugly. We should avoid this generate random input without
+   -- an instance of Arbitrary instead.
+    <$> chooseBoundedIntegral (5, length (migrationsAndHashChangeText 0) - 1)
 
 -- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
 newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbHashes)]
@@ -1053,6 +1076,9 @@ spec = do
                       )
                 )
             <*> pure (getIncreasingTimestamp 0)
+          pgVersion <- withConnection (migsConnString emptyTestDbInfo)
+                                      testConnTimeout
+                                      queryServerMajorVersion
           (laxRangeHashes, strictRangeHashes) <-
             runStdoutLoggingT $ applyMigrationsNoCheck
               emptyTestDbInfo
@@ -1065,16 +1091,30 @@ spec = do
               )
 
           -- The time_subtype_diff function shouldn't have its hash change,
-          -- but the constructors of floatrange should.
+          -- but the constructors of floatrange and floatmultirange should.
           hashDifferences laxRangeHashes strictRangeHashes
             `shouldBe` Map.fromList
-                         [ ( "schemas/public/routines/floatrange;float8,float8"
-                           , BothButDifferent
-                           )
-                         , ( "schemas/public/routines/floatrange;float8,float8,text"
-                           , BothButDifferent
-                           )
-                         ]
+                         ([ ( "schemas/public/routines/floatrange;float8,float8"
+                            , BothButDifferent
+                            )
+                          , ( "schemas/public/routines/floatrange;float8,float8,text"
+                            , BothButDifferent
+                            )
+                          ]
+                         ++ if pgVersion >= 14
+                              then
+                                [ ( "schemas/public/routines/floatmultirange;"
+                                  , BothButDifferent
+                                  )
+                                , ( "schemas/public/routines/floatmultirange;floatrange"
+                                  , BothButDifferent
+                                  )
+                                , ( "schemas/public/routines/floatmultirange;_floatrange"
+                                  , BothButDifferent
+                                  )
+                                ]
+                              else []
+                         )
 
     aroundFreshDatabase
       $ it "ignore-column-order setting"
@@ -1142,8 +1182,11 @@ spec = do
                   connInfo
                   testConnTimeout
                   (readHashesFromDatabaseWithSettings sett)
-            allMigsAndExpectedChanges <-
-              map (hoistMU lift) <$> migrationsAndHashChange
+            pgVersion <- withConnection connInfo
+                                        testConnTimeout
+                                        queryServerMajorVersion
+            allMigsAndExpectedChanges <- map (hoistMU lift)
+              <$> migrationsAndHashChange pgVersion
             hashBeforeEverything <- getHashes emptyDbInfo
             (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
                 , Maybe Text

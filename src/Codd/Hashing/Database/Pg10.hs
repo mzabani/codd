@@ -1,5 +1,8 @@
 module Codd.Hashing.Database.Pg10
-    ( hashQueryFor
+    ( aclArrayTbl
+    , hashQueryFor
+    , pronameExpr
+    , sortArrayExpr
     ) where
 
 import           Codd.Hashing.Database.Model    ( HashQuery(..)

@@ -2,7 +2,7 @@ let
   pkgs = import ./nix/nixpkgs.nix;
   hsPkgs = import ./default.nix { inherit pkgs; };
 
-  postgres = pkgs.postgresql_12;
+  postgres = pkgs.postgresql_14;
   postgres-service = import ./nix/postgres-service.nix {
     postgres = postgres;
     inherit pkgs;
