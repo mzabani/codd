@@ -10,6 +10,7 @@ let
   postgresql_conf = ../conf/postgresql.conf;
 in utils.writeShellScriptInBinFolder "init-postgres" ''
   ${if wipeCluster == true then "rm -rf $PGDATA" else ""}
+  mkdir -p "$PGDATA"
   if [ -d "$PGDATA" ] && [ "$(${ls} -A $PGDATA/*)" ]; then
       ${echo} Postgres datadir not empty. Considering it initialized.
   else
