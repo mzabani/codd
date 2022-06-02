@@ -1,4 +1,8 @@
-module Codd.Hashing.Database where
+module Codd.Hashing.Database
+  ( queryServerMajorVersion
+  , readHashesFromDatabase
+  , readHashesFromDatabaseWithSettings
+  ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing.Database.Model    ( HashQuery(..)
@@ -85,7 +89,6 @@ type Haxl = GenHaxl HaxlEnv ()
 data SameQueryFormatFetch = SameQueryFormatFetch
   { uniqueIdx2 :: Int
   , hobj2      :: HashableObject
-  , ids2       :: (Maybe ObjName, Maybe ObjName)
   , qp2        :: HashQuery
   , rvar2      :: ResultVar [(ObjName, ObjHash)]
   }
@@ -131,10 +134,9 @@ instance DataSource HaxlEnv HashReq where
       let
         allHashReqs :: [SameQueryFormatFetch]
         allHashReqs = zipWith
-          (\i (a, b, c, d) -> SameQueryFormatFetch i a b c d)
+          (\i (a, c, d) -> SameQueryFormatFetch i a c d)
           [1 ..]
           [ ( hobj
-            , (schemaName, tblName)
             , hashQueryFor allRoles
                            allSchemas
                            checksumAlgo
