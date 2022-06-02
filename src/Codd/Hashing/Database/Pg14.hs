@@ -41,6 +41,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
         case hobj of
             HRoutine ->
                 let
+                    -- Handling routines is a copy of what's in Pg10.hs, plus
+                    -- some changes from Pg11.hs, but comments removed.
+                    -- Before changing things here, read comments in both files.
                     nonAggCols =
                         [ "pg_language.lanname"
                             , "prosecdef"
@@ -55,19 +58,12 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                             , "pg_type_rettype.typname"
                             , "proargmodes"
                             , "proargnames"
-                    -- , "proargdefaults" -- pg_node_tree type (avoid)
                             , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
-                            , sortArrayExpr "proconfig" -- Not sure what this is, but let's be conservative and sort it meanwhile
+                            , sortArrayExpr "proconfig"
                             , "_codd_roles.permissions"
-                    -- The source of the function is important, but "prosrc" is _not_ the source if the function
-                    -- is compiled, so we ignore this column in those cases.
-                    -- Note that this means that functions with different implementations could be considered equal,
-                    -- but I don't know a good way around this
                             , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
-                    -- Only include the owner of the function if this
-                    -- is not a range type constructor or if strict-range-ctor-ownership
-                    -- is enabled. Read why in DATABASE-EQUALITY.md.
-                    -- I haven't tested if the same issue happens to multiranges, but I'll be
+                    -- I haven't tested if the same ownership issue that happens to
+                    -- range constructors happens to multirange constructors, but I'll be
                     -- conservative and assume it does for now.
                             ]
                             ++ if strictRangeCtorOwnership checksumAlgo
@@ -80,6 +76,8 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                         { objNameCol    = pronameExpr "pg_proc"
                         , checksumCols  = nonAggCols
                         , fromTable     = "pg_catalog.pg_proc"
+                        -- A different JOIN condition for pg_range is one of the important
+                        -- changes compared to previous versions
                         , joins         =
                             "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace \
                         \\n JOIN pg_catalog.pg_roles ON pg_roles.oid=proowner\
