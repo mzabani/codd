@@ -1,5 +1,5 @@
 {
-  description = "A very basic flake";
+  description = "Codd's flake";
   inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
@@ -35,7 +35,7 @@
               shell.buildInputs = with pkgs; [
                 ghcid
                 hpack
-                # brittany
+                haskellPackages.brittany # brittany in shell.tools fails building
                 # hsPkgs.hspec-discover.components.exes.hspec-discover
                 postgres
                 glibcLocales
