@@ -3,6 +3,7 @@
 local/*
 !local/.gitkeep
 dist-newstyle/
+.direnv/
 
 # Nix build outputs
 results/
