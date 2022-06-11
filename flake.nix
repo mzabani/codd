@@ -85,11 +85,21 @@
         ];
 
         flake = pkgs.coddProject.flake {
-          # This adds support for `nix build .#js-unknown-ghcjs-cabal:hello:exe:hello`
-          # crossPlatforms = p: [p.ghcjs];
+          # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
+          # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
+          # Check nixpkgs.lib.systems for more.
+          # Sadly, musl64 builds fail when building postgresql-libpq. https://github.com/input-output-hk/haskell.nix/issues/782 might be related.
+          # The mingw build fails with infinite recursion right at the start too..
+          crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
       in flake // {
         # Built by `nix build .`
         defaultPackage = flake.packages."codd:exe:codd";
+
+        # Built with `nix build '.#dockerImage.x86_64-linux'`
+        dockerImage = import ./nix/docker/codd-exe.nix {
+          inherit pkgs;
+          codd-exe = flake.packages."codd:exe:codd";
+        };
       });
 }
