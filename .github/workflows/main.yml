@@ -24,9 +24,9 @@ jobs:
       with:
         submodules: recursive
     
-    - uses: cachix/install-nix-action@v16
+    - uses: cachix/install-nix-action@v17
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.3.7/install
+        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://hydra.iohk.io
@@ -48,23 +48,23 @@ jobs:
     # - name: Print nix.conf file
     #   run: cat ~/.config/nix/nix.conf
 
-    - name: Build the codd library
-      run: nix-build --no-out-link -A codd.components.library
-
-    - name: Build codd's executable
+    - name: Build codd
       env:
         CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       # Note: this still seems not to work.. it doesn't push anything to cachix :(
-      run: nix-build --no-out-link -A codd.components.exes.codd | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
+      run: nix build --no-link . | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
 
     - name: Build codd's tests
-      run: nix-build --no-out-link -A codd.components.tests.codd-test
+      run: nix build --no-link .#codd:test:codd-test
 
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
 
-    - name: Build codd's library's haddocks
-      run: nix-build --no-out-link -A codd.components.library.doc
+    # Don't know yet how to build haddocks with flakes,
+    # and with flake-compat it seems that haddocks are no
+    # longer available!
+    # - name: Build codd's library's haddocks
+    #   run: nix-build --no-out-link -A codd.components.library.doc
 
     - name: Build codd docker image
-      run: nix-build --no-out-link nix/docker/codd-exe.nix
+      run: nix build --no-link .#dockerImage.x86_64-linux

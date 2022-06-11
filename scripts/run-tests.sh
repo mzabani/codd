@@ -6,12 +6,15 @@ set -e
 
 if [[ $WITH_NIX ]]; then
     echo Building test component with Nix..
-    nix-build -A codd.components.tests.codd-test -o local/codd-tests
+    nix build .#codd:test:codd-test -o local/codd-test
 fi
 
 # Tests which are not Postgres-version dependent first
 ./scripts/run-test.sh $WITH_NIX --skip "/DbDependentSpecs/"
 
+# Still don't know how to replace nix-shell with 'nix develop',
+# particularly because test-shell-pgX.nix try to import nixpkgs.nix
+# and thus are not pure in the flakes sense.
 # Postgres-version dependent tests for each possible version next
 # Postgres 14
 echo Running tests on Postgres 14
