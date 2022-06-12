@@ -1,25 +1,18 @@
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.34.4.
---
--- see: https://github.com/sol/hpack
---
--- hash: 3c38c9eee6f3afbe2bfb139b0ebedfa4ab21f60e5ca0c5eb80d350ecd53d0e8c
+cabal-version: 2.0
 
 name:           codd
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/mzabani/codd#readme>
+description:    Postgres database version control for teams. README at <https://github.com/mzabani/codd#readme>
 homepage:       https://github.com/mzabani/codd#readme
 bug-reports:    https://github.com/mzabani/codd/issues
 author:         Marcelo Zabani
 maintainer:     mzabani@gmail.com
-copyright:      2021 Marcelo Zabani
+copyright:      2022 Marcelo Zabani
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
     README.md
-    ChangeLog.md
 
 source-repository head
   type: git
@@ -54,6 +47,8 @@ library
       Codd.Query
       Codd.Types
   other-modules:
+      Paths_codd
+  autogen-modules:
       Paths_codd
   hs-source-dirs:
       src
@@ -105,6 +100,8 @@ library
 executable codd
   main-is: Main.hs
   other-modules:
+      Paths_codd
+  autogen-modules:
       Paths_codd
   hs-source-dirs:
       app
@@ -159,6 +156,8 @@ test-suite codd-test
       ParsingSpec
       TypesGen
       Paths_codd
+  autogen-modules:
+      Paths_codd
   hs-source-dirs:
       test
   default-extensions:
@@ -185,6 +184,11 @@ test-suite codd-test
       TypeFamilyDependencies
       ViewPatterns
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wunused-packages
+  -- Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
+  -- do not include hspec-discover in system-build-tools. We hack around the issue
+  -- in flake.nix so both cabal and nix-build work.
+  -- build-tools:
+  --     hspec-discover
   build-depends:
       QuickCheck
     , attoparsec

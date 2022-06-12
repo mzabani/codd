@@ -41,7 +41,7 @@
                     [ pkgs.postgresql ];
 
                   # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
-                  # in package.yaml
+                  # in codd.cabal
                   packages.codd.components.tests.codd-test.build-tools = [
                     finalIohkPkgs.hspec-discover.components.exes.hspec-discover
                   ];
@@ -57,7 +57,6 @@
                 # Non-Haskell shell tools go here
                 shell.buildInputs = with pkgs; [
                   ghcid
-                  hpack
                   haskellPackages.brittany # Brittany from the LTS is older than this
                   # finalIohkPkgs.brittany.components.exes.brittany
                   postgres
