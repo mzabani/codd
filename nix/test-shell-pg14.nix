@@ -1,4 +1,4 @@
-{ pkgs ? import ./nixpkgs.nix }:
+{ pkgs }:
 import ./test-shell-pg.nix {
   inherit pkgs;
   postgres = pkgs.postgresql_14;

@@ -60,11 +60,8 @@ jobs:
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
 
-    # Don't know yet how to build haddocks with flakes,
-    # and with flake-compat it seems that haddocks are no
-    # longer available!
-    # - name: Build codd's library's haddocks
-    #   run: nix-build --no-out-link -A codd.components.library.doc
+    - name: Build codd's library's haddocks
+      run: nix-build --no-link .#packages.x86_64-linux.codd:lib:codd.doc
 
     - name: Build codd docker image
       run: nix build --no-link .#dockerImage.x86_64-linux

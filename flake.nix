@@ -45,6 +45,10 @@
                   packages.codd.components.tests.codd-test.build-tools = [
                     finalIohkPkgs.hspec-discover.components.exes.hspec-discover
                   ];
+
+                  packages.codd.components.exes.codd-exe = {
+                    dontStrip = false;
+                  };
                 }];
 
                 # This is used by `nix develop .` to open a shell for use with
@@ -94,6 +98,14 @@
       in flake // {
         # Built by `nix build .`
         defaultPackage = flake.packages."codd:exe:codd";
+
+        testShells = {
+          pg10 = import ./nix/test-shell-pg10.nix { inherit pkgs; };
+          pg11 = import ./nix/test-shell-pg11.nix { inherit pkgs; };
+          pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
+          pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
+          pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
+        };
 
         # Built with `nix build .#dockerImage.x86_64-linux`.
         # Ideally this would be statically linked, and preferably
