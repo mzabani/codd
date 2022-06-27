@@ -61,7 +61,7 @@ jobs:
       run: ./scripts/run-tests.sh --with-nix
 
     - name: Build codd's library's haddocks
-      run: nix-build --no-link .#packages.x86_64-linux.codd:lib:codd.doc
+      run: nix build --no-link .#packages.x86_64-linux.codd:lib:codd.doc
 
     - name: Build codd docker image
       run: nix build --no-link .#dockerImage.x86_64-linux

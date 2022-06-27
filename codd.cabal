@@ -186,7 +186,7 @@ test-suite codd-test
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wunused-packages
   -- Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
   -- do not include hspec-discover in system-build-tools. We hack around the issue
-  -- in flake.nix so both cabal and nix-build work.
+  -- in flake.nix so both cabal and nix build work.
   -- build-tools:
   --     hspec-discover
   build-depends:
