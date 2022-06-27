@@ -2,7 +2,7 @@
 # wipeCluster=true ensures this is a deterministic derivation (assuming initdb/postgres cluster initialisation is pure,
 # which actually might not be true unless in a pure shell, since e.g. locales are imported from the system)
 let
-  utils = import ./utils.nix { };
+  utils = import ./utils.nix { inherit pkgs; };
 
   ls = "${pkgs.coreutils}/bin/ls";
   echo = "${pkgs.coreutils}/bin/echo";
