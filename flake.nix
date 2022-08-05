@@ -1,6 +1,6 @@
 {
   description = "Codd's flake";
-  inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
+  inputs.haskellNix.url = "path:/home/mzabani/Projects/codd/nix/haskell.nix";
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
@@ -21,9 +21,9 @@
           inherit system overlays;
           inherit (haskellNix) config;
         };
-        postgres = pkgs.postgresql_14;
+
         postgres-service = import ./nix/postgres-service.nix {
-          postgres = postgres;
+          postgres = pkgs.postgresql;
           inherit pkgs;
           initializePostgres = false;
           wipeCluster = false;
@@ -41,8 +41,8 @@
                 modules = [{
                   # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
                   # See https://github.com/haskellari/postgresql-libpq/blob/master/Setup.hs#L65-L66
-                  packages.postgresql-libpq.components.library.build-tools =
-                    [ pkgs.postgresql ];
+                  # packages.postgresql-libpq.components.library.build-tools =
+                  #   [ postgres ];
 
                   # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
                   # in codd.cabal
@@ -50,8 +50,17 @@
                     finalIohkPkgs.hspec-discover.components.exes.hspec-discover
                   ];
 
-                  packages.codd.components.exes.codd-exe = {
+                  packages.codd.components.exes.codd = {
                     dontStrip = false;
+                    configureFlags = [
+                      # The order of -lssl and -lcrypto is important here
+                      # "--ghc-option=-optl=-lssl"
+                      # "--ghc-option=-optl=-lcrypto"
+
+                      # "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
+                      "--ghc-option=-optl=-L${pkgs.postgresql.out}/lib"
+                      "--ghc-option=-optl=-lpq"
+                    ];
                   };
                 }];
 
@@ -67,7 +76,7 @@
                   ghcid
                   haskellPackages.brittany # Brittany from the LTS is older than this
                   # finalIohkPkgs.brittany.components.exes.brittany
-                  postgres
+                  postgresql
                   glibcLocales
                   cacert
                   postgres-service
@@ -85,8 +94,8 @@
 
                   export PATH="$PATH:scripts/path"
                 '';
-                # This adds `js-unknown-ghcjs-cabal` to the shell.
-                # shell.crossPlatforms = p: [p.ghcjs];
+                # This adds `js-unknown-linux-musl` to the shell.
+                # shell.crossPlatforms = p: [ p.musl64 ];
               };
             })
         ];
