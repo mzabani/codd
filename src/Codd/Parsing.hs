@@ -25,7 +25,7 @@ module Codd.Parsing
   , toMigrationTimestamp
   ) where
 
-import           Control.Applicative            ( (<|>) )
+import           Control.Applicative            ( (<|>), optional )
 import           Control.Monad                  ( guard
                                                 , void
                                                 , when
@@ -202,6 +202,7 @@ instance EnvVars IO where
 instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
   getEnvVars = lift . getEnvVars
 
+{-# INLINE parseSqlPiecesStreaming #-} -- See Note [Inlining and specialization]
 -- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
 parseSqlPiecesStreaming
   :: forall m
@@ -496,7 +497,7 @@ blockBeginParser =
 
 blockEndingParser :: BlockType -> Parser Text
 blockEndingParser = \case
-  DoubleDashComment      -> eol <|> (pure "" <* endOfInput)
+  DoubleDashComment      -> eol <|> ("" <$ endOfInput)
   CStyleComment          -> string "*/"
   DollarQuotedBlock q    -> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
   DoubleQuotedIdentifier -> string "\""
@@ -527,7 +528,7 @@ blockInnerContentsParser bt = do
   if done
     then pure t
     else do
-      mEndingQuote <- Just <$> blockEndingParser bt <|> pure Nothing
+      mEndingQuote <- optional (blockEndingParser bt)
       case mEndingQuote of
         Nothing -> do
           -- Could mean we found e.g. '*' inside a C-Style comment block, but not followed by '/'
@@ -780,20 +781,10 @@ coddEnvVarsCommentParser = do
     pure $ CoddCommentSuccess vars
   singleVarNameParser = Parsec.takeWhile1
     (\c ->
-      c
-        >= 'a'
-        && c
-        <= 'z'
-        || c
-        >= 'A'
-        && c
-        <= 'Z'
-        || c
-        == '_'
-        || c
-        >= '0'
-        && c
-        <= '9'
+      Char.isAsciiLower c
+        || Char.isAsciiUpper c
+        || c == '_'
+        || Char.isDigit c
     )
 
 isWhiteSpacePiece :: SqlPiece -> Bool
@@ -809,6 +800,7 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
+{-# INLINE parseAndClassifyMigration #-} -- See Note [Inlining and specialization]
 -- | Parses only comments and white-space that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
@@ -937,6 +929,7 @@ parseAndClassifyMigration sqlStream = do
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
+{-# INLINE parseSqlMigration #-} -- See Note [Inlining and specialization]
 parseSqlMigration
   :: forall m s
    . (MonadThrow m, MigrationStream m s, EnvVars m)
@@ -969,6 +962,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
   toMig x@(ops, _, _) = case checkOpts ops of
     Just err -> Left err
     _        -> Right $ mkMig x
+
 
 parseAddedSqlMigration
   :: (MonadThrow m, MigrationStream m s, EnvVars m)
@@ -1022,3 +1016,19 @@ parseMigrationTimestamp name = parseOnly
           + minuteMm
           * 60
           + ss
+
+
+-- Note [Inlining and specialization]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- Benchmarks of this module show specializing parsing functions called by other modules
+-- has a big impact on performance: around 40% savings in total run time.
+-- So one would expect SPECIALIZE (see https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/pragmas.html?highlight=specialize#specialize-pragma)
+-- pragmas to appear in this module, but instead of that we use INLINE.
+-- The reason is that SPECIALIZE requires a type signature to specialize to,
+-- and while callers in benchmarks code are in IO, callers inside the app can
+-- be in a more layered mtl stack. Thus it is easy to write code that specializes
+-- in benchmarks but silently doesn't in the app.
+-- INLINE is not really what we need, but it does seem to trigger specialization (at least
+-- benchmarks match those with a specialized function). It is more cumbersome because
+-- all functions in the call stack need their own INLINE each, but more reliable when it
+-- comes to triggering in different modules.
