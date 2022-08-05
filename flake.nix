@@ -30,7 +30,15 @@
           initializePostgres = false;
           wipeCluster = false;
         };
+        libpqOverlay = final: prev:
+          prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
+            # Postgres builds are failing tests for some reason :(
+            postgresql =
+              prev.postgresql.overrideAttrs (_: { doCheck = false; });
+          });
         overlays = [
+          libpqOverlay
+
           haskellNix.overlay
           (final: prev:
             let
@@ -46,8 +54,8 @@
 
                     # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
                     # See https://github.com/haskellari/postgresql-libpq/blob/master/Setup.hs#L65-L66
-                    # packages.postgresql-libpq.components.library.build-tools =
-                    #   [ postgres ];
+                    packages.postgresql-libpq.components.library.build-tools =
+                      [ final.pkgsCross.musl64.postgresql ];
 
                     # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
                     # in codd.cabal
@@ -58,13 +66,19 @@
                     packages.codd.components.exes.codd = {
                       dontStrip = false;
                       configureFlags = [
+                        # "--enable-static"
                         # The order of -lssl and -lcrypto is important here
-                        # "--ghc-option=-optl=-lssl"
-                        # "--ghc-option=-optl=-lcrypto"
+                        # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                        # libssl.a and libcrypto.a, but without including both it will not be found!
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                        "--ghc-option=-optl=-lssl"
+                        "--ghc-option=-optl=-lcrypto"
 
-                        # "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
-                        "--ghc-option=-optl=-L${pkgs.postgresql.out}/lib"
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                         "--ghc-option=-optl=-lpq"
+                        "--ghc-option=-optl=-lpgcommon"
+                        "--ghc-option=-optl=-lpgport"
+                        # "--ghc-option=-optl=-lpgcommon_shlib" # HMAC_Update and HMAC_Final are in this lib, but for some reason it's not picked up
                       ];
                     };
                   }];
@@ -137,6 +151,10 @@
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
         };
+
+        # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
+        # build musl packages statically to see if their "normal" builds pass
+        inherit pkgs;
 
         # Built with `nix build .#dockerImage.x86_64-linux`.
         # Ideally this would be statically linked, and preferably

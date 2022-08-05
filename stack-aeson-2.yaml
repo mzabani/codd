@@ -18,3 +18,5 @@ extra-deps:
 flags:
   hashable:
     random-initial-seed: true
+  postgresql-libpq:
+    use-pkg-config: true
