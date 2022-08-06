@@ -21,6 +21,7 @@ import           Data.Text                      ( Text )
 import           Data.Time                      ( secondsToDiffTime )
 import           Data.Word                      ( Word16 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
+import GHC.Generics (Generic)
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
@@ -47,10 +48,19 @@ instance Arbitrary HostString where
         , pure "2a03:2880:f105:283:face:b00c:0:25de"
         ]
 
+data ConnStringType = URIpostgres | URIpostgresql
+    deriving stock (Bounded, Enum, Show)
+
+instance Arbitrary ConnStringType where
+    arbitrary = elements [minBound .. maxBound]
+
 getConnString
-    :: ObjName -> PrintableString -> HostString -> Word16 -> ObjName -> Text
-getConnString (unObjName -> usr) (Text.pack . getPrintableString -> pwd) (Text.pack . unHostString -> host) (Text.pack . show -> port) (unObjName -> dbName)
-    = "postgres://"
+    :: ConnStringType -> ObjName -> PrintableString -> HostString -> Word16 -> ObjName -> Text
+getConnString connStrType (unObjName -> usr) (Text.pack . getPrintableString -> pwd) (Text.pack . unHostString -> host) (Text.pack . show -> port) (unObjName -> dbName)
+    = (case connStrType of
+            URIpostgres -> "postgres://"
+            URIpostgresql -> "postgresql://"
+        )
         <> escapeConnStringPiece usr
         <> (if pwd == "" then "" else ":" <> escapeConnStringPiece pwd)
         <> "@"
@@ -81,8 +91,9 @@ instance Arbitrary ConnStringGen where
         host   <- arbitrary @HostString
         port   <- arbitrary @Word16
         dbName <- genObjName
+        connStringType <- arbitrary @ConnStringType
         pure $ ConnStringGen
-            (getConnString usr pwd host port dbName)
+            (getConnString connStringType usr pwd host port dbName)
             ConnectInfo { connectHost     = unHostString host
                         , connectPort     = port
                         , connectUser     = Text.unpack $ unObjName usr

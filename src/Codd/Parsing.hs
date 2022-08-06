@@ -538,7 +538,7 @@ parseWithEscapeCharProper untilc = do
 -- | Parses a string in the format postgres://username[:password]@host:port/database_name
 connStringParser :: Parser ConnectInfo
 connStringParser = do
-  void $ string "postgres://"
+  void $ string "postgres://" <|> string "postgresql://"
   usr <- idParser "username"
   pwd <- (char ':' *> idParser "password") <|> pure ""
   void $ char '@'
