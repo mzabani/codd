@@ -21,8 +21,13 @@ import           Data.Text                      ( Text )
 import           Data.Time                      ( secondsToDiffTime )
 import           Data.Word                      ( Word16 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
-import GHC.Generics (Generic)
-import Network.URI (URI(..), URIAuth(..), escapeURIString, isUnescapedInURIComponent, uriToString)
+import           GHC.Generics                   ( Generic )
+import           Network.URI                    ( URI(..)
+                                                , URIAuth(..)
+                                                , escapeURIString
+                                                , isUnescapedInURIComponent
+                                                , uriToString
+                                                )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
@@ -56,23 +61,34 @@ instance Arbitrary ConnStringType where
     arbitrary = elements [minBound .. maxBound]
 
 getConnString
-    :: ConnStringType -> ObjName -> PrintableString -> HostString -> Word16 -> ObjName -> Text
+    :: ConnStringType
+    -> ObjName
+    -> PrintableString
+    -> HostString
+    -> Word16
+    -> ObjName
+    -> Text
 getConnString connStrType (Text.unpack . unObjName -> usr) (getPrintableString -> pwd) (unHostString -> host) port (Text.unpack . unObjName -> dbName)
     = Text.pack $ uriToString id uri ""
   where
-    uri = URI {
-        uriScheme = case connStrType of
-            URIpostgres -> "postgres:"
-            URIpostgresql -> "postgresql:"
-        , uriAuthority = Just URIAuth {
-            uriUserInfo = encodeURIComponent usr <> (if pwd == "" then "" else (':' : encodeURIComponent pwd)) <> "@"
-            , uriRegName = Text.unpack $ escapeHost $ Text.pack host
-            , uriPort = ':' : show port
+    uri = URI
+        { uriScheme    = case connStrType of
+                             URIpostgres   -> "postgres:"
+                             URIpostgresql -> "postgresql:"
+        , uriAuthority = Just URIAuth
+            { uriUserInfo = encodeURIComponent usr
+                            <> (if pwd == ""
+                                   then ""
+                                   else (':' : encodeURIComponent pwd)
+                               )
+                            <> "@"
+            , uriRegName  = Text.unpack $ escapeHost $ Text.pack host
+            , uriPort     = ':' : show port
+            }
+        , uriPath      = '/' : encodeURIComponent dbName
+        , uriQuery     = ""
+        , uriFragment  = ""
         }
-        , uriPath = '/' : encodeURIComponent dbName
-        , uriQuery = ""
-        , uriFragment = ""
-    }
     encodeURIComponent :: String -> String
     encodeURIComponent = escapeURIString isUnescapedInURIComponent
     escapeHost :: Text -> Text
@@ -88,9 +104,9 @@ instance Arbitrary ConnStringGen where
         pwd <-
             arbitrary @PrintableString
                 `suchThat` (\(PrintableString s) -> '\n' `notElem` s)
-        host   <- arbitrary @HostString
-        port   <- arbitrary @Word16
-        dbName <- genObjName
+        host           <- arbitrary @HostString
+        port           <- arbitrary @Word16
+        dbName         <- genObjName
         connStringType <- arbitrary @ConnStringType
         pure $ ConnStringGen
             (getConnString connStringType usr pwd host port dbName)
@@ -109,23 +125,27 @@ spec = do
         context "Connection string parsing" $ do
             it "Some hard coded URI Encoded connection strings" $ do
                 -- These are hard coded connection strings that I've tested with psql at some point
-                parseOnly (connStringParser <* endOfInput) "postgresql://postgres@localhost/some%20thing%20%2F%3F%3A%40"
-                        `shouldBe` Right ConnectInfo {
-                            connectHost = "localhost"
-                            , connectPort = 5432
-                            , connectUser = "postgres"
-                            , connectPassword = ""
-                            , connectDatabase = "some thing /?:@"
-                        }
-                parseOnly (connStringParser <* endOfInput) "postgresql://some%20thing%20%2F%3F%3A%40:passwdsome%20thing%20%2F%3F%3A%40@localhost:1/some%20thing%20%2F%3F%3A%40"
-                        `shouldBe` Right ConnectInfo {
-                            connectHost = "localhost"
-                            , connectPort = 1
-                            , connectUser = "some thing /?:@"
-                            , connectPassword = "passwdsome thing /?:@"
-                            , connectDatabase = "some thing /?:@"
-                        }
-            
+                parseOnly
+                        (connStringParser <* endOfInput)
+                        "postgresql://postgres@localhost/some%20thing%20%2F%3F%3A%40"
+                    `shouldBe` Right ConnectInfo
+                                   { connectHost     = "localhost"
+                                   , connectPort     = 5432
+                                   , connectUser     = "postgres"
+                                   , connectPassword = ""
+                                   , connectDatabase = "some thing /?:@"
+                                   }
+                parseOnly
+                        (connStringParser <* endOfInput)
+                        "postgresql://some%20thing%20%2F%3F%3A%40:passwdsome%20thing%20%2F%3F%3A%40@localhost:1/some%20thing%20%2F%3F%3A%40"
+                    `shouldBe` Right ConnectInfo
+                                   { connectHost     = "localhost"
+                                   , connectPort     = 1
+                                   , connectUser     = "some thing /?:@"
+                                   , connectPassword = "passwdsome thing /?:@"
+                                   , connectDatabase = "some thing /?:@"
+                                   }
+
             it "Full connection string with password" $ do
                 property $ \(ConnStringGen connStr connInfo) ->
                     parseOnly (connStringParser <* endOfInput) connStr

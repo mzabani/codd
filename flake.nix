@@ -1,6 +1,7 @@
 {
   description = "Codd's flake";
-  inputs.haskellNix.url = "path:/home/mzabani/Projects/codd/nix/haskell.nix";
+  inputs.haskellNix.url =
+    "github:input-output-hk/haskell.nix/c2f14344f119f68c10be2ea84fd372d8d8d16cd7";
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
