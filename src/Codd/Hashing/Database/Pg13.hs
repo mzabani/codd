@@ -8,14 +8,14 @@ import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo
+                                                , SchemaSelection
                                                 , SqlRole
-                                                , SqlSchema
                                                 )
 
 -- Postgres 13 and 14 don't seem to have any hashable new features compared to 12.
 hashQueryFor
     :: [SqlRole]
-    -> [SqlSchema]
+    -> SchemaSelection
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName

@@ -5,6 +5,7 @@ module Codd.Types
     , SqlSchema(..)
     , RetryPolicy(..)
     , RetryBackoffPolicy(..)
+    , SchemaSelection(..)
     , TxnIsolationLvl(..)
     , defaultRetryPolicy
     , retryPolicyIterate
@@ -57,3 +58,5 @@ retryPolicyIterate (RetryPolicy maxRetries backoff)
 
 newtype SqlRole = SqlRole { unSqlRole :: Text } deriving newtype (Show, ToField, IsString)
 newtype SqlSchema = SqlSchema { unSqlSchema :: Text } deriving newtype (Show, ToField, IsString)
+
+data SchemaSelection = IncludeSchemas [SqlSchema] | AllNonInternalSchemas

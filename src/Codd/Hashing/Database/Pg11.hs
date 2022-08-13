@@ -8,21 +8,21 @@ import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , SchemaSelection
                                                 , SqlRole
-                                                , SqlSchema
                                                 )
 
 hashQueryFor
     :: [SqlRole]
-    -> [SqlSchema]
+    -> SchemaSelection
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
+hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName hobj =
     let hq = Pg10.hashQueryFor allRoles
-                               allSchemas
+                               schemaSel
                                checksumAlgo
                                schemaName
                                tableName

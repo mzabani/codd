@@ -14,8 +14,8 @@ import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo
+                                                , SchemaSelection
                                                 , SqlRole
-                                                , SqlSchema
                                                 , strictRangeCtorOwnership
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -23,7 +23,7 @@ import qualified Database.PostgreSQL.Simple    as DB
 -- Postgres 14 introduced multirange types.
 hashQueryFor
     :: [SqlRole]
-    -> [SqlSchema]
+    -> SchemaSelection
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName

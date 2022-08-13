@@ -8,15 +8,15 @@ module Codd.Hashing.Database.Pg10
 import           Codd.Hashing.Database.Model    ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 )
-import           Codd.Hashing.Database.SqlGen   ( includeSql
-                                                , safeStringConcat
+import           Codd.Hashing.Database.SqlGen   ( safeStringConcat
+                                                , sqlIn
                                                 )
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , SchemaSelection(..)
                                                 , SqlRole
-                                                , SqlSchema
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 
@@ -40,7 +40,7 @@ aclArrayTbl allRoles aclArrayIdentifier =
         <> ".is_grantable) perms_subq "
         <> "\n LEFT JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid=perms_subq.grantee "
         <> "\n WHERE grantee_role.rolname IS NULL OR "
-        <> includeSql allRoles "grantee_role.rolname"
+        <> ("grantee_role.rolname" `sqlIn` allRoles)
         <> ")"
 
 oidArrayExpr :: QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
@@ -155,13 +155,13 @@ pgClassHashQuery allRoles schemaName = HashQuery
 
 hashQueryFor
     :: [SqlRole]
-    -> [SqlSchema]
+    -> SchemaSelection
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
+hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
                 ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
@@ -200,7 +200,10 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
             <> "\n LEFT JOIN LATERAL "
             <> aclArrayTbl allRoles "nspacl"
             <> "_codd_roles ON TRUE"
-        , nonIdentWhere = Just $ includeSql allSchemas "nspname"
+        , nonIdentWhere = Just $ case schemaSel of
+            IncludeSchemas schemas -> "nspname" `sqlIn` schemas
+            AllNonInternalSchemas
+                -> "nspname != 'information_schema' AND nspname != 'codd_schema' AND nspname !~ '^pg_'"
         , identWhere    = Nothing
         , groupByCols   = []
         }
@@ -231,7 +234,7 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
          \\n LEFT JOIN LATERAL "
                     <> dbPermsTable
                     <> " _codd_roles ON TRUE"
-                , nonIdentWhere = Just $ includeSql allRoles "pg_roles.rolname"
+                , nonIdentWhere = Just $ "pg_roles.rolname" `sqlIn` allRoles
                 , identWhere    = Nothing
                 , groupByCols   = "pg_roles.rolname" : nonAggCols
                 }
@@ -290,9 +293,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
             "LEFT JOIN pg_catalog.pg_roles ON pg_roles.oid = ANY(polroles)"
             <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_policy.polrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace = pg_namespace.oid"
-        , nonIdentWhere = Just $ "pg_roles.rolname IS NULL OR " <> includeSql
-                              allRoles
-                              "pg_roles.rolname"
+        , nonIdentWhere = Just
+                          $  "pg_roles.rolname IS NULL OR "
+                          <> ("pg_roles.rolname" `sqlIn` allRoles)
         , identWhere    = Just
                           $  "TRUE"
                           <> maybe ""

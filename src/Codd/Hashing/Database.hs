@@ -21,8 +21,8 @@ import           Codd.Hashing.Database.SqlGen   ( interspBy
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( ChecksumAlgo
+                                                , SchemaSelection
                                                 , SqlRole(..)
-                                                , SqlSchema(..)
                                                 )
 import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( MonadLogger
@@ -75,7 +75,13 @@ instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv
-  = (PgVersionHasher, DB.Connection, [SqlSchema], [SqlRole], ChecksumAlgo, Bool)
+  = ( PgVersionHasher
+    , DB.Connection
+    , SchemaSelection
+    , [SqlRole]
+    , ChecksumAlgo
+    , Bool
+    )
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
@@ -195,7 +201,7 @@ instance DataSource HaxlEnv HashReq where
 
 type PgVersionHasher
   =  [SqlRole]
-  -> [SqlSchema]
+  -> SchemaSelection
   -> ChecksumAlgo
   -> Maybe ObjName
   -> Maybe ObjName
@@ -299,17 +305,17 @@ readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
   => PgVersionHasher
   -> DB.Connection
-  -> [SqlSchema]
+  -> SchemaSelection
   -> [SqlRole]
   -> ChecksumAlgo
   -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn allSchemas allRoles checksumAlgo hashedChecksums
+readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo hashedChecksums
   = do
     let stateStore = stateSet UserState{} stateEmpty
     env0 <- liftIO $ initEnv
       stateStore
-      (pgVer, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
+      (pgVer, conn, schemaSel, allRoles, checksumAlgo, hashedChecksums)
     liftIO $ runHaxl env0 $ do
       allDbSettings <- dataFetch
         $ GetHashesReq HDatabaseSettings Nothing Nothing
