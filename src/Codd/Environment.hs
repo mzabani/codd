@@ -196,9 +196,8 @@ getCoddSettings = do
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
     schemasToHash   <- parseEnv
-        (error
-            "Please define the CODD_SCHEMAS environment variable with a space separated list of schema names"
-        )
+        (Exclude ["pg_catalog", "information_schema", "pg_toast", "codd_schema"]
+        ) -- Default value is all namespaces but internal ones
         (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
         "CODD_SCHEMAS"
     extraRolesToHash <- parseEnv
