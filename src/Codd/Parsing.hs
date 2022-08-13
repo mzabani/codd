@@ -598,18 +598,18 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
                   , connectPassword
                   , connectDatabase
                   }
+ where
+  unescapeIPv6 :: String -> String
+  unescapeIPv6 = trimFirst '[' . trimLast ']'
 
-unescapeIPv6 :: String -> String
-unescapeIPv6 = trimFirst '[' . trimLast ']'
+  trimFirst :: Char -> String -> String
+  trimFirst c s@(c1 : cs) = if c == c1 then cs else s
+  trimFirst _ s           = s
 
-trimFirst :: Char -> String -> String
-trimFirst c s@(c1 : cs) = if c == c1 then cs else s
-trimFirst _ s           = s
-
-trimLast :: Char -> String -> String
-trimLast c s = case Text.unsnoc $ Text.pack s of
-  Nothing            -> s
-  Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
+  trimLast :: Char -> String -> String
+  trimLast c s = case Text.unsnoc $ Text.pack s of
+    Nothing            -> s
+    Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
 
 
 keywordValueConnParser :: Text -> Either String ConnectInfo
@@ -620,7 +620,7 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
     "Invalid connection string"
   -- TODO: Error if there are other keys that we're not using present.
   ConnectInfo
-    <$> (unescapeIPv6 <$> getVal "host" Nothing txtToString kvs)
+    <$> getVal "host"     Nothing     txtToString    kvs
     <*> getVal "port"     (Just 5432) Parsec.decimal kvs
     <*> getVal "user"     Nothing     txtToString    kvs
     <*> getVal "password" (Just "")   txtToString    kvs
@@ -656,11 +656,6 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
     skipJustSpace
     void $ char '='
     skipJustSpace
-    -- Is "password=" the same as having password = Nothing? And does psql interpret that the same
-    -- as not having specified any password, as opposed to having a blank password?
-    -- TODO: Verify.
-    -- TODO: Test unquoted values that contain single quotes and backslashes with psql to make sure
-    -- we're getting this right.
     value <-
       takeQuotedString
       <|> parseWithEscapeCharProper (\c -> c == ' ' || c == '\'' || c == '\\')
@@ -727,7 +722,7 @@ coddCommentParser = do
     endOfLine
     pure $ CoddCommentSuccess opts
 
--- | Parses a "-- codd-connection: postgres://...." line. Consumes all available input
+-- | Parses a "-- codd-connection: some-connection-string" line. Consumes all available input
 -- in case of a malformed connection string.
 coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectInfo)
 coddConnStringCommentParser = do
@@ -882,7 +877,7 @@ parseAndClassifyMigration sqlStream = do
               $  Left
               $  "The connection string '"
               <> Text.unpack badConn
-              <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
+              <> "' is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
           (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
             pure $ Right (opts, Just conn)
           (Just (CoddCommentSuccess opts), Nothing) ->

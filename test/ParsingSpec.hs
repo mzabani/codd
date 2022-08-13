@@ -475,7 +475,7 @@ spec = do
             let
               sql
                 = "-- codd: no-parse\n\
-            \-- codd-connection: postgres://codd_admin@127.0.0.1:5433/codd-experiments\n\
+            \-- codd-connection: user=codd_admin dbname='codd-experiments' host=127.0.0.1 port=5433\n\
             \-- Anything here!\
             \Some statement; -- Some comment\n\
             \Other statement"
@@ -582,7 +582,7 @@ spec = do
         case mig of
           Left err ->
             -- Nice error message explaining valid format
-            err `shouldSatisfy` List.isInfixOf "postgres://"
+            err `shouldSatisfy` ("postgresql.org" `List.isInfixOf`)
           Right _ -> expectationFailure "Got Right"
 
       it "Two connection strings" $ property $ \randomSeed -> do
