@@ -13,10 +13,12 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..)
                                                 , DiffType(..)
+                                                , ObjName
                                                 , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Hashing.Database          ( queryServerMajorVersion )
+import           Codd.Hashing.Types             ( ObjName(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction
@@ -35,6 +37,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , SchemaSelection(..)
                                                 , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
@@ -1168,6 +1171,19 @@ spec = do
             `hashDifferences` initialHashes
             `shouldBe`        Map.fromList
                                 [("schemas/public/tables/tbl/cols/col1", OnlyRight)]
+
+    aroundFreshDatabase $ it "All but internal schemas" $ \emptyTestDbInfo -> do
+      let nonInternalSchemasDbInfo =
+            emptyTestDbInfo { schemasToHash = AllNonInternalSchemas }
+      DbHashes _ schemaHashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
+        nonInternalSchemasDbInfo
+        Nothing
+        testConnTimeout
+        (readHashesFromDatabaseWithSettings nonInternalSchemasDbInfo)
+
+      -- We should not see pg_catalog in any checksummed object, but "public"
+      -- should be there as the only schema
+      Map.keys schemaHashes `shouldBe` [ObjName "public"]
 
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
