@@ -592,36 +592,35 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
                   (unEscapeString . trimLast '@' -> connectUser, unEscapeString . trimLast '@' . trimFirst ':' -> connectPassword)
                     = break (== ':') uriUserInfo
                 pure ConnectInfo
-                  { connectHost     = unEscapeString
-                                      $ trimFirst '['
-                                      $ trimLast ']'
-                                      $ uriRegName -- Handle IPv6
+                  { connectHost     = unEscapeString $ unescapeIPv6 uriRegName
                   , connectPort
                   , connectUser
                   , connectPassword
                   , connectDatabase
                   }
 
- where
-  trimFirst :: Char -> String -> String
-  trimFirst c s@(c1 : cs) = if c == c1 then cs else s
-  trimFirst _ s           = s
+unescapeIPv6 :: String -> String
+unescapeIPv6 = trimFirst '[' . trimLast ']'
 
-  trimLast :: Char -> String -> String
-  trimLast c s = case Text.unsnoc $ Text.pack s of
-    Nothing            -> s
-    Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
+trimFirst :: Char -> String -> String
+trimFirst c s@(c1 : cs) = if c == c1 then cs else s
+trimFirst _ s           = s
+
+trimLast :: Char -> String -> String
+trimLast c s = case Text.unsnoc $ Text.pack s of
+  Nothing            -> s
+  Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
 
 
 keywordValueConnParser :: Text -> Either String ConnectInfo
 keywordValueConnParser line = runIdentity $ runExceptT $ do
-  kvs <- fmap (sortOn fst) $ parseOrFail
+  kvs <- sortOn fst <$> parseOrFail
     (singleKeyVal `Parsec.sepBy` takeWhile1 (== ' '))
-    line
+    (Text.strip line)
     "Invalid connection string"
   -- TODO: Error if there are other keys that we're not using present.
   ConnectInfo
-    <$> getVal "host"     Nothing     txtToString    kvs
+    <$> (unescapeIPv6 <$> getVal "host" Nothing txtToString kvs)
     <*> getVal "port"     (Just 5432) Parsec.decimal kvs
     <*> getVal "user"     Nothing     txtToString    kvs
     <*> getVal "password" (Just "")   txtToString    kvs
@@ -635,7 +634,7 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
           <> Text.unpack key
           <> "'"
       ([], Just v) -> pure v
-      (vt : [], _) ->
+      ([vt], _) ->
         parseOrFail parser vt
           $  "Connection string key '"
           <> Text.unpack key
@@ -646,8 +645,7 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
           <> Text.unpack key
           <> "' found in connection string."
 
-  txtToString = Parsec.takeText >>= pure . Text.unpack
-
+  txtToString = Text.unpack <$> Parsec.takeText
   parseOrFail parser txt errorMsg =
     case parseOnly (parser <* endOfInput) txt of
       Left  _ -> throwE errorMsg
@@ -663,7 +661,10 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
     -- TODO: Verify.
     -- TODO: Test unquoted values that contain single quotes and backslashes with psql to make sure
     -- we're getting this right.
-    value <- takeQuotedString <|> parseWithEscapeCharProper (== ' ') <|> pure ""
+    value <-
+      takeQuotedString
+      <|> parseWithEscapeCharProper (\c -> c == ' ' || c == '\'' || c == '\\')
+      <|> pure ""
     pure (key, value)
 
   takeQuotedString = do

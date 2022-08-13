@@ -197,6 +197,7 @@ test-suite codd-test
     , base >=4.7 && <5
     , codd
     , containers
+    , hashable
     , hspec
     , hspec-core
     , hspec-expectations
@@ -206,6 +207,7 @@ test-suite codd-test
     , postgresql-simple
     , random
     , resourcet
+    , semialign
     , streaming
     , text
     , time

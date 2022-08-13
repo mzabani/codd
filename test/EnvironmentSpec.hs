@@ -12,10 +12,13 @@ import           Codd.Types                     ( RetryBackoffPolicy(..)
 import           Control.Monad                  ( forM_
                                                 , when
                                                 )
+import           Data.Align                     ( alignWith )
 import           Data.Attoparsec.Text           ( endOfInput
                                                 , parseOnly
                                                 )
 import           Data.Either                    ( isLeft )
+import           Data.Hashable                  ( hash )
+import           Data.List                      ( sortOn )
 import qualified Data.Text                     as Text
 import           Data.Text                      ( Text )
 import           Data.Time                      ( secondsToDiffTime )
@@ -54,32 +57,30 @@ instance Arbitrary HostString where
         , pure "2a03:2880:f105:283:face:b00c:0:25de"
         ]
 
-data ConnStringType = URIpostgres | URIpostgresql
+data ConnStringType = URIpostgres | Kwvps
     deriving stock (Bounded, Enum, Show)
 
 instance Arbitrary ConnStringType where
     arbitrary = elements [minBound .. maxBound]
 
-getConnString
-    :: ConnStringType
+getURIConnString
+    :: String
     -> ObjName
     -> PrintableString
     -> HostString
     -> Word16
     -> ObjName
     -> Text
-getConnString connStrType (Text.unpack . unObjName -> usr) (getPrintableString -> pwd) (unHostString -> host) port (Text.unpack . unObjName -> dbName)
+getURIConnString uriScheme (Text.unpack . unObjName -> usr) (getPrintableString -> pwd) (unHostString -> host) port (Text.unpack . unObjName -> dbName)
     = Text.pack $ uriToString id uri ""
   where
     uri = URI
-        { uriScheme    = case connStrType of
-                             URIpostgres   -> "postgres:"
-                             URIpostgresql -> "postgresql:"
+        { uriScheme
         , uriAuthority = Just URIAuth
             { uriUserInfo = encodeURIComponent usr
                             <> (if pwd == ""
                                    then ""
-                                   else (':' : encodeURIComponent pwd)
+                                   else ':' : encodeURIComponent pwd
                                )
                             <> "@"
             , uriRegName  = Text.unpack $ escapeHost $ Text.pack host
@@ -91,10 +92,64 @@ getConnString connStrType (Text.unpack . unObjName -> usr) (getPrintableString -
         }
     encodeURIComponent :: String -> String
     encodeURIComponent = escapeURIString isUnescapedInURIComponent
-    escapeHost :: Text -> Text
-    escapeHost host =
-        -- bracket-escape IPv6 addresses
-        if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
+
+data KwvpConnGen = KwvpConnGen
+    { shuffleIdx :: Int
+    -- ^ Shuffles the relative order of keyword/value pairs in the generated connection string.
+    , user       :: (ObjName, Bool, Int)
+    -- ^ The boolean dictates quoting when quoting is optional.
+    -- The Int represents extra spaces around this kwvp. These will be added one by one
+    -- left-to-right everywhere they are acceptable until a limit of 4 (therefore ignoring > 4 spaces).
+    , password   :: (PrintableString, Bool, Int)
+    , host       :: (HostString, Bool, Int)
+    , port       :: (Word16, Bool, Int)
+    , dbname     :: (ObjName, Bool, Int)
+    }
+
+getKeywordValuePairConnString :: KwvpConnGen -> Text
+getKeywordValuePairConnString KwvpConnGen {..} = Text.intercalate " "
+    $ map (\(kw, v) -> kw <> "=" <> v) mixedKwvps
+  where
+    mixedKwvps = sortOn
+        ((`mod` max 1 shuffleIdx) . hash . snd)
+        [ addExtraSpaces user ("user", quoteIfNeeded unObjName user)
+        , addExtraSpaces
+            password
+            ( "password"
+            , quoteIfNeeded (Text.pack . getPrintableString) password
+            )
+        , addExtraSpaces
+            host
+            ("host", quoteIfNeeded (escapeHost . Text.pack . unHostString) host)
+        , addExtraSpaces port   ("port", quoteIfNeeded (Text.pack . show) port)
+        , addExtraSpaces dbname ("dbname", quoteIfNeeded unObjName dbname)
+        ]
+    addExtraSpaces (_, _, spaces) (k, v)
+        | spaces <= 0 = (k, v)
+        | spaces == 1 = (" " <> k, v)
+        | spaces == 2 = (" " <> k <> " ", v)
+        | spaces == 3 = (" " <> k <> " ", " " <> v)
+        | otherwise   = (" " <> k <> " ", " " <> v <> " ")
+    quoteIfNeeded un (v, force, _) = if needsQuoting (un v) || force
+        then
+            "'"
+            <> Text.replace "'" "\\'" (Text.replace "\\" "\\\\" (un v))
+            <> "'"
+        else un v
+    needsQuoting v =
+        "'"
+            `Text.isInfixOf` v
+            ||               "\\"
+            `Text.isInfixOf` v
+            ||               " "
+            `Text.isInfixOf` v
+            ||               v
+            ==               ""
+
+escapeHost :: Text -> Text
+escapeHost host =
+    -- bracket-escape IPv6 addresses
+    if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
 
 data ConnStringGen = ConnStringGen Text ConnectInfo
     deriving stock Show
@@ -104,20 +159,38 @@ instance Arbitrary ConnStringGen where
         pwd <-
             arbitrary @PrintableString
                 `suchThat` (\(PrintableString s) -> '\n' `notElem` s)
-        host           <- arbitrary @HostString
-        port           <- arbitrary @Word16
-        dbName         <- genObjName
+        host   <- arbitrary @HostString
+        port   <- arbitrary @Word16
+        dbName <- genObjName
+
+        let connInfo = ConnectInfo
+                { connectHost     = unHostString host
+                , connectPort     = port
+                , connectUser     = Text.unpack $ unObjName usr
+                , connectPassword = getPrintableString pwd
+                , connectDatabase = Text.unpack $ unObjName dbName
+                }
         connStringType <- arbitrary @ConnStringType
-        pure $ ConnStringGen
-            (getConnString connStringType usr pwd host port dbName)
-            ConnectInfo { connectHost     = unHostString host
-                        , connectPort     = port
-                        , connectUser     = Text.unpack $ unObjName usr
-                        , connectPassword = getPrintableString pwd
-                        , connectDatabase = Text.unpack $ unObjName dbName
+        case connStringType of
+            Kwvps -> do
+                (shuffleIdx, b1, s1, b2, s2, b3, s3) <- arbitrary
+                (b4, s4, b5, s5)                     <- arbitrary
+                pure $ ConnStringGen
+                    (getKeywordValuePairConnString KwvpConnGen
+                        { shuffleIdx
+                        , user       = (usr, b1, s1)
+                        , password   = (pwd, b2, s2)
+                        , host       = (host, b3, s3)
+                        , port       = (port, b4, s4)
+                        , dbname     = (dbName, b5, s5)
                         }
-
-
+                    )
+                    connInfo
+            URIpostgres -> do
+                uriScheme <- elements ["postgres:", "postgresql:"]
+                pure $ ConnStringGen
+                    (getURIConnString uriScheme usr pwd host port dbName)
+                    connInfo
 
 spec :: Spec
 spec = do
@@ -146,7 +219,30 @@ spec = do
                                    , connectDatabase = "some thing /?:@"
                                    }
 
-            it "Full connection string with password" $ do
+            it "Some hard coded keyword/value pair connection strings" $ do
+                -- These are hard coded connection strings that I've tested with psql at some point
+                parseOnly
+                        (connStringParser <* endOfInput)
+                        "dbname='some thing /?:@' user='some thing /?:@'   host = localhost   "
+                    `shouldBe` Right ConnectInfo
+                                   { connectHost     = "localhost"
+                                   , connectPort     = 5432
+                                   , connectUser     = "some thing /?:@"
+                                   , connectPassword = ""
+                                   , connectDatabase = "some thing /?:@"
+                                   }
+                parseOnly
+                        (connStringParser <* endOfInput)
+                        "dbname='some thing /?:@' user='some thing /?:@' password='passwdsome thing /?:@' port=1 host = localhost"
+                    `shouldBe` Right ConnectInfo
+                                   { connectHost     = "localhost"
+                                   , connectPort     = 1
+                                   , connectUser     = "some thing /?:@"
+                                   , connectPassword = "passwdsome thing /?:@"
+                                   , connectDatabase = "some thing /?:@"
+                                   }
+
+            it "Randomized connection strings" $ do
                 property $ \(ConnStringGen connStr connInfo) ->
                     parseOnly (connStringParser <* endOfInput) connStr
                         `shouldBe` Right connInfo
