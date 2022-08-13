@@ -11,7 +11,6 @@ import           Codd.Parsing                   ( connStringParser
                                                 , parseWithEscapeCharProper
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , Include(..)
                                                 , RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 , SqlRole(..)
@@ -47,9 +46,9 @@ data CoddSettings = CoddSettings
     , onDiskHashes     :: Either FilePath DbHashes
     -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
-    , schemasToHash    :: Include SqlSchema
+    , schemasToHash    :: [SqlSchema]
     -- ^ Selection of Schemas in the DB that we should hash.
-    , extraRolesToHash :: Include SqlRole
+    , extraRolesToHash :: [SqlRole]
     -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from migsConnString is always included in hashing automatically and needs not be added here.
     , retryPolicy      :: RetryPolicy
     -- ^ The Retry Policy to be used when applying failing migrations.
@@ -196,13 +195,22 @@ getCoddSettings = do
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
     schemasToHash   <- parseEnv
-        (Exclude ["pg_catalog", "information_schema", "pg_toast", "codd_schema"]
-        ) -- Default value is all namespaces but internal ones
-        (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
+        -- (Exclude
+        --     -- TODO: Exclude exactly `information_schema`, `^pg_` and `codd_schema`.
+        --     [ "pg_catalog"
+        --     , "information_schema"
+        --     , "pg_toast"
+        --     , "pg_temp_1"
+        --     , "pg_toast_temp_1"
+        --     , "codd_schema"
+        --     ]
+        -- )
+        (error "oops")
+        (fmap (map SqlSchema) . parseVar spaceSeparatedObjNameParser)
         "CODD_SCHEMAS"
     extraRolesToHash <- parseEnv
-        (Include [])
-        (fmap (Include . map SqlRole) . parseVar spaceSeparatedObjNameParser)
+        []
+        (fmap (map SqlRole) . parseVar spaceSeparatedObjNameParser)
         "CODD_EXTRA_ROLES"
     retryPolicy <- parseEnv defaultRetryPolicy
                             (parseVar retryPolicyParser)

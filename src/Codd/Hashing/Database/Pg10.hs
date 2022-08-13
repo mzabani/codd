@@ -15,7 +15,6 @@ import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
@@ -24,7 +23,7 @@ import qualified Database.PostgreSQL.Simple    as DB
 -- | Returns a one-row table of type ({ permissions: TEXT }) by exploding the ACL array
 -- and aggregating deterministically (by sorting) the associated permissions for the 
 -- supplied roles + permissions where there is no grantee role.
-aclArrayTbl :: Include SqlRole -> QueryFrag -> QueryFrag
+aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag
 aclArrayTbl allRoles aclArrayIdentifier =
     let acls = "(ACLEXPLODE(" <> aclArrayIdentifier <> "))"
     in
@@ -119,7 +118,7 @@ _pgOperatorNameTbl =
         <> "\n JOIN pg_type typright ON oprright=typright.oid"
         <> "\n JOIN pg_type typret ON oprresult=typret.oid)"
 
-pgClassHashQuery :: Include SqlRole -> Maybe ObjName -> HashQuery
+pgClassHashQuery :: [SqlRole] -> Maybe ObjName -> HashQuery
 pgClassHashQuery allRoles schemaName = HashQuery
     { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
@@ -155,8 +154,8 @@ pgClassHashQuery allRoles schemaName = HashQuery
     }
 
 hashQueryFor
-    :: Include SqlRole
-    -> Include SqlSchema
+    :: [SqlRole]
+    -> [SqlSchema]
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName

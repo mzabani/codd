@@ -8,14 +8,13 @@ import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo
-                                                , Include
                                                 , SqlRole
                                                 , SqlSchema
                                                 )
 
 hashQueryFor
-    :: Include SqlRole
-    -> Include SqlSchema
+    :: [SqlRole]
+    -> [SqlSchema]
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName

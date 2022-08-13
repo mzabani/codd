@@ -22,7 +22,6 @@ import           Codd.Query                     ( execvoid_
                                                 , query
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , Include(..)
                                                 , TxnIsolationLvl(..)
                                                 , singleTryPolicy
                                                 )
@@ -185,8 +184,8 @@ testCoddSettings = do
         { migsConnString   = connInfo
         , sqlMigrations    = []
         , onDiskHashes     = Left ""
-        , schemasToHash    = Include ["public", "codd-extra-mapped-schema"]
-        , extraRolesToHash = Include ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
+        , schemasToHash    = ["public", "codd-extra-mapped-schema"]
+        , extraRolesToHash = ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
         , retryPolicy      = singleTryPolicy
         , txnIsolationLvl  = DbDefault
         , checksumAlgo     = ChecksumAlgo False False False
