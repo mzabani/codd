@@ -113,6 +113,7 @@ isServerNotAvailableError e =
             &&
             (  "could not connect to server: Connection refused"
                     `Text.isInfixOf` err
+            || "Is the server running on that host and accepting" `Text.isInfixOf` err
             || "server closed the connection"
                 `Text.isInfixOf` err
             || "the database system is starting up"

@@ -87,12 +87,14 @@ library
     , haxl
     , monad-logger
     , mtl
+    , network-uri
     , postgresql-libpq
     , postgresql-simple
     , resourcet
     , streaming
     , text
     , time
+    , transformers
     , unliftio
     , unliftio-core
   default-language: Haskell2010
@@ -195,14 +197,17 @@ test-suite codd-test
     , base >=4.7 && <5
     , codd
     , containers
+    , hashable
     , hspec
     , hspec-core
     , hspec-expectations
     , monad-logger
     , mtl
+    , network-uri
     , postgresql-simple
     , random
     , resourcet
+    , semialign
     , streaming
     , text
     , time

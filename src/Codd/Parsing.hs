@@ -30,8 +30,12 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
+import           Control.Monad.Identity         ( Identity(runIdentity) )
 import           Control.Monad.Trans            ( MonadTrans
                                                 , lift
+                                                )
+import           Control.Monad.Trans.Except     ( runExceptT
+                                                , throwE
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
@@ -54,7 +58,9 @@ import           Data.Attoparsec.Text           ( Parser
 import qualified Data.Attoparsec.Text          as Parsec
 import qualified Data.Char                     as Char
 import           Data.Kind                      ( Type )
-import           Data.List                      ( nub )
+import           Data.List                      ( nub
+                                                , sortOn
+                                                )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( listToMaybe
@@ -70,6 +76,11 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
+import           Network.URI                    ( URI(..)
+                                                , URIAuth(..)
+                                                , parseURI
+                                                , unEscapeString
+                                                )
 import           Prelude                 hiding ( takeWhile )
 import           Streaming                      ( MFunctor(hoist)
                                                 , Of(..)
@@ -198,6 +209,8 @@ parseSqlPiecesStreaming
   => Stream (Of Text) m ()
   -> Stream (Of SqlPiece) m ()
 parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
+  -- NOTE: We might be able to simplify this function tremendously by using attoparsec's `parseWith`:
+  -- https://hackage.haskell.org/package/attoparsec-0.14.4/docs/Data-Attoparsec-Text.html#v:parseWith
  where
   mkErrorMsg errorMsg =
     "An internal parsing error occurred. This is most likely a bug in codd. Please file a bug report.\
@@ -468,6 +481,7 @@ blockEndingParser = \case
   SingleQuotedString     -> string "'"
 
 eol :: Parser Text
+-- TODO: Replace "eol" by endOfLine. "\t\n" is wrong!! It's "\r\n"!
 eol = string "\n" <|> string "\t\n"
 
 blockParser :: Parser (BlockType, Text)
@@ -534,45 +548,144 @@ parseWithEscapeCharProper untilc = do
       pure $ cs <> c <> rest
     Just _ -> pure cs
 
+eitherToMay :: Either a b -> Maybe b
+eitherToMay (Left  _) = Nothing
+eitherToMay (Right v) = Just v
 
--- | Parses a string in the format postgres://username[:password]@host:port/database_name
+-- | Parses a URI with scheme 'postgres' or 'postgresql', as per https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
+-- The difference here is that URIs with a query string or with a fragment are not allowed.
+uriConnParser :: Text -> Either String ConnectInfo
+uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
+  case parseURI (Text.unpack line) of
+    Nothing       -> throwE "Connection string is not a URI"
+    Just URI {..} -> do
+      when
+          (         Text.toLower (Text.pack uriScheme)
+          `notElem` ["postgres:", "postgresql:"]
+          )
+        $ throwE
+            "Connection string's URI scheme must be 'postgres' or 'postgresql'"
+      case uriAuthority of
+        Nothing ->
+          throwE "Connection string must contain at least user and host"
+        Just URIAuth {..} -> do
+          let connectDatabase = unEscapeString $ trimFirst '/' uriPath
+              hasQueryString  = not $ null uriQuery
+              hasFragment     = not $ null uriFragment
+          when (null connectDatabase)
+            $ throwE "Connection string must contain a database name"
+          when (hasQueryString || hasFragment)
+            $ throwE
+                "Custom parameters are not supported in connection strings. Make sure your connection URI does not have a query string or query fragment"
+
+          -- Ports are not mandatory and are defaulted to 5432 when not present
+          let port = if null uriPort then Just 5432 else Nothing
+          case
+              port <|> eitherToMay
+                (parseOnly (Parsec.decimal <* endOfInput)
+                           (Text.pack $ trimFirst ':' uriPort)
+                )
+            of
+              Nothing          -> throwE "Invalid port in connection string"
+              Just connectPort -> do
+                let
+                  (unEscapeString . trimLast '@' -> connectUser, unEscapeString . trimLast '@' . trimFirst ':' -> connectPassword)
+                    = break (== ':') uriUserInfo
+                pure ConnectInfo
+                  { connectHost     = unEscapeString $ unescapeIPv6 uriRegName
+                  , connectPort
+                  , connectUser
+                  , connectPassword
+                  , connectDatabase
+                  }
+ where
+  unescapeIPv6 :: String -> String
+  unescapeIPv6 = trimFirst '[' . trimLast ']'
+
+  trimFirst :: Char -> String -> String
+  trimFirst c s@(c1 : cs) = if c == c1 then cs else s
+  trimFirst _ s           = s
+
+  trimLast :: Char -> String -> String
+  trimLast c s = case Text.unsnoc $ Text.pack s of
+    Nothing            -> s
+    Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
+
+
+keywordValueConnParser :: Text -> Either String ConnectInfo
+keywordValueConnParser line = runIdentity $ runExceptT $ do
+  kvs <- sortOn fst <$> parseOrFail
+    (singleKeyVal `Parsec.sepBy` takeWhile1 (== ' '))
+    (Text.strip line)
+    "Invalid connection string"
+  -- TODO: Error if there are other keys that we're not using present.
+  ConnectInfo
+    <$> getVal "host"     Nothing     txtToString    kvs
+    <*> getVal "port"     (Just 5432) Parsec.decimal kvs
+    <*> getVal "user"     Nothing     txtToString    kvs
+    <*> getVal "password" (Just "")   txtToString    kvs
+    <*> getVal "dbname"   Nothing     txtToString    kvs
+ where
+  getVal key def parser pairs =
+    case (map snd $ filter ((== key) . fst) pairs, def) of
+      ([], Nothing) ->
+        throwE
+          $  "Connection string must contain a value for '"
+          <> Text.unpack key
+          <> "'"
+      ([], Just v) -> pure v
+      ([vt], _) ->
+        parseOrFail parser vt
+          $  "Connection string key '"
+          <> Text.unpack key
+          <> "' is in an unrecognizable format"
+      _ ->
+        throwE
+          $  "Duplicate key '"
+          <> Text.unpack key
+          <> "' found in connection string."
+
+  txtToString = Text.unpack <$> Parsec.takeText
+  parseOrFail parser txt errorMsg =
+    case parseOnly (parser <* endOfInput) txt of
+      Left  _ -> throwE errorMsg
+      Right v -> pure v
+
+  singleKeyVal = do
+    key <- takeWhile1 (\c -> c /= ' ' && c /= '=')
+    skipJustSpace
+    void $ char '='
+    skipJustSpace
+    value <-
+      takeQuotedString
+      <|> parseWithEscapeCharProper (\c -> c == ' ' || c == '\'' || c == '\\')
+      <|> pure ""
+    pure (key, value)
+
+  takeQuotedString = do
+    void $ char '\''
+    s <- parseWithEscapeCharProper (== '\'')
+    void $ char '\''
+    pure s
+
+-- | Parses a string in one of libpq allowed formats. See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
+-- The difference here is that only a subset of all connection parameters are allowed.
 connStringParser :: Parser ConnectInfo
 connStringParser = do
-  void $ string "postgres://"
-  usr <- idParser "username"
-  pwd <- (char ':' *> idParser "password") <|> pure ""
-  void $ char '@'
-  host <- ipv6Parser <|> idParser "host" <|> fail
-    "Failed parsing host in the connection string"
-  void $ char ':' <|> fail "Missing colon after host"
-  port <- Parsec.decimal
-    <|> fail "Could not find a port in the connection string."
-  void $ char '/'
-  adminDb <- idParser "database"
-  pure ConnectInfo { connectHost     = host
-                   , connectPort     = port
-                   , connectUser     = usr
-                   , connectPassword = pwd
-                   , connectDatabase = adminDb
-                   }
- where
-  idParser :: String -> Parser String
-  idParser idName = do
-    x <- Text.unpack
-      <$> parseWithEscapeCharProper (\c -> c == ':' || c == '@' || c == '\n')
-    when (x == "")
-      $  fail
-      $  "Could not find a "
-      <> idName
-      <> " in the connection string."
-    pure x
-
-  ipv6Parser :: Parser String
-  ipv6Parser = do
-    void $ char '['
-    x <- Text.unpack <$> parseWithEscapeCharProper (== ']')
-    void $ char ']'
-    pure x
+  connStr <- Parsec.takeWhile1 (not . Parsec.isEndOfLine)
+    <|> fail "Empty connection string"
+  -- Very poor connection string type handling here
+  let connStrParser =
+        if ("postgres://" `Text.isPrefixOf` Text.toLower connStr)
+             || ("postgresql://" `Text.isPrefixOf` Text.toLower connStr)
+          then uriConnParser
+          else keywordValueConnParser
+  case connStrParser connStr of
+    Left err ->
+      fail
+        $ "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING. Specific error: "
+        <> err
+    Right c -> pure c
 
 
 optionParser :: Parser SectionOption
@@ -612,7 +725,7 @@ coddCommentParser = do
     endOfLine
     pure $ CoddCommentSuccess opts
 
--- | Parses a "-- codd-connection: postgres://...." line. Consumes all available input
+-- | Parses a "-- codd-connection: some-connection-string" line. Consumes all available input
 -- in case of a malformed connection string.
 coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectInfo)
 coddConnStringCommentParser = do
@@ -762,12 +875,10 @@ parseAndClassifyMigration sqlStream = do
               $  "The options '"
               <> Text.unpack badOptions
               <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
-          (_, Just (CoddCommentWithGibberish badConn)) ->
+          (_, Just (CoddCommentWithGibberish _badConn)) ->
             pure
-              $  Left
-              $  "The connection string '"
-              <> Text.unpack badConn
-              <> "' is invalid. A valid connection string is in the format 'postgres://username[:password]@host:port/database_name', with backslash to escape '@' and ':', and IPv6 addresses in brackets (no need to escape colons for those)"
+              $ Left
+                  "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
           (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
             pure $ Right (opts, Just conn)
           (Just (CoddCommentSuccess opts), Nothing) ->

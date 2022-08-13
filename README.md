@@ -118,6 +118,7 @@ Let's take a look at an example `.env` file for _codd_. These environment variab
 
 ````bash
 # A connection string in the format postgres://username[:password]@host:port/database_name
+# or as keyword value pairs, e.g. dbname=database_name user=postgres host=localhost
 # This connection string will be used to apply migrations. You can specify
 # custom connection strings on a per-migration basis too.
 CODD_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres

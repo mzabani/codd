@@ -41,9 +41,10 @@ UPDATE employee SET employee_experience='intern';
 
 ### Migrations that need to run in a custom database connection
 
-Just add `-- codd-connection: postgres://...` before any statements to your SQL file and
-_codd_ will use that connection string to apply that migration. The format is the same
-as the one used for the `CODD_CONNECTION` environment variable.
+Just add `-- codd-connection: postgres://...` (or in keyword value pairs format) before
+any statements to your SQL file and _codd_ will use that connection string to apply that
+migration. The format is the same as the one used for the `CODD_CONNECTION` environment
+variable.
 
 This is useful when writing migrations that [bootstrap](BOOTSTRAPPING.md) your database,
 because the database to be created doesn't yet exist, so the default connection string
@@ -73,6 +74,7 @@ Please be aware that _codd_'s environment variable templating is extremely primi
 put entire statements inside your environment variables. Also, if one variable contains
 `${OTHERVAR}` inside, then there is a chance it can be doubly replaced depending on the internal
 order _codd_ applies its replacements. This order is undefined, so don't rely on that behaviour.
+No escaping is performed, that is on you as well.
 
 Example:
 
