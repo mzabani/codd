@@ -681,8 +681,11 @@ connStringParser = do
           then uriConnParser
           else keywordValueConnParser
   case connStrParser connStr of
-    Left  err -> fail err
-    Right c   -> pure c
+    Left err ->
+      fail
+        $ "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING. Specific error: "
+        <> err
+    Right c -> pure c
 
 
 optionParser :: Parser SectionOption
@@ -872,12 +875,10 @@ parseAndClassifyMigration sqlStream = do
               $  "The options '"
               <> Text.unpack badOptions
               <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
-          (_, Just (CoddCommentWithGibberish badConn)) ->
+          (_, Just (CoddCommentWithGibberish _badConn)) ->
             pure
-              $  Left
-              $  "The connection string '"
-              <> Text.unpack badConn
-              <> "' is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
+              $ Left
+                  "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
           (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
             pure $ Right (opts, Just conn)
           (Just (CoddCommentSuccess opts), Nothing) ->
