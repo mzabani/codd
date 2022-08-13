@@ -24,7 +24,7 @@ in pkgs.dockerTools.buildImage {
     ${mkdir} /tmp /working-dir
     chmod a+rwx /tmp /working-dir
 
-    for i in {1..2001}
+    for i in {1000..2001}
     do
         ${groupadd} -f --gid "$i" "g$i"
         ${useradd} --uid "$i" --gid "$i" -M "u$i"
