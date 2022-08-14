@@ -109,7 +109,7 @@ This method will install an executable named `codd` and make it available in you
 
 ### 2. Docker
 
-We keep up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
+You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
 Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than other installation methods.
 
 ## Get codd up and running in 10 minutes
@@ -117,14 +117,12 @@ Invoking _codd_ this way will often require mounting volumes, specifying UIDs an
 Here's a super quick way to get a taste of _codd_ if you have postgres running. Let's first define three required environment variables:
 
 ````shell
-export CODD_CONNECTION=postgres://postgres@localhost/codd_experiments
-export CODD_MIGRATION_DIRS=sql-migrations
-export CODD_CHECKSUM_DIR=codd-checksums
+$ export CODD_CONNECTION=postgres://postgres@localhost/codd_experiments
+$ export CODD_MIGRATION_DIRS=sql-migrations
+$ export CODD_CHECKSUM_DIR=codd-checksums
 ````
 
-If you're using docker, it helps to have these environment variables in a _.env_ file.
-
-Make sure you create the `sql-migrations` folder. We won't look at it now, but _codd_ allows much more configurability through other [environment variables](docs/ENV-VARS.md).
+Make sure you create the `sql-migrations` folder. If you're using docker, it helps to have these environment variables in a _.env_ file.
 
 But the database `codd_experiments` doesn't exist yet, so this connection string will not work. That is not a problem, and we can make _codd_ [create this database](docs/BOOTSTRAPPING.md) for us with a migration that overrides the connection string just for itself.
 
@@ -140,11 +138,11 @@ CREATE DATABASE codd_experiments;
 That's a lot to take in. _Codd_ handles pure SQL migrations but also has some special header comments defined that can make it do special things.
 
 - The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases inside transactions (and a few other statements), after all.
-- The `-- codd-connection` header comment specifies that this specific migration will run in its own connection string, not with the default one.
+- The `-- codd-connection` header comment specifies that this specific migration will run with its own connection string, not with the default one.
 
 You can find more about the special directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
 
-Now run:
+Now add this migration by running:
 
 ````shell
 # If you installed codd with Nix
