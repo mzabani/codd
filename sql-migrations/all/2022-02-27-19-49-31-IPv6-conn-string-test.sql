@@ -1,4 +1,4 @@
--- codd-connection: postgres://codd_admin@[::1]:5433/codd-experiments
+-- codd-connection: postgres://codd_admin@[::1]/codd-experiments
 
 -- Test an IPv6 connection string
 

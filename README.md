@@ -78,15 +78,17 @@ Automatic merge failed; fix conflicts and then commit the result.
 ² There can be false positives and false negatives in some cases.  
 
 <!-- vscode-markdown-toc -->
-* [Installing Codd](#installing-codd)
-	* [1. Nix (preferred)](#1-nix-preferred)
-	* [2. Docker](#2-docker)
-* [Configuring Codd](#configuring-codd)
-* [Try codd starting with a SQL Migration](#try-codd-starting-with-a-sql-migration)
-	* [no-txn migrations and more](#no-txn-migrations-and-more)
-* [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
-* [Safety considerations](#safety-considerations)
-* [Frequently Asked Questions](#frequently-asked-questions)
+- [What is Codd?](#what-is-codd)
+  - [popular_name](#popular_name)
+  - [Installing Codd](#installing-codd)
+    - [1. Nix (preferred)](#1-nix-preferred)
+    - [2. Docker](#2-docker)
+  - [Get codd up and running in 10 minutes](#get-codd-up-and-running-in-10-minutes)
+- [If you installed codd with Nix](#if-you-installed-codd-with-nix)
+- [If you're using the docker image:](#if-youre-using-the-docker-image)
+  - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
+  - [Safety considerations](#safety-considerations)
+  - [Frequently Asked Questions](#frequently-asked-questions)
 
 <!-- vscode-markdown-toc-config
 	numbering=false
@@ -110,49 +112,53 @@ This method will install an executable named `codd` and make it available in you
 We keep up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
 Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than other installation methods.
 
-## Configuring Codd
+## Get codd up and running in 10 minutes
 
-_Codd_ will checksum DB objects to ensure database-equality between different environments such as Development and Production. But we have to first set it up to let it know which top-level objects — such as schemas and roles — it will consider, and connection strings for it to connect.
+Here's a super quick way to get a taste of _codd_ if you have postgres running. Let's first define three required environment variables:
 
-Let's take a look at an example `.env` file for _codd_. These environment variables must be defined when running the `codd` executable.  
-
-````bash
-# A connection string in the format postgres://username[:password]@host:port/database_name
-# or as keyword value pairs, e.g. dbname=database_name user=postgres host=localhost
-# This connection string will be used to apply migrations. You can specify
-# custom connection strings on a per-migration basis too.
-CODD_CONNECTION=postgres://postgres@127.0.0.1:5432/postgres
-
-# A list of directories where SQL migration files will be found/added to. Do note that you
-# can have e.g. a testing environment with an extra folder for itself to hold data migrations
-# you don't want on Production. It's recommended to always have your "all migrations" folder first.
-CODD_MIGRATION_DIRS=sql-migrations/all:sql-migrations/dev-only
-
-# Folder where files will be created with checksums of DB objects. This folder will be
-# wiped clean by codd every time it's necessary
-CODD_CHECKSUM_DIR=sql-migrations/on-disk-cksums
-
-# Space separated schemas to checksum
-CODD_SCHEMAS=public
-
-# Optional, space separated roles other than the ones specified above that must also be considered.
-CODD_EXTRA_ROLES=codd-user
-
-# Codd uses the default isolation level in READ WRITE mode, but you can override
-# that with the (optional) environment below.
-# Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
-# or leave blank because this is optional.
-CODD_TXN_ISOLATION=db-default
-
-# Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
-# when migrations fail, but you can control that with this variable. This variable is optional.
-# Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
-CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
+````shell
+export CODD_CONNECTION=postgres://postgres@localhost/codd_experiments
+export CODD_MIGRATION_DIRS=sql-migrations
+export CODD_CHECKSUM_DIR=codd-checksums
 ````
 
-## Try codd starting with a SQL Migration
+If you're using docker, it helps to have these environment variables in a _.env_ file.
 
-Here's a super quick way to experiment with _codd_. Let's create a table of employees with one employee inside by writing the following SQL to a file:
+Make sure you create the `sql-migrations` folder. We won't look at it now, but _codd_ allows much more configurability through other [environment variables](docs/ENV-VARS.md).
+
+But the database `codd_experiments` doesn't exist yet, so this connection string will not work. That is not a problem, and we can make _codd_ [create this database](docs/BOOTSTRAPPING.md) for us with a migration that overrides the connection string just for itself.
+
+Create this file and save it as `bootstrap-db.sql`:
+
+````sql
+-- codd: no-txn
+-- codd-connection: postgres://postgres@localhost/postgres
+
+CREATE DATABASE codd_experiments;
+````
+
+That's a lot to take in. _Codd_ handles pure SQL migrations but also has some special header comments defined that can make it do special things.
+
+- The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases inside transactions (and a few other statements), after all.
+- The `-- codd-connection` header comment specifies that this specific migration will run in its own connection string, not with the default one.
+
+You can find more about the special directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
+
+Now run:
+
+````shell
+# If you installed codd with Nix
+$ codd add bootstrap-db.sql
+
+# If you're using the docker image:
+$ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add bootstrap-db.sql
+````
+
+The file should now have been timestamped and moved to the `sql-migrations` folder, the migration ran and so the `codd_experiments` database created, and checksums written to the `codd-checksums` folder.
+
+Optionally, explore the `codd-checksums` folder. You won't find much yet, but ball the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments are consistent and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
+
+Just for completeness, let's now create a table. Write the following to a `create-employees-table.sql`:
 
 ````sql
 CREATE TABLE employee (
@@ -162,42 +168,18 @@ CREATE TABLE employee (
 INSERT INTO employee (employee_name) VALUES ('John Doe');
 ````
 
-1. Now save this file in your project's root folder with a name such as `create-employees-table.sql`.
-2. Make sure the connection string configured in `CODD_CONNECTION` works¹.
-3. Run 
-   
-   ````shell
-   # With docker
-   $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add create-employees-table.sql
+Add this migration with `codd add` just like you did the previous one.
 
-   # .. or with Nix
-   $ codd add create-employees-table.sql
-   ````
-4. The file will be renamed and moved to the first folder in `CODD_MIGRATION_DIRS`, it'll also run against your database.
-
-After doing this, I recommend exploring your `CODD_CHECKSUM_DIR` folder. Everything in that folder should be put under version control; that's what will enable git to detect conflicts when developers make changes to the same database objects (e.g. same columns, indices, constraints etc.).
-
-¹ _Codd_ can create your database for you through a process called [bootstrapping](docs/BOOTSTRAPPING.md). For now use `createdb` or some other method.
-
-### no-txn migrations and more
-
-Not all SQL can run inside a transaction. One example is altering `enum` types and using the newly created `enum` values.
-Because of that, you can tell *codd* not to run a migration in a transaction, as is exemplified below:
-
-````sql
--- codd: no-txn
-ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';
-UPDATE employee SET employee_experience='intern';
-````
-
-_Codd_ will parse the comment in the first line and understand that this migration can't run in a transaction. You can also add a `-- codd-connection` comment to specify custom connection strings on a per-migration basis.
-
-But using `no-txn` or custom-connection migrations adds great risk by allowing your database to be left in a state that is undesirable. It is highly recommended reading [SQL-migrations.md](docs/SQL-MIGRATIONS.md) if you plan to add them, or if you just want to learn more.
+Before we finish this tutorial, some things you might want to do:
+- psql into your database and manually create a table there, without a migration. Then run `codd verify-checksums`.
+- Run `dropdb codd_experiments` and then `codd up` to get a fresh database from the start.
+- Read all the knobs you can configure codd with in [CONFIGURATION.md](docs/CONFIGURATION.md).
+- Read [safety considerations](#safety-considerations).
 
 ## Start using codd with an existing database
 
 If you already have a database and want to start using _codd_ without losing it, read [START-USING.md](docs/START-USING.md).
-If you want to have a process where `codd up` will even create your database if necessary, read [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).
+If you're running _codd_ in multiple environments where connection strings can differ between them, [environment variable templating](docs/SQL-MIGRATIONS.md#templating-environment-variables-into-migrations) might be of assistance.
 
 ## Safety considerations
 
@@ -207,11 +189,9 @@ We recommend following these instructions closely to avoid several problems. Eve
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but there are corner cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but there are edge cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 
 ## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my checksums?
    `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more, but it still seems to lose schema permissions in some cases, for instance. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.
-2. ### How do I specify custom connection strings on a per-migration basis?
-   Add a `-- codd-connection` comment to the first lines of your migration. You can see an example at [BOOTSTRAPPING.md](docs/BOOTSTRAPPING.md).

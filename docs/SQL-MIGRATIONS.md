@@ -104,7 +104,7 @@ If you find a problem, please let us know.
 
 ## Retry Policies
 
-A migration can fail for a variety of reasons, including unhandled data and serializability errors when using Serializable transactions. For this reason, _codd_ comes with a default Retry Policy of 3 tries (at most 2 retries), the first retry attempt 1 second after the first fails, and the second retry attempt 2 seconds after the second one fails. This can be configured with the `CODD_RETRY_POLICY` environment variable as exemplified in [README.md](../README.md). Important observations are:
+A migration can fail for a variety of reasons, including unhandled data and serializability errors when using Serializable transactions. For this reason, _codd_ comes with a default Retry Policy of 3 tries (at most 2 retries), the first retry attempt 1 second after the first fails, and the second retry attempt 2 seconds after the second one fails. This can be configured with the `CODD_RETRY_POLICY` environment variable as in [CONFIGURATION.md](CONFIGURATION.md). Important observations are:
 
 - When faced with a block of consecutive `in-txn`  migrations, _codd_ retries the blocks whole.
   - For these, the retry count and intervals are "reset" for each block.
