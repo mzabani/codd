@@ -152,9 +152,9 @@ $ codd add bootstrap-db.sql
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add bootstrap-db.sql
 ````
 
-The file should now have been timestamped and moved to the `sql-migrations` folder, the migration ran and so the `codd_experiments` database created, and checksums written to the `codd-checksums` folder.
+The file should now have been timestamped and moved to the `sql-migrations` folder. The migration ran and so the `codd_experiments` database was created, and checksums were written to the `codd-checksums` folder.
 
-Optionally, explore the `codd-checksums` folder. You won't find much yet, but ball the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments are consistent and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
+Optionally, explore the `codd-checksums` folder. You won't find much yet, but all the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments match and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
 
 Just for completeness, let's now create a table. Write the following to a `create-employees-table.sql`:
 

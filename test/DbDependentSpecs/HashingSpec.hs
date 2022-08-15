@@ -1172,18 +1172,40 @@ spec = do
             `shouldBe`        Map.fromList
                                 [("schemas/public/tables/tbl/cols/col1", OnlyRight)]
 
-    aroundFreshDatabase $ it "All but internal schemas" $ \emptyTestDbInfo -> do
-      let nonInternalSchemasDbInfo =
-            emptyTestDbInfo { schemasToHash = AllNonInternalSchemas }
-      DbHashes _ schemaHashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
-        nonInternalSchemasDbInfo
-        Nothing
-        testConnTimeout
-        (readHashesFromDatabaseWithSettings nonInternalSchemasDbInfo)
+    aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
+      let
+        nonInternalSchemasDbInfo =
+          emptyTestDbInfo { schemasToHash = AllNonInternalSchemas }
+        publicSchemaDbInfo =
+          emptyTestDbInfo { schemasToHash = IncludeSchemas ["public"] }
+        emptySchemasDbInfo =
+          emptyTestDbInfo { schemasToHash = IncludeSchemas [] }
+        nonExistingAndCatalogSchemasDbInfo = emptyTestDbInfo
+          { schemasToHash = IncludeSchemas ["non-existing-schema", "pg_catalog"]
+          }
+        getSchemaHashes dbinfo = do
+          DbHashes _ hashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
+            dbinfo
+            Nothing
+            testConnTimeout
+            (readHashesFromDatabaseWithSettings dbinfo)
+          pure $ Map.keys hashes
 
-      -- We should not see pg_catalog in any checksummed object, but "public"
-      -- should be there as the only schema
-      Map.keys schemaHashes `shouldBe` [ObjName "public"]
+      -- 1. We should not see pg_catalog in any checksummed object, but "public"
+      -- should be there as the only schema. The same for the one that includes "public"
+      -- explicitly
+      nonInternalSchemas <- getSchemaHashes nonInternalSchemasDbInfo
+      publicSchemas      <- getSchemaHashes publicSchemaDbInfo
+      nonInternalSchemas `shouldBe` [ObjName "public"]
+      publicSchemas `shouldBe` [ObjName "public"]
+
+      -- 2. No schema hashes at all for empty list of schemas
+      emptySchemas <- getSchemaHashes emptySchemasDbInfo
+      emptySchemas `shouldBe` []
+
+      -- 3. Non-existing schema ignored and internal pg_catalog listed
+      pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
+      pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
