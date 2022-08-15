@@ -164,13 +164,18 @@ hashQueryFor
 hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
-                ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
+                [ "pg_encoding_to_char(encoding)"
+                , "datcollate"
+                , "datctype"
+                , "rolname"
+                ]
         in
             HashQuery
                 { objNameCol    = "datname"
                 , checksumCols  = [ "LOWER(pg_encoding_to_char(encoding))"
                                   , "LOWER(datcollate)"
                                   , "LOWER(datctype)"
+                                  , "rolname"
                                   , sortArrayExpr
                                   $  "ARRAY_AGG("
                                   <> safeStringConcat
@@ -184,7 +189,8 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                   <> " ORDER BY pg_settings.name)"
                                   ]
                 , fromTable     = "pg_catalog.pg_database"
-                , joins         = "LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
+                , joins = "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
+                              <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
                 , nonIdentWhere =
                     Just
                         "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
