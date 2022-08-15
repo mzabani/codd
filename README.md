@@ -79,13 +79,10 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 <!-- vscode-markdown-toc -->
 - [What is Codd?](#what-is-codd)
-  - [popular_name](#popular_name)
   - [Installing Codd](#installing-codd)
     - [1. Nix (preferred)](#1-nix-preferred)
     - [2. Docker](#2-docker)
-  - [Get codd up and running in 10 minutes](#get-codd-up-and-running-in-10-minutes)
-- [If you installed codd with Nix](#if-you-installed-codd-with-nix)
-- [If you're using the docker image with a .env file:](#if-youre-using-the-docker-image-with-a-env-file)
+  - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
   - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
   - [Safety considerations](#safety-considerations)
   - [Frequently Asked Questions](#frequently-asked-questions)
@@ -112,7 +109,7 @@ This method will install an executable named `codd` and make it available in you
 You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
 Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than other installation methods.
 
-## Get codd up and running in 10 minutes
+## Get codd up and running in 15 minutes
 
 Here's a super quick way to get a taste of _codd_ if you have postgres running. Let's first define three required environment variables:
 
@@ -145,10 +142,10 @@ You can find more about the special migration directives that _codd_ understands
 Now add this migration by running:
 
 ````shell
-# If you installed codd with Nix
+$ # If you installed codd with Nix
 $ codd add bootstrap-db.sql
 
-# If you're using the docker image with a .env file:
+$ # If you're using the docker image with a .env file:
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add bootstrap-db.sql
 ````
 
@@ -181,13 +178,13 @@ If you're running _codd_ in multiple environments where connection strings can d
 
 ## Safety considerations
 
-We recommend following these instructions closely to avoid several problems. Even then, they do not guarantee everything will work smoothly.
+We recommend following these instructions closely to catch as many possible issues with your database setup/management as possible.
 
-- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).  
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but there are edge cases. Read more about this in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions
 
