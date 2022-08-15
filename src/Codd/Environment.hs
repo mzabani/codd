@@ -11,9 +11,12 @@ import           Codd.Parsing                   ( connStringParser
                                                 , parseWithEscapeCharProper
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , Include(..)
                                                 , RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
+                                                , SchemaSelection
+                                                    ( AllNonInternalSchemas
+                                                    , IncludeSchemas
+                                                    )
                                                 , SqlRole(..)
                                                 , SqlSchema(..)
                                                 , TxnIsolationLvl(..)
@@ -47,9 +50,9 @@ data CoddSettings = CoddSettings
     , onDiskHashes     :: Either FilePath DbHashes
     -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
-    , schemasToHash    :: Include SqlSchema
+    , schemasToHash    :: SchemaSelection
     -- ^ Selection of Schemas in the DB that we should hash.
-    , extraRolesToHash :: Include SqlRole
+    , extraRolesToHash :: [SqlRole]
     -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from migsConnString is always included in hashing automatically and needs not be added here.
     , retryPolicy      :: RetryPolicy
     -- ^ The Retry Policy to be used when applying failing migrations.
@@ -196,14 +199,14 @@ getCoddSettings = do
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
     onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
     schemasToHash   <- parseEnv
-        (error
-            "Please define the CODD_SCHEMAS environment variable with a space separated list of schema names"
+        AllNonInternalSchemas
+        ( fmap (IncludeSchemas . map SqlSchema)
+        . parseVar spaceSeparatedObjNameParser
         )
-        (fmap (Include . map SqlSchema) . parseVar spaceSeparatedObjNameParser)
         "CODD_SCHEMAS"
     extraRolesToHash <- parseEnv
-        (Include [])
-        (fmap (Include . map SqlRole) . parseVar spaceSeparatedObjNameParser)
+        []
+        (fmap (map SqlRole) . parseVar spaceSeparatedObjNameParser)
         "CODD_EXTRA_ROLES"
     retryPolicy <- parseEnv defaultRetryPolicy
                             (parseVar retryPolicyParser)

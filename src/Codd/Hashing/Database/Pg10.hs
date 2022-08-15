@@ -8,23 +8,22 @@ module Codd.Hashing.Database.Pg10
 import           Codd.Hashing.Database.Model    ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 )
-import           Codd.Hashing.Database.SqlGen   ( includeSql
-                                                , safeStringConcat
+import           Codd.Hashing.Database.SqlGen   ( safeStringConcat
+                                                , sqlIn
                                                 )
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , Include
+                                                , SchemaSelection(..)
                                                 , SqlRole
-                                                , SqlSchema
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 
 -- | Returns a one-row table of type ({ permissions: TEXT }) by exploding the ACL array
 -- and aggregating deterministically (by sorting) the associated permissions for the 
 -- supplied roles + permissions where there is no grantee role.
-aclArrayTbl :: Include SqlRole -> QueryFrag -> QueryFrag
+aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag
 aclArrayTbl allRoles aclArrayIdentifier =
     let acls = "(ACLEXPLODE(" <> aclArrayIdentifier <> "))"
     in
@@ -41,7 +40,7 @@ aclArrayTbl allRoles aclArrayIdentifier =
         <> ".is_grantable) perms_subq "
         <> "\n LEFT JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid=perms_subq.grantee "
         <> "\n WHERE grantee_role.rolname IS NULL OR "
-        <> includeSql allRoles "grantee_role.rolname"
+        <> ("grantee_role.rolname" `sqlIn` allRoles)
         <> ")"
 
 oidArrayExpr :: QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
@@ -119,7 +118,7 @@ _pgOperatorNameTbl =
         <> "\n JOIN pg_type typright ON oprright=typright.oid"
         <> "\n JOIN pg_type typret ON oprresult=typret.oid)"
 
-pgClassHashQuery :: Include SqlRole -> Maybe ObjName -> HashQuery
+pgClassHashQuery :: [SqlRole] -> Maybe ObjName -> HashQuery
 pgClassHashQuery allRoles schemaName = HashQuery
     { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
@@ -155,23 +154,28 @@ pgClassHashQuery allRoles schemaName = HashQuery
     }
 
 hashQueryFor
-    :: Include SqlRole
-    -> Include SqlSchema
+    :: [SqlRole]
+    -> SchemaSelection
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> HashableObject
     -> HashQuery
-hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
+hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
-                ["pg_encoding_to_char(encoding)", "datcollate", "datctype"]
+                [ "pg_encoding_to_char(encoding)"
+                , "datcollate"
+                , "datctype"
+                , "rolname"
+                ]
         in
             HashQuery
                 { objNameCol    = "datname"
                 , checksumCols  = [ "LOWER(pg_encoding_to_char(encoding))"
                                   , "LOWER(datcollate)"
                                   , "LOWER(datctype)"
+                                  , "rolname"
                                   , sortArrayExpr
                                   $  "ARRAY_AGG("
                                   <> safeStringConcat
@@ -185,7 +189,8 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
                                   <> " ORDER BY pg_settings.name)"
                                   ]
                 , fromTable     = "pg_catalog.pg_database"
-                , joins         = "LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
+                , joins = "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
+                              <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
                 , nonIdentWhere =
                     Just
                         "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
@@ -201,7 +206,10 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
             <> "\n LEFT JOIN LATERAL "
             <> aclArrayTbl allRoles "nspacl"
             <> "_codd_roles ON TRUE"
-        , nonIdentWhere = Just $ includeSql allSchemas "nspname"
+        , nonIdentWhere = Just $ case schemaSel of
+            IncludeSchemas schemas -> "nspname" `sqlIn` schemas
+            AllNonInternalSchemas
+                -> "nspname != 'information_schema' AND nspname != 'codd_schema' AND nspname !~ '^pg_'"
         , identWhere    = Nothing
         , groupByCols   = []
         }
@@ -232,7 +240,7 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
          \\n LEFT JOIN LATERAL "
                     <> dbPermsTable
                     <> " _codd_roles ON TRUE"
-                , nonIdentWhere = Just $ includeSql allRoles "pg_roles.rolname"
+                , nonIdentWhere = Just $ "pg_roles.rolname" `sqlIn` allRoles
                 , identWhere    = Nothing
                 , groupByCols   = "pg_roles.rolname" : nonAggCols
                 }
@@ -291,9 +299,9 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName = \case
             "LEFT JOIN pg_catalog.pg_roles ON pg_roles.oid = ANY(polroles)"
             <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_policy.polrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace = pg_namespace.oid"
-        , nonIdentWhere = Just $ "pg_roles.rolname IS NULL OR " <> includeSql
-                              allRoles
-                              "pg_roles.rolname"
+        , nonIdentWhere = Just
+                          $  "pg_roles.rolname IS NULL OR "
+                          <> ("pg_roles.rolname" `sqlIn` allRoles)
         , identWhere    = Just
                           $  "TRUE"
                           <> maybe ""

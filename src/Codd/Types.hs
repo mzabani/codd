@@ -3,11 +3,10 @@ module Codd.Types
     , ChecksumAlgo(..)
     , SqlRole(..)
     , SqlSchema(..)
-    , Include(..)
     , RetryPolicy(..)
     , RetryBackoffPolicy(..)
+    , SchemaSelection(..)
     , TxnIsolationLvl(..)
-    , alsoInclude
     , defaultRetryPolicy
     , retryPolicyIterate
     , singleTryPolicy
@@ -60,9 +59,4 @@ retryPolicyIterate (RetryPolicy maxRetries backoff)
 newtype SqlRole = SqlRole { unSqlRole :: Text } deriving newtype (Show, ToField, IsString)
 newtype SqlSchema = SqlSchema { unSqlSchema :: Text } deriving newtype (Show, ToField, IsString)
 
-data Include a = Include [a] | Exclude [a] | IncludeExclude [a] [a]
-alsoInclude :: [a] -> Include a -> Include a
-alsoInclude is = \case
-    Include xs           -> Include (is ++ xs)
-    Exclude xs           -> IncludeExclude is xs
-    IncludeExclude as xs -> IncludeExclude (as ++ is) xs
+data SchemaSelection = IncludeSchemas [SqlSchema] | AllNonInternalSchemas

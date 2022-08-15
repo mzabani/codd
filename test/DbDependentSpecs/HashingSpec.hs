@@ -13,10 +13,12 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..)
                                                 , DiffType(..)
+                                                , ObjName
                                                 , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
 import           Codd.Hashing.Database          ( queryServerMajorVersion )
+import           Codd.Hashing.Types             ( ObjName(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction
@@ -35,6 +37,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( ChecksumAlgo(..)
+                                                , SchemaSelection(..)
                                                 , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
@@ -1168,6 +1171,41 @@ spec = do
             `hashDifferences` initialHashes
             `shouldBe`        Map.fromList
                                 [("schemas/public/tables/tbl/cols/col1", OnlyRight)]
+
+    aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
+      let
+        nonInternalSchemasDbInfo =
+          emptyTestDbInfo { schemasToHash = AllNonInternalSchemas }
+        publicSchemaDbInfo =
+          emptyTestDbInfo { schemasToHash = IncludeSchemas ["public"] }
+        emptySchemasDbInfo =
+          emptyTestDbInfo { schemasToHash = IncludeSchemas [] }
+        nonExistingAndCatalogSchemasDbInfo = emptyTestDbInfo
+          { schemasToHash = IncludeSchemas ["non-existing-schema", "pg_catalog"]
+          }
+        getSchemaHashes dbinfo = do
+          DbHashes _ hashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
+            dbinfo
+            Nothing
+            testConnTimeout
+            (readHashesFromDatabaseWithSettings dbinfo)
+          pure $ Map.keys hashes
+
+      -- 1. We should not see pg_catalog in any checksummed object, but "public"
+      -- should be there as the only schema. The same for the one that includes "public"
+      -- explicitly
+      nonInternalSchemas <- getSchemaHashes nonInternalSchemasDbInfo
+      publicSchemas      <- getSchemaHashes publicSchemaDbInfo
+      nonInternalSchemas `shouldBe` [ObjName "public"]
+      publicSchemas `shouldBe` [ObjName "public"]
+
+      -- 2. No schema hashes at all for empty list of schemas
+      emptySchemas <- getSchemaHashes emptySchemasDbInfo
+      emptySchemas `shouldBe` []
+
+      -- 3. Non-existing schema ignored and internal pg_catalog listed
+      pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
+      pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
     describe "Hashing tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important

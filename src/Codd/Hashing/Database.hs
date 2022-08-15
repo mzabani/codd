@@ -21,10 +21,8 @@ import           Codd.Hashing.Database.SqlGen   ( interspBy
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Types                     ( ChecksumAlgo
-                                                , Include(..)
+                                                , SchemaSelection
                                                 , SqlRole(..)
-                                                , SqlSchema(..)
-                                                , alsoInclude
                                                 )
 import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( MonadLogger
@@ -79,8 +77,8 @@ instance DataSourceName HashReq where
 type HaxlEnv
   = ( PgVersionHasher
     , DB.Connection
-    , Include SqlSchema
-    , Include SqlRole
+    , SchemaSelection
+    , [SqlRole]
     , ChecksumAlgo
     , Bool
     )
@@ -202,8 +200,8 @@ instance DataSource HaxlEnv HashReq where
         forM_ mergedResults $ uncurry putSuccess
 
 type PgVersionHasher
-  =  Include SqlRole
-  -> Include SqlSchema
+  =  [SqlRole]
+  -> SchemaSelection
   -> ChecksumAlgo
   -> Maybe ObjName
   -> Maybe ObjName
@@ -253,9 +251,9 @@ readHashesFromDatabaseWithSettings
 readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
   = do
     majorVersion <- queryServerMajorVersion conn
-    let rolesToHash = alsoInclude
-          [SqlRole . Text.pack . DB.connectUser $ migsConnString]
-          extraRolesToHash
+    let rolesToHash =
+          (SqlRole . Text.pack . DB.connectUser $ migsConnString)
+            : extraRolesToHash
     case majorVersion of
       10 -> readHashesFromDatabase Pg10.hashQueryFor
                                    conn
@@ -307,17 +305,17 @@ readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
   => PgVersionHasher
   -> DB.Connection
-  -> Include SqlSchema
-  -> Include SqlRole
+  -> SchemaSelection
+  -> [SqlRole]
   -> ChecksumAlgo
   -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn allSchemas allRoles checksumAlgo hashedChecksums
+readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo hashedChecksums
   = do
     let stateStore = stateSet UserState{} stateEmpty
     env0 <- liftIO $ initEnv
       stateStore
-      (pgVer, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
+      (pgVer, conn, schemaSel, allRoles, checksumAlgo, hashedChecksums)
     liftIO $ runHaxl env0 $ do
       allDbSettings <- dataFetch
         $ GetHashesReq HDatabaseSettings Nothing Nothing

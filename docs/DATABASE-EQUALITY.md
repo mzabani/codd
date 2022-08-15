@@ -37,7 +37,7 @@ This is not currently the case, may not be entirely possible and some decisions 
 - Collations (with _important caveats_)
 - Roles, including their config attributes such as `search_path`, which other roles they belong to and database-related permissions
 - Composite, domain, enum and range types  
-- Database encoding and its `default_transaction_*` settings
+- Database ownership, encoding and its `default_transaction_*` settings
 
 In contrast, an **incomplete** list of things that are **not currently checksummed:**
 
