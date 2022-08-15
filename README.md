@@ -85,7 +85,7 @@ Automatic merge failed; fix conflicts and then commit the result.
     - [2. Docker](#2-docker)
   - [Get codd up and running in 10 minutes](#get-codd-up-and-running-in-10-minutes)
 - [If you installed codd with Nix](#if-you-installed-codd-with-nix)
-- [If you're using the docker image:](#if-youre-using-the-docker-image)
+- [If you're using the docker image with a .env file:](#if-youre-using-the-docker-image-with-a-env-file)
   - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
   - [Safety considerations](#safety-considerations)
   - [Frequently Asked Questions](#frequently-asked-questions)
@@ -140,7 +140,7 @@ That's a lot to take in. _Codd_ handles pure SQL migrations but also has some sp
 - The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases inside transactions (and a few other statements), after all.
 - The `-- codd-connection` header comment specifies that this specific migration will run with its own connection string, not with the default one.
 
-You can find more about the special directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
+You can find more about the special migration directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
 
 Now add this migration by running:
 
@@ -148,7 +148,7 @@ Now add this migration by running:
 # If you installed codd with Nix
 $ codd add bootstrap-db.sql
 
-# If you're using the docker image:
+# If you're using the docker image with a .env file:
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add bootstrap-db.sql
 ````
 
@@ -166,7 +166,7 @@ CREATE TABLE employee (
 INSERT INTO employee (employee_name) VALUES ('John Doe');
 ````
 
-Add this migration with `codd add` just like you did the previous one.
+Add this migration with `codd add` just like you did to the previous one and it will be added and applied.
 
 Before we finish this tutorial, some things you might want to do:
 - psql into your database and manually create a table there, without a migration. Then run `codd verify-checksums`.
@@ -192,4 +192,4 @@ We recommend following these instructions closely to avoid several problems. Eve
 ## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my checksums?
-   `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more, but it still seems to lose schema permissions in some cases, for instance. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.
+   `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more when possible instead. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.
