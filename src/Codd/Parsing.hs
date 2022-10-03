@@ -481,8 +481,7 @@ blockEndingParser = \case
   SingleQuotedString     -> string "'"
 
 eol :: Parser Text
--- TODO: Replace "eol" by endOfLine. "\t\n" is wrong!! It's "\r\n"!
-eol = string "\n" <|> string "\t\n"
+eol = string "\n" <|> string "\r\n"
 
 blockParser :: Parser (BlockType, Text)
 blockParser = do
