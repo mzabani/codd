@@ -130,7 +130,10 @@ executable codd
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
+  -- Setting -N1 disables the parallel GC and limiting the runtime to one thread
+  -- actually seems to make codd perform better in some heavier workloads I've tested.
+  -- This makes sense, codd is single-threaded.
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N1 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
       base >=4.7 && <5
     , codd
@@ -185,7 +188,7 @@ test-suite codd-test
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N -Wunused-packages
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N1 -Wunused-packages
   -- Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
   -- do not include hspec-discover in system-build-tools. We hack around the issue
   -- in flake.nix so both cabal and nix build work.
