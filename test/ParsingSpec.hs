@@ -545,21 +545,6 @@ spec = do
               t `shouldBe` fullContents
             Right (UnparsedSql t) -> t `shouldBe` fullContents
 
-      it "Reduced test failure case" $ do
-        let
-          fullContents
-            = "\30826\1026239\1058363\991832\175290\20726\166681\40057\165989\175989\197228\1110635\1060484\162962\1628\146362\176660\1001722\1077962\1108474\30562\1060322\52622\184419\26860\162286\1032512\40023\1083335\988653\54833\1014684\1013986\1036770\1038146\189608\1060526\1043779\134718\25258\3871\164638\162828\1109391\9605\1010507$\14402\142584\1069838\1081185\1065445\1073104\1105418\nCOmmIT;\n\n"
-        emig <-
-          parseSqlMigration "any-name.sql" $ PureStream @IO $ Streaming.yield
-            fullContents
-        case migrationSql <$> emig of
-          Left  _                      -> error "Should not be Left!"
-          Right (WellParsedSql pieces) -> do
-            pcs <- Streaming.toList_ pieces
-            let t = piecesToText pcs
-            t `shouldBe` fullContents
-          Right (UnparsedSql t) -> t `shouldBe` fullContents
-
       it "in-txn and no-txn are mutually exclusive" $ property $ \randomSeed ->
         do
           let plainSql = "SOME SQL"

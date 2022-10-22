@@ -243,35 +243,20 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
          )
   handleParseResult !parserState !textPiece !mParseResult =
     case mParseResult of
-      Nothing ->
-        -- trace ("Very first parse of \"" ++ Text.unpack textPiece ++ "\"")
-        --   $ 
-                 handleParseResult
+      Nothing -> handleParseResult
         parserState
         textPiece
         (Just $ Parsec.parse (sqlPieceParser parserState) textPiece)
       Just (Parsec.Fail _ _ errorMsg) ->
         throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
-      Just (Parsec.Done "" (OtherSqlPiece "", newParserState)) ->
-        -- Ugly special case. Our parsers parse empty strings too, but
-        -- we don't want to return empty sql pieces.
-        pure ([], Nothing, newParserState)
       Just (Parsec.Done unconsumedInput (sqlPiece, newParserState)) ->
-        -- trace
-        --     (  "Got Done after parsing \""
-        --     ++ Text.unpack textPiece
-        --     ++ "\". Unconsumed input: \""
-        --     ++ Text.unpack unconsumedInput
-        --     ++ "\". Parsed piece: "
-        --     ++ show sqlPiece
-        --     )
-        --   $ 
         if textPiece == ""
             -- Special case. After consuming the empty string "" - which is interpreted as 
             -- EOF -, it is possible unconsumed input remained from a previous partial parse.
             -- It could even be e.g. some newlines at the end of the file after some last statement.
             -- Our streaming parser needs to guarantee that all SQL is streamed back; nothing gets lost.
             -- So we can't forget to return that last unconsumed fragment in that case.
+            -- Oh, and we never want to return `OtherSqlPiece ""`.
           then pure
             ( sqlPiece
               : [ OtherSqlPiece unconsumedInput | unconsumedInput /= "" ]
@@ -284,8 +269,6 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
             (Just $ Parsec.parse (sqlPieceParser newParserState) unconsumedInput
             )
       Just (Parsec.Partial nextContinue) ->
-        -- trace ("Got Partial after parsing \"" ++ Text.unpack textPiece ++ "\"")
-        --   $ 
         pure ([], Just nextContinue, parserState)
 
   parseResultsStream :: Stream (Of [SqlPiece]) m ()
@@ -293,7 +276,6 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     Streaming.scanM
         (\(_, !mContinue, !parserState) !textPiece -> handleParseResult
           parserState
-          -- (trace ("NEXT PIECE: \"" ++ Text.unpack textPiece ++ "\"") textPiece)
           textPiece
           (mContinue <*> Just textPiece)
         )
