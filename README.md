@@ -80,7 +80,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 <!-- vscode-markdown-toc -->
 - [What is Codd?](#what-is-codd)
   - [Installing Codd](#installing-codd)
-    - [1. Nix (preferred)](#1-nix-preferred)
+    - [1. Nix](#1-nix)
     - [2. Docker](#2-docker)
   - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
   - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
@@ -97,17 +97,22 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 We currently provide two installation methods.
 
-### 1. Nix (preferred)
+### 1. Nix
 
-This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would.
+This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would. It is a bit more cumbersome to install than with docker but easier to use once installed.
 
-1. Install Nix if you don't have it yet by using your package manager or running `sh <(curl -L https://nixos.org/nix/install) --daemon` and following its instructions.
-2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. Now just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
+1. Install Nix if you don't have it yet by using your package manager or following instructions from https://nixos.org/download.html.
+2. Add a Nix cache with precompiled packages so you don't have to compile a ton of things. This step is optional but highly recommended, otherwise you may have to compile things for hours. Add these to your `/etc/nix/nix.conf` file (or `~/.config/nix/nix.conf` if you know what you're doing your user is in Nix's trust list). If you already have other substituters and trusted public keys, just append these new values to them instead of adding new lines.
+   ```
+   substituters = https://mzabani.cachix.org
+   trusted-public-keys = mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=
+   ```
+3. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. If things are building and taking too long, you may want to check you did step 2 correctly. After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
 
 ### 2. Docker
 
 You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
-Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than other installation methods.
+Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than installing with Nix.
 
 ## Get codd up and running in 15 minutes
 
@@ -134,12 +139,12 @@ CREATE DATABASE codd_experiments;
 
 That's a lot to take in. _Codd_ handles pure SQL migrations but also has some special header comments defined that can make it do special things.
 
-- The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases inside transactions (and a few other statements), after all.
+- The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases (plus a few other statements) inside transactions, after all.
 - The `-- codd-connection` header comment specifies that this specific migration will run with its own connection string, not with the default one.
 
 You can find more about the special migration directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
 
-Now add this migration by running:
+Now add this migration by running one of the two commands below:
 
 ````shell
 $ # If you installed codd with Nix
