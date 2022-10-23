@@ -1,4 +1,4 @@
-module GeneralSpec where
+module WritingReadingChecksumsSpec where
 
 import           Codd.Hashing                   ( hashDifferences
                                                 , persistHashesToDisk
@@ -14,7 +14,7 @@ import           TypesGen                       ( DbHashesGen(..) )
 
 spec :: Spec
 spec = do
-    describe "General tests" $ do
+    describe "Writing and reading checksums" $ do
         it "persistHashesToDisk is inverse of readHashesFromDisk" $ do
             property $ \(DbHashesGen dbHashes) -> do
                 persistHashesToDisk dbHashes "/dev/shm/inverse-test-sql-folder"
