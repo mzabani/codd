@@ -258,8 +258,8 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
             -- So we can't forget to return that last unconsumed fragment in that case.
             -- Oh, and we never want to return `OtherSqlPiece ""`.
           then pure
-            ( sqlPiece
-              : [ OtherSqlPiece unconsumedInput | unconsumedInput /= "" ]
+            ( [ sqlPiece | sqlPiece /= OtherSqlPiece "" ]
+            ++ [ OtherSqlPiece unconsumedInput | unconsumedInput /= "" ]
             , Nothing
             , newParserState
             )
