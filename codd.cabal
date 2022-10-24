@@ -156,11 +156,11 @@ test-suite codd-test
       DbDependentSpecs.InvariantsSpec
       DbUtils
       EnvironmentSpec
-      GeneralSpec
       LiftedExpectations
       ParsingSpec
       TypesGen
       Paths_codd
+      WritingReadingChecksumsSpec
   autogen-modules:
       Paths_codd
   hs-source-dirs:

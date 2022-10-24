@@ -209,8 +209,9 @@ parseSqlPiecesStreaming
   => Stream (Of Text) m ()
   -> Stream (Of SqlPiece) m ()
 parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
-  -- NOTE: We might be able to simplify this function tremendously by using attoparsec's `parseWith`:
-  -- https://hackage.haskell.org/package/attoparsec-0.14.4/docs/Data-Attoparsec-Text.html#v:parseWith
+  -- NOTE: attoparsec's `parseWith` looks at first glance like it might help, but
+  -- the parser supplied to it is fixed, and we need a state-sensitive parser for each
+  -- chunk, because chunks might be incomplete SQL pieces.
  where
   mkErrorMsg errorMsg =
     "An internal parsing error occurred. This is most likely a bug in codd. Please file a bug report.\
@@ -219,44 +220,64 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
     \ memory all at once instead of being read and applied in streaming fashion.\
     \ The more detailed parsing error is: "
       ++ errorMsg
-    -- Important question: will the unconsumed Text remainders in the parsing Results
-    -- be allocated and take a lot of memory? This probably depends on how lazily these are
-    -- allocated by attoparsec and by Text's internal implementation. We might want to test this
-    -- with very small chunks of Text coming from the input stream to compare.
-    -- NOTE: It's unlikely Text's internal implementation
-    -- copies byte arrays for new instances. It most likely references existing byte arrays
-    -- with some offset and length integers to follow. Double-check just in case.
-  parseOneInc
+
+  -- | Takes a parser result and does one of:
+  -- 1. Throws an error if it failed. Remember, we assume our SQL parsers can't fail.
+  -- 2. If one `SqlPiece`s was successfuly parsed, great. Because there could still be unconsumed text,
+  --    recursively parse that unconsumed text, and prepend the parsed `SqlPiece` to whatever the recursively
+  --    applied parser returns.
+  -- 3. If the parser didn't fail nor succeed, it wasn't yet fed sufficient input. This then returns
+  --    an empty list of `SqlPiece`s and a parser continuation.
+  -- In all cases, this returns the modified parser state too (one of `OutsideCopy` or `InsideCopy`).
+  handleParseResult
     :: ParserState
     -> Text
+    -> Maybe (Parsec.Result (SqlPiece, ParserState))
+    -- ^ `Nothing` means this text piece is the very first to be parsed.
+    -- `Just` means this is the result of parsing the supplied text piece (second argument
+    -- to this function).
     -> m
          ( [SqlPiece]
          , Maybe (Text -> Parsec.Result (SqlPiece, ParserState))
          , ParserState
          )
-  parseOneInc parserState t = if t == ""
-    then pure ([], Nothing, parserState)
-    else case Parsec.parse (sqlPieceParser parserState) t of
-      Parsec.Fail _ _ errorMsg ->
-        throwM $ ParsingException t $ mkErrorMsg errorMsg
-      Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
-        first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
-      Parsec.Partial continue -> pure ([], Just continue, parserState)
+  handleParseResult !parserState !textPiece !mParseResult =
+    case mParseResult of
+      Nothing -> handleParseResult
+        parserState
+        textPiece
+        (Just $ Parsec.parse (sqlPieceParser parserState) textPiece)
+      Just (Parsec.Fail _ _ errorMsg) ->
+        throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
+      Just (Parsec.Done unconsumedInput (sqlPiece, newParserState)) ->
+        if textPiece == ""
+            -- Special case. After consuming the empty string "" - which is interpreted as 
+            -- EOF -, it is possible unconsumed input remained from a previous partial parse.
+            -- It could even be e.g. some newlines at the end of the file after some last statement.
+            -- Our streaming parser needs to guarantee that all SQL is streamed back; nothing gets lost.
+            -- So we can't forget to return that last unconsumed fragment in that case.
+            -- Oh, and we never want to return `OtherSqlPiece ""`.
+          then pure
+            ( [ sqlPiece | sqlPiece /= OtherSqlPiece "" ]
+            ++ [ OtherSqlPiece unconsumedInput | unconsumedInput /= "" ]
+            , Nothing
+            , newParserState
+            )
+          else first3 (sqlPiece :) <$> handleParseResult
+            newParserState
+            unconsumedInput
+            (Just $ Parsec.parse (sqlPieceParser newParserState) unconsumedInput
+            )
+      Just (Parsec.Partial nextContinue) ->
+        pure ([], Just nextContinue, parserState)
 
   parseResultsStream :: Stream (Of [SqlPiece]) m ()
   parseResultsStream =
     Streaming.scanM
-        (\(_, !mContinue, !parserState) !textPiece -> case mContinue of
-          Nothing       -> parseOneInc parserState textPiece
-           -- TODO: The following case is almost essentially "parseOneInc".
-           -- Reuse more code!
-          Just continue -> case continue textPiece of
-            Parsec.Fail _ _ errorMsg ->
-              throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
-            Parsec.Done unconsumedInput (sqlPiece, newParserState) ->
-              first3 (sqlPiece :) <$> parseOneInc newParserState unconsumedInput
-            Parsec.Partial nextContinue ->
-              pure ([], Just nextContinue, parserState)
+        (\(_, !mContinue, !parserState) !textPiece -> handleParseResult
+          parserState
+          textPiece
+          (mContinue <*> Just textPiece)
         )
         (pure ([], Nothing, OutsideCopy))
         (pure . fst3)
@@ -314,7 +335,8 @@ sqlPieceParser parserState = case parserState of
       <$> commentParser
       <|> (, OutsideCopy)
       .   WhiteSpacePiece
-      <$> takeWhile1 Char.isSpace
+      <$> takeWhile1
+            (\c -> Char.isSpace c || c == '\n' || c == '\r' || c == '\t')
       <|> (, InsideCopy)
       <$> copyFromStdinStatementParser
       <|> (, OutsideCopy)

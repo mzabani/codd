@@ -326,7 +326,8 @@ spec = do
                          , [OtherSqlPiece "CREATE TABLE hello -- Comment"]
                          , [OtherSqlPiece "CREATE TABLE hello -- Comment\n;"]
                          ]
-      it "Statement separation boundaries are good"
+      modifyMaxSuccess (const 10000)
+        $ it "Statement separation boundaries are good"
         $ forAll ((,) <$> listOf1 genSingleSqlStatement <*> arbitrary @Int)
         $ \(origPieces, randomSeed) -> do
             parsedPieces <-
@@ -336,8 +337,9 @@ spec = do
               $ mkRandStream randomSeed
               $ Text.concat (map piecesToText origPieces)
             parsedPieces `shouldBe` mconcat origPieces
-      it
-          "Statements concatenation matches original and statements end with semi-colon"
+      modifyMaxSuccess (const 10000)
+        $ it
+            "Statements concatenation matches original and statements end with semi-colon"
         $ do
             property $ \SyntacticallyValidRandomSql {..} -> do
               blks <- Streaming.toList_ $ parseSqlPiecesStreaming $ unPureStream
@@ -535,15 +537,17 @@ spec = do
         parsedSql `shouldBe` templatedSql
 
     context "Invalid SQL Migrations" $ do
-      it "Sql Migration Parser never blocks for random text" $ do
-        property $ \RandomSql { unRandomSql, fullContents } -> do
-          emig <- parseSqlMigrationIO "any-name.sql" unRandomSql
-          case migrationSql <$> emig of
-            Left  _                      -> error "Should not be Left!"
-            Right (WellParsedSql pieces) -> do
-              t <- piecesToText <$> Streaming.toList_ pieces
-              t `shouldBe` fullContents
-            Right (UnparsedSql t) -> t `shouldBe` fullContents
+      modifyMaxSuccess (const 10000)
+        $ it "Sql Migration Parser never blocks for random text"
+        $ do
+            property $ \RandomSql { unRandomSql, fullContents } -> do
+              emig <- parseSqlMigrationIO "any-name.sql" unRandomSql
+              case migrationSql <$> emig of
+                Left  _                      -> error "Should not be Left!"
+                Right (WellParsedSql pieces) -> do
+                  t <- piecesToText <$> Streaming.toList_ pieces
+                  t `shouldBe` fullContents
+                Right (UnparsedSql t) -> t `shouldBe` fullContents
 
       it "in-txn and no-txn are mutually exclusive" $ property $ \randomSeed ->
         do
