@@ -18,19 +18,28 @@ import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , SchemaSelection(..)
                                                 , SqlRole
                                                 )
+import           Data.Maybe                     ( isJust )
 import qualified Database.PostgreSQL.Simple    as DB
 
 -- | Returns a one-row table of type ({ permissions: TEXT }) by exploding the ACL array
 -- and aggregating deterministically (by sorting) the associated permissions for the 
 -- supplied roles + permissions where there is no grantee role.
-aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag
-aclArrayTbl allRoles aclArrayIdentifier =
-    let acls = "(ACLEXPLODE(" <> aclArrayIdentifier <> "))"
+aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
+aclArrayTbl allRoles aclKind objOwnerOidIdentifier aclArrayIdentifier =
+    -- A null array of ACLs actually represents default permissions. See https://github.com/mzabani/codd/issues/117
+    let acls =
+            "(ACLEXPLODE(COALESCE("
+                <> aclArrayIdentifier
+                <> ", acldefault("
+                <> aclKind
+                <> ","
+                <> objOwnerOidIdentifier
+                <> "))))"
     in
       -- We only include mapped roles for grantees, not for grantors.
       -- Grantee 0 is PUBLIC, which we always want to include.
-      -- NOTE: It is not clear what being a grantor means, so we remain open
-      -- to having to include 
+      -- NOTE: It is not clear to me yet what being a grantor means, so we remain open
+      -- to having to include it
         "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions FROM (SELECT "
         <> acls
         <> ".grantee, "
@@ -118,8 +127,13 @@ _pgOperatorNameTbl =
         <> "\n JOIN pg_type typright ON oprright=typright.oid"
         <> "\n JOIN pg_type typret ON oprresult=typret.oid)"
 
-pgClassHashQuery :: [SqlRole] -> Maybe ObjName -> HashQuery
-pgClassHashQuery allRoles schemaName = HashQuery
+pgClassHashQuery
+    :: Maybe ([SqlRole], QueryFrag)
+            -- ^ If privileges are to be checksummed, the roles and privileges kind character for the object.
+            -- See `acldefault` in https://www.postgresql.org/docs/13/functions-info.html for the kind chars.
+    -> Maybe ObjName
+    -> HashQuery
+pgClassHashQuery mPrivRolesAndKind schemaName = HashQuery
     { objNameCol    = "pg_class.relname"
     , checksumCols  = [ "pg_reltype.typname"
                       , "pg_reloftype.typname"
@@ -134,17 +148,26 @@ pgClassHashQuery allRoles schemaName = HashQuery
                       , "pg_class.relispartition"
                       , sortArrayExpr "pg_class.reloptions"
                       -- , "pg_class.relpartbound" -- a pg_node_tree for partition bound, but I couldn't find a function to get its definition
-                      , "_codd_roles.permissions"
                       ]
+                          ++ [ "_codd_roles.permissions"
+                             | isJust mPrivRolesAndKind
+                             ]
     , fromTable     = "pg_catalog.pg_class"
     , joins         =
         "LEFT JOIN pg_catalog.pg_type pg_reltype ON pg_class.reltype=pg_reltype.oid"
         <> "\nLEFT JOIN pg_catalog.pg_type pg_reloftype ON pg_class.reloftype=pg_reloftype.oid"
         <> "\nLEFT JOIN pg_catalog.pg_roles rel_owner_role ON pg_class.relowner=rel_owner_role.oid"
         <> "\nLEFT JOIN pg_catalog.pg_am ON pg_class.relam=pg_am.oid"
-        <> "\nLEFT JOIN LATERAL "
-        <> aclArrayTbl allRoles "pg_class.relacl"
-        <> " _codd_roles ON TRUE"
+        <> (case mPrivRolesAndKind of
+               Nothing -> ""
+               Just (allRoles, privilegesKindChar) ->
+                   "\nLEFT JOIN LATERAL "
+                       <> aclArrayTbl allRoles
+                                      privilegesKindChar
+                                      "pg_class.relowner"
+                                      "pg_class.relacl"
+                       <> " _codd_roles ON TRUE"
+           )
         <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid"
     , nonIdentWhere = Nothing
     , identWhere    = Just $ maybe ""
@@ -152,6 +175,11 @@ pgClassHashQuery allRoles schemaName = HashQuery
                                    (DB.Only <$> schemaName)
     , groupByCols   = []
     }
+--   where
+--         -- We need to map pg_class.relkind (as per https://www.postgresql.org/docs/13/catalog-pg-class.html)
+--         -- to the kind chars that `acldefault` expects, as in https://www.postgresql.org/docs/13/functions-info.html
+--     mapRelKindToPrivKind =
+--         "(CASE WHEN pg_class.relkind='S' THEN 's' ELSE 'r' END)"
 
 hashQueryFor
     :: [SqlRole]
@@ -204,7 +232,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
         , joins         =
             "JOIN pg_catalog.pg_roles AS nsp_owner ON nsp_owner.oid=pg_namespace.nspowner"
             <> "\n LEFT JOIN LATERAL "
-            <> aclArrayTbl allRoles "nspacl"
+            <> aclArrayTbl allRoles "'n'" "pg_namespace.nspowner" "nspacl"
             <> "_codd_roles ON TRUE"
         , nonIdentWhere = Just $ case schemaSel of
             IncludeSchemas schemas -> "nspname" `sqlIn` schemas
@@ -260,10 +288,10 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 <> "\n WHERE grantee_role.rolname=pg_roles.rolname"
                 <> ")"
     HTable ->
-        let hq = pgClassHashQuery allRoles schemaName
+        let hq = pgClassHashQuery (Just (allRoles, "'r'")) schemaName
         in  hq { nonIdentWhere = Just "relkind IN ('r', 'f', 'p')" }
     HView ->
-        let hq = pgClassHashQuery allRoles schemaName
+        let hq = pgClassHashQuery (Just (allRoles, "'r'")) schemaName
         in
             hq
                 { checksumCols = "pg_views.definition"
@@ -320,7 +348,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                           ] -- Need to group by due to join against pg_roles
         }
     HSequence ->
-        let hq = pgClassHashQuery allRoles schemaName
+        let hq = pgClassHashQuery (Just (allRoles, "'s'")) schemaName
         in
             hq
                 { checksumCols = checksumCols hq
@@ -398,7 +426,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                  \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
                  \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
                  \\n LEFT JOIN LATERAL "
-                    <> aclArrayTbl allRoles "proacl"
+                    <> aclArrayTbl allRoles "'f'" "proowner" "proacl"
                     <> "_codd_roles ON TRUE"
                 , nonIdentWhere = Nothing
                 , identWhere    = Just $ "TRUE" <> maybe
@@ -438,7 +466,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
             <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"
             <> "\n LEFT JOIN LATERAL "
-            <> aclArrayTbl allRoles "attacl"
+            <> aclArrayTbl allRoles "'c'" "pg_class.relowner" "attacl"
             <> "_codd_roles ON TRUE"
         , nonIdentWhere =
             Just
@@ -493,7 +521,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
         , groupByCols   = []
         }
     HIndex ->
-        let hq = pgClassHashQuery allRoles schemaName
+        let hq = pgClassHashQuery Nothing schemaName
         in
             hq
                 {
@@ -647,7 +675,10 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                     <>
 -- We can't group by typacl because the planner errors with 'Some of the datatypes only support hashing, while others only support sorting.'
                        "\nLEFT JOIN LATERAL "
-                    <> aclArrayTbl allRoles "pg_type.typacl"
+                    <> aclArrayTbl allRoles
+                                   "'T'"
+                                   "pg_type.typowner"
+                                   "pg_type.typacl"
                     <> " typacl ON TRUE"
                     <>
 -- Joins for attributes of composite types

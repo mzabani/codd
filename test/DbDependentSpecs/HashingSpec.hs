@@ -719,20 +719,10 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
     -- PERMISSIONS
     -- For tables
-    -- IMPORTANT note:
-    -- For some reason, revoking privileges from a table
-    -- seems to have the effect of GRANTing permissions to the revoker, but
-    -- only the first time it's revoked.
-    -- So be careful making sure REVOKE does what you expect!
-  (grantAll, _) <-
-    addMig
-        "GRANT ALL ON TABLE employee TO \"codd-test-user\""
-            -- Read the note above to understand REVOKE from postgres
-        "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; REVOKE ALL ON TABLE employee FROM postgres;"
-      $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
-  addMig_ "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"" grantAll
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    -- Owner of the table implicitly has all privileges by default
+  (grantAll, revokeAll) <-
+    addMig "GRANT ALL ON TABLE employee TO postgres" "SELECT 1;" $ ChangeEq []
 
   addMig_ "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
           "REVOKE SELECT ON TABLE employee FROM \"codd-test-user\""
@@ -747,14 +737,9 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
 
     -- For sequences
-    -- IMPORTANT note:
-    -- For some reason, revoking privileges from a sequence owned by a table column
-    -- seems to have the effect of GRANTing permissions to the revoker.
-    -- So be careful making sure REVOKE does what you expect!
   addMig_
       "GRANT SELECT ON SEQUENCE employee_employee_id_seq TO \"codd-test-user\""
-      -- Read the note above to understand REVOKE from postgres
-      "REVOKE SELECT ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\"; REVOKE ALL ON SEQUENCE employee_employee_id_seq FROM postgres"
+      "REVOKE SELECT ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\";"
     $ ChangeEq
         [ ( "schemas/public/sequences/employee_employee_id_seq"
           , BothButDifferent
@@ -798,10 +783,6 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
 
     -- Permissions of unmapped role don't affect hashing
-    -- For some reason, GRANTing to unmapped_role1 for a VIEW also adds permissions to the VIEW owner. This doesn't seem to happen for tables or sequences..
-  addMig_ "GRANT ALL ON all_employee_names TO \"codd-test-user\""
-          "REVOKE ALL ON all_employee_names FROM \"codd-test-user\""
-          SomeChange
   (createUnmappedRoleAndGrant, dropUnmappedRole) <-
     addMig
         "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; GRANT ALL ON all_employee_names TO unmapped_role1"
@@ -991,12 +972,8 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
           "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\";"
     $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
 
-  -- Granting to one user always grants to the type owner,
-  -- and apparently to PUBLIC too.
-  -- Strangely, it only does this the first time you GRANT!
-  addMig_
-      "GRANT ALL ON DOMAIN non_empty_text TO \"codd-test-user\""
-      "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\"; REVOKE ALL ON DOMAIN non_empty_text FROM postgres; REVOKE ALL ON DOMAIN non_empty_text FROM PUBLIC;"
+  addMig_ "GRANT ALL ON DOMAIN non_empty_text TO \"codd-test-user\""
+          "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\";"
     $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
 
   -- CRUD
