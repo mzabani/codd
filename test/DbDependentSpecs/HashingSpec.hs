@@ -806,6 +806,20 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
 
     -- DATABASE SETTINGS
+  -- Default privileges change nothing
+  let grantConnectPublic =
+        "GRANT CONNECT ON DATABASE \"codd-test-db\" TO public"
+  addMigNoChanges_ grantConnectPublic
+
+  -- Privileges for public affect db-settings, not some role
+  addMig_ "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM public;"
+          grantConnectPublic
+    $ ChangeEq [("db-settings", BothButDifferent)]
+
+  -- codd-test-user owns codd-test-db, so it already has permissions to connect to it
+  addMigNoChanges_
+    "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
+
   addMig_
       "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'; SET default_transaction_isolation TO 'serializable';"
       "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation; RESET default_transaction_isolation;"

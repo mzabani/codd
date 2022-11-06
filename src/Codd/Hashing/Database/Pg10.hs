@@ -200,6 +200,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                   , "LOWER(datcollate)"
                                   , "LOWER(datctype)"
                                   , "rolname"
+                                  -- We checksum privileges of roles in each role, but we checksum privileges of public
+                                  -- in db-settings
+                                  , "_codd_privs.permissions ->> 'public'"
                                   , sortArrayExpr
                                   $  "ARRAY_AGG("
                                   <> safeStringConcat
@@ -214,12 +217,16 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                   ]
                 , fromTable     = "pg_catalog.pg_database"
                 , joins = "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
-                              <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
+                          <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
+                          <> "\n LEFT JOIN LATERAL "
+                          <> aclArrayTbl [] "'d'" "datdba" "datacl"
+                          <> " _codd_privs ON TRUE "
                 , nonIdentWhere =
                     Just
                         "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
                 , identWhere    = Nothing
-                , groupByCols   = "datname" : nonAggCols
+                , groupByCols   = ["datname", "_codd_privs.permissions"]
+                                      ++ nonAggCols
                 }
     HSchema -> HashQuery
         { objNameCol    = "nspname"
@@ -247,7 +254,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , "pg_roles.rolreplication"
                 , "pg_roles.rolbypassrls"
                 , sortArrayExpr "pg_roles.rolconfig"
-                , "_codd_roles.permissions"
+                , "_codd_roles.permissions ->> pg_roles.rolname"
                 ]
         in
             HashQuery
@@ -262,27 +269,12 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
          \\n LEFT JOIN pg_catalog.pg_auth_members ON pg_auth_members.member=pg_roles.oid \
          \\n LEFT JOIN pg_catalog.pg_roles other_role ON other_role.oid=pg_auth_members.roleid \
          \\n LEFT JOIN LATERAL "
-                    <> dbPermsTable
+                    <> aclArrayTbl allRoles "'d'" "datdba" "datacl"
                     <> " _codd_roles ON TRUE"
                 , nonIdentWhere = Just $ "pg_roles.rolname" `sqlIn` allRoles
                 , identWhere    = Nothing
                 , groupByCols   = "pg_roles.rolname" : nonAggCols
                 }
-      where
-        dbPermsTable :: QueryFrag
-        dbPermsTable =
-            let acls = "(ACLEXPLODE(pg_database.datacl))"
-            in
-                "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions FROM (SELECT "
-                <> acls
-                <> ".grantee, "
-                <> acls
-                <> ".privilege_type, "
-                <> acls
-                <> ".is_grantable) perms_subq "
-                <> "\n INNER JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid=perms_subq.grantee "
-                <> "\n WHERE grantee_role.rolname=pg_roles.rolname"
-                <> ")"
     HTable ->
         let hq = pgClassHashQuery (Just (allRoles, "'r'")) schemaName
         in  hq { nonIdentWhere = Just "relkind IN ('r', 'f', 'p')" }

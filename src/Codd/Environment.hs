@@ -225,7 +225,7 @@ getCoddSettings = do
                       , retryPolicy      = retryPolicy
                       , txnIsolationLvl  = txnIsolationLvl
                       , checksumAlgo     = checksumAlgo
-                      , hashedChecksums  = True
+                      , hashedChecksums  = False
                       }
 
   where
