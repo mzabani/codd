@@ -21,36 +21,32 @@ import           Codd.Types                     ( ChecksumAlgo(..)
 import           Data.Maybe                     ( isJust )
 import qualified Database.PostgreSQL.Simple    as DB
 
--- | Returns a one-row table of type ({ permissions: TEXT }) by exploding the ACL array
--- and aggregating deterministically (by sorting) the associated permissions for the 
--- supplied roles + permissions where there is no grantee role.
+-- | Returns a one-row relation of type (aclsperrow :: JSONB) with one field/key
+-- for every supplied role + the public role. One example result for a database could be:
+--                                 aclsperrow                                                                                    
+-- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--  {"public": "=Tc/codd_admin", "codd-user": "\"codd-user\"=c/codd_admin", "codd_admin": "codd_admin=CTc/codd_admin", "codd_low_privilege_user": "codd_low_privilege_user=c/codd_admin"}
+-- (1 row)
+--
+-- This format makes it easier for consumers of this function to extract privileges
+-- from a specific role or to use privileges from all roles.
 aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
 aclArrayTbl allRoles aclKind objOwnerOidIdentifier aclArrayIdentifier =
     -- A null array of ACLs actually represents default permissions. See https://github.com/mzabani/codd/issues/117
-    let acls =
-            "(ACLEXPLODE(COALESCE("
-                <> aclArrayIdentifier
-                <> ", acldefault("
-                <> aclKind
-                <> ","
-                <> objOwnerOidIdentifier
-                <> "))))"
-    in
-      -- We only include mapped roles for grantees, not for grantors.
-      -- Grantee 0 is PUBLIC, which we always want to include.
-      -- NOTE: It is not clear to me yet what being a grantor means, so we remain open
-      -- to having to include it
-        "(SELECT ARRAY_AGG(COALESCE(grantee_role.rolname, '') || ';' || privilege_type || ';' || is_grantable ORDER BY grantee_role.rolname, privilege_type, is_grantable) AS permissions FROM (SELECT "
-        <> acls
-        <> ".grantee, "
-        <> acls
-        <> ".privilege_type, "
-        <> acls
-        <> ".is_grantable) perms_subq "
-        <> "\n LEFT JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid=perms_subq.grantee "
-        <> "\n WHERE grantee_role.rolname IS NULL OR "
-        <> ("grantee_role.rolname" `sqlIn` allRoles)
-        <> ")"
+    "(SELECT jsonb_object_agg(rolname, acltext) AS permissions FROM (WITH privs(acl) AS (SELECT unnest(coalesce("
+        <>      aclArrayIdentifier
+        <>      ", acldefault("
+        <>      aclKind
+        <>      ", "
+        <>      objOwnerOidIdentifier
+        <>      "))))"
+        <> ", privsGrantee (acltext, granteeOid) AS (select acl::text, (aclexplode(ARRAY[acl])).grantee from privs) "
+        <> "  SELECT DISTINCT ON (rolname) coalesce(rolname, 'public') as rolname, acltext "
+        <> "        FROM privsGrantee LEFT JOIN pg_roles ON pg_roles.oid=granteeOid "
+        <>      "        WHERE granteeOid=0 OR "
+        <>      "rolname"
+        `sqlIn` allRoles
+        <>      "        ORDER BY rolname NULLS FIRST) subq)"
 
 oidArrayExpr :: QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
 oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl hashExpr =
