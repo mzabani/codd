@@ -1,1 +1,1 @@
-ad0c52490bf83e040875422dfdee40fc
+_public_codd_admin_d_S_false_,_true_text_-1_0_default_pg_catalog_{"public": "=U/codd_admin", "codd_admin": "codd_admin=U/codd_admin"}___true;non_whitespace_text_check;CHECK ((TRIM(BOTH FROM VALUE) <> ''::text))

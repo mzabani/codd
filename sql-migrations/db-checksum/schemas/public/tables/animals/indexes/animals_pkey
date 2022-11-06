@@ -1,1 +1,1 @@
-5d496ed0b14d114c977d9207aa72a523
+_codd_admin_btree_false_p_i_false_false_n_false_true_true_false_true_CREATE UNIQUE INDEX animals_pkey ON public.animals USING btree (id)
