@@ -86,7 +86,7 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                         \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
                         \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
                         \\n LEFT JOIN LATERAL "
-                            <> aclArrayTbl allRoles "proacl"
+                            <> aclArrayTbl allRoles "'f'" "proowner" "proacl"
                             <> "_codd_roles ON TRUE"
                         , nonIdentWhere = Nothing
                         , identWhere    = Just $ "TRUE" <> maybe
