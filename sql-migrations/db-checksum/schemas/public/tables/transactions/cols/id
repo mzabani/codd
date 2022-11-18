@@ -1,1 +1,1 @@
-_int8_true_false_d_true_0_1_
+{"type": "int8", "local": true, "order": 1, "default": null, "notnull": true, "identity": "d", "inhcount": 0, "collation": null, "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": null}

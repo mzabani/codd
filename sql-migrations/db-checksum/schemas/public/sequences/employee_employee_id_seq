@@ -1,1 +1,1 @@
-_codd_admin_false_p_S_false_false_n_false_{"codd_admin": "codd_admin=rwU/codd_admin"}_int4_1_1_2147483647_1_1_false_employee_1
+{"max": 2147483647, "min": 1, "kind": "S", "cache": 1, "cycle": false, "owner": "codd_admin", "start": 1, "shared": false, "rowtype": null, "seq_type": "int4", "amoptions": null, "increment": 1, "partition": false, "replident": "n", "privileges": {"codd_admin": "codd_admin=rwU/codd_admin"}, "owner_table": "employee", "persistence": "p", "rowsecurity": false, "accessmethod": null, "compositetype": null, "owner_col_order": 1, "forcerowsecurity": false}

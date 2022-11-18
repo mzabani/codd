@@ -1,1 +1,1 @@
-_internal_false_false_false_false_i_s_3_0_f_floatrange_double precision, double precision, text_{"public": "=X/postgres"}
+{"args": "double precision, double precision, text", "kind": "f", "lang": "internal", "nargs": 3, "owner": null, "config": null, "strict": false, "argmodes": null, "argnames": null, "parallel": "s", "volatile": "i", "leakproof": false, "privileges": {"public": "=X/postgres"}, "return_type": "floatrange", "returns_set": false, "definition_md5": null, "nargs_defaults": 0, "security_definer": false}

@@ -16,7 +16,6 @@ import qualified Codd.Hashing.Database.Pg13    as Pg13
 import qualified Codd.Hashing.Database.Pg14    as Pg14
 import           Codd.Hashing.Database.SqlGen   ( interspBy
                                                 , parens
-                                                , safeStringConcat
                                                 )
 import           Codd.Hashing.Types
 import           Codd.Query                     ( unsafeQuery1 )
@@ -30,6 +29,7 @@ import           Control.Monad.Logger           ( MonadLogger
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Hashable
+import           Data.List                      ( foldl' )
 import qualified Data.List.NonEmpty            as NE
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.Map.Strict               as Map
@@ -154,9 +154,23 @@ instance DataSource HaxlEnv HashReq where
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
           let
             -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
+            -- We use nested jsonb_insert because it throws errors for duplicate keys
+            jsonObject =
+              foldl'
+                  (\accQuery (field, value) ->
+                    "JSONB_INSERT("
+                      <> accQuery
+                      <> ", '{"
+                      <> field
+                      <> "}'::text[], COALESCE(TO_JSONB("
+                      <> value
+                      <> "), 'null'::jsonb))"
+                  )
+                  "'{}'::jsonb"
+                $ checksumCols (qp2 x)
             finalHashExpr = if hashedChecksums
-              then "MD5(" <> safeStringConcat (checksumCols (qp2 x)) <> ")"
-              else safeStringConcat (checksumCols (qp2 x))
+              then "MD5(" <> jsonObject <> "::text)"
+              else jsonObject <> "::text"
             finalQip = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap

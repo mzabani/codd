@@ -1,1 +1,1 @@
-_p_false_false_true_animals_pkey_ _ _ _true_0_true_PRIMARY KEY (id)
+{"type": "p", "local": true, "deferred": false, "inhcount": 0, "noinherit": true, "validated": true, "deferrable": false, "definition": "PRIMARY KEY (id)", "fk_deltype": " ", "fk_updtype": " ", "fk_matchtype": " ", "fk_ref_table": null, "supporting_index": "animals_pkey", "parent_constraint": null}

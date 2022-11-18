@@ -1,1 +1,1 @@
-_p_false_false_true_employee_pkey_ _ _ _true_0_true_PRIMARY KEY (employee_id)
+{"type": "p", "local": true, "deferred": false, "inhcount": 0, "noinherit": true, "validated": true, "deferrable": false, "definition": "PRIMARY KEY (employee_id)", "fk_deltype": " ", "fk_updtype": " ", "fk_matchtype": " ", "fk_ref_table": null, "supporting_index": "employee_pkey", "parent_constraint": null}

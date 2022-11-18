@@ -44,32 +44,38 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                     -- some changes from Pg11.hs, but comments removed.
                     -- Before changing things here, read comments in both files.
                     nonAggCols =
-                        [ "pg_language.lanname"
-                            , "prosecdef"
-                            , "proleakproof"
-                            , "proisstrict"
-                            , "proretset"
-                            , "provolatile"
-                            , "proparallel"
-                            , "pronargs"
-                            , "pronargdefaults"
-                            , "prokind"
-                            , "pg_type_rettype.typname"
-                            , "proargmodes"
-                            , "proargnames"
-                            , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
-                            , sortArrayExpr "proconfig"
-                            , "_codd_roles.permissions"
-                            , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
+                        [ ("lang"            , "pg_language.lanname")
+                            , ("security_definer", "prosecdef")
+                            , ("leakproof"       , "proleakproof")
+                            , ("strict"          , "proisstrict")
+                            , ("returns_set"     , "proretset")
+                            , ("volatile"        , "provolatile")
+                            , ("parallel"        , "proparallel")
+                            , ("nargs"           , "pronargs")
+                            , ("nargs_defaults"  , "pronargdefaults")
+                            , ("return_type"     , "pg_type_rettype.typname")
+                            , ("argmodes"        , "proargmodes")
+                            , ("argnames"        , "proargnames")
+                            , ( "args"
+                              , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
+                              )
+                            , ("config"    , sortArrayExpr "proconfig")
+                            , ("privileges", "_codd_roles.permissions")
+                            , ( "definition_md5"
+                              , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
+                              )
+                            , ("kind", "prokind") -- From Pg11.hs
                     -- I haven't tested if the same ownership issue that happens to
                     -- range constructors happens to multirange constructors, but I'll be
                     -- conservative and assume it does for now.
                             ]
-                            ++ if strictRangeCtorOwnership checksumAlgo
-                                   then ["pg_roles.rolname"]
-                                   else
-                                       [ "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
-                                       ]
+                            ++ [ ( "owner"
+                                 , if strictRangeCtorOwnership checksumAlgo
+                                     then "pg_roles.rolname"
+                                     else
+                                         "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
+                                 )
+                               ]
                 in
                     HashQuery
                         { objNameCol    = pronameExpr "pg_proc"
@@ -93,7 +99,8 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                             ""
                             (QueryFrag "\nAND pg_namespace.nspname = ?")
                             (DB.Only <$> schemaName)
-                        , groupByCols = ["proname", "proargtypes"] ++ nonAggCols
+                        , groupByCols   = ["proname", "proargtypes"]
+                                              ++ map snd nonAggCols
                         }
             _ -> hq
 

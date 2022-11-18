@@ -1,1 +1,1 @@
-_c_false_false_true_ _ _ _true_0_false_CHECK ((value > (0)::numeric))
+{"type": "c", "local": true, "deferred": false, "inhcount": 0, "noinherit": false, "validated": true, "deferrable": false, "definition": "CHECK ((value > (0)::numeric))", "fk_deltype": " ", "fk_updtype": " ", "fk_matchtype": " ", "fk_ref_table": null, "supporting_index": null, "parent_constraint": null}

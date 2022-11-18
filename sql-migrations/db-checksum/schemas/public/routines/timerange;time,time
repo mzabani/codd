@@ -1,1 +1,1 @@
-_internal_false_false_false_false_i_s_2_0_f_timerange_time without time zone, time without time zone_{"public": "=X/postgres"}
+{"args": "time without time zone, time without time zone", "kind": "f", "lang": "internal", "nargs": 2, "owner": null, "config": null, "strict": false, "argmodes": null, "argnames": null, "parallel": "s", "volatile": "i", "leakproof": false, "privileges": {"public": "=X/postgres"}, "return_type": "timerange", "returns_set": false, "definition_md5": null, "nargs_defaults": 0, "security_definer": false}

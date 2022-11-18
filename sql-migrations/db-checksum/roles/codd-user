@@ -1,1 +1,1 @@
-_false_true_false_false_true_false_false_"codd-user"=c/codd_admin_{NULL}
+{"config": null, "inherit": true, "canlogin": true, "createdb": false, "bypassrls": false, "superuser": false, "createrole": false, "membership": [null], "replication": false, "db_privileges": "\"codd-user\"=c/codd_admin"}

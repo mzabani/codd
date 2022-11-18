@@ -1,1 +1,1 @@
-_int4_true_true_nextval('animals_id_seq'::regclass)__true_0_1_
+{"type": "int4", "local": true, "order": 1, "default": "nextval('animals_id_seq'::regclass)", "notnull": true, "identity": "", "inhcount": 0, "collation": null, "generated": "", "hasdefault": true, "privileges": null, "collation_nsp": null}

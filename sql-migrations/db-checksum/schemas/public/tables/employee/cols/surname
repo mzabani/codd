@@ -1,1 +1,1 @@
-_text_false_false__true_0_pt_br_test_coll_collations_1_4_
+{"type": "text", "local": true, "order": 4, "default": null, "notnull": false, "identity": "", "inhcount": 0, "collation": "pt_br_test_coll", "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": "collations_1"}

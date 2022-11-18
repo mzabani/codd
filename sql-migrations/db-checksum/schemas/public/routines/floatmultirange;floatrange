@@ -1,1 +1,1 @@
-_internal_false_false_true_false_i_s_1_0_f_floatmultirange_floatrange_{"public": "=X/postgres"}
+{"args": "floatrange", "kind": "f", "lang": "internal", "nargs": 1, "owner": null, "config": null, "strict": true, "argmodes": null, "argnames": null, "parallel": "s", "volatile": "i", "leakproof": false, "privileges": {"public": "=X/postgres"}, "return_type": "floatmultirange", "returns_set": false, "definition_md5": null, "nargs_defaults": 0, "security_definer": false}

@@ -1,1 +1,1 @@
-_bool_true_true_false__true_0_5_
+{"type": "bool", "local": true, "order": 5, "default": "false", "notnull": true, "identity": "", "inhcount": 0, "collation": null, "generated": "", "hasdefault": true, "privileges": null, "collation_nsp": null}

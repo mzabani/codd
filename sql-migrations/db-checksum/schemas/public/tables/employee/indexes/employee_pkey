@@ -1,1 +1,1 @@
-_codd_admin_btree_false_p_i_false_false_n_false_true_true_false_true_CREATE UNIQUE INDEX employee_pkey ON public.employee USING btree (employee_id)
+{"kind": "i", "owner": "codd_admin", "shared": false, "unique": true, "primary": true, "rowtype": null, "amoptions": null, "exclusion": false, "immediate": true, "partition": false, "replident": "n", "definition": "CREATE UNIQUE INDEX employee_pkey ON public.employee USING btree (employee_id)", "persistence": "p", "rowsecurity": false, "accessmethod": "btree", "compositetype": null, "forcerowsecurity": false}

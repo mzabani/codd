@@ -28,8 +28,15 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName hobj =
                                tableName
                                hobj
     in  case hobj of
-            HColumn ->
-                hq { checksumCols = checksumCols hq ++ ["attgenerated"] }
-            HCollation ->
-                hq { checksumCols = checksumCols hq ++ ["collisdeterministic"] }
+            HColumn -> hq
+                { checksumCols = checksumCols hq
+                                     ++ [("generated", "attgenerated")]
+                }
+            HCollation -> hq
+                { checksumCols = checksumCols hq
+                                     ++ [ ( "deterministic"
+                                          , "collisdeterministic"
+                                          )
+                                        ]
+                }
             _ -> hq

@@ -1,1 +1,1 @@
-_codd_admin_{"public": "=UC/codd_admin", "codd_admin": "codd_admin=UC/codd_admin"}
+{"owner": "codd_admin", "privileges": {"public": "=UC/codd_admin", "codd_admin": "codd_admin=UC/codd_admin"}}

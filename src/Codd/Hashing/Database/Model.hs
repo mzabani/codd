@@ -21,7 +21,7 @@ withQueryFrag (QueryFrag q args) f = f q args
 
 data HashQuery = HashQuery
   { objNameCol    :: QueryFrag
-  , checksumCols  :: [QueryFrag]
+  , checksumCols  :: [(QueryFrag, QueryFrag)]
   , fromTable     :: QueryFrag
   , joins         :: QueryFrag
   , nonIdentWhere :: Maybe QueryFrag

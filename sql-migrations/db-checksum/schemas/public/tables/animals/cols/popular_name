@@ -1,1 +1,1 @@
-_text_true_false__true_0_default_pg_catalog_2_
+{"type": "text", "local": true, "order": 2, "default": null, "notnull": true, "identity": "", "inhcount": 0, "collation": "default", "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": "pg_catalog"}
