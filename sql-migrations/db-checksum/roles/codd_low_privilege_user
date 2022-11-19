@@ -1,1 +1,1 @@
-{"config": null, "inherit": true, "canlogin": true, "createdb": false, "bypassrls": false, "superuser": false, "createrole": false, "membership": [null], "replication": false, "db_privileges": "codd_low_privilege_user=c/codd_admin"}
+{"config": null, "inherit": true, "canlogin": true, "createdb": false, "bypassrls": false, "superuser": false, "createrole": false, "membership": [], "replication": false, "db_privileges": "codd_low_privilege_user=c/codd_admin"}

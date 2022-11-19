@@ -8,9 +8,7 @@ module Codd.Hashing.Database.Pg10
 import           Codd.Hashing.Database.Model    ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 )
-import           Codd.Hashing.Database.SqlGen   ( safeStringConcat
-                                                , sqlIn
-                                                )
+import           Codd.Hashing.Database.SqlGen   ( sqlIn )
 import           Codd.Hashing.Types             ( HashableObject(..)
                                                 , ObjName
                                                 )
@@ -112,17 +110,6 @@ typeNameExpr pgTypeTbl pgTypeElemTbl =
         <> pgTypeTbl
         <> ".typname END"
 
--- | A parenthesized expression of type (oid, op_nspname, op_full_name) whose op_full_name column
--- already includes names of its operators to ensure uniqueness per namespace.
--- We still don't use it, but it might become useful in the future.
-_pgOperatorNameTbl :: QueryFrag
-_pgOperatorNameTbl =
-    "(SELECT oid, (oprname || ';' || typleft.typname || '_' || typright.typname || '_' || typret.typname) AS op_full_name"
-        <> "\n FROM pg_operator"
-        <> "\n JOIN pg_type typleft ON oprleft=typleft.oid"
-        <> "\n JOIN pg_type typright ON oprright=typright.oid"
-        <> "\n JOIN pg_type typret ON oprresult=typret.oid)"
-
 pgClassHashQuery
     :: Maybe ([SqlRole], QueryFrag)
             -- ^ If privileges are to be checksummed, the roles and privileges kind character for the object.
@@ -208,15 +195,10 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                       )
                     , ( "settings"
                       , sortArrayExpr
-                      $  "ARRAY_AGG("
-                      <> safeStringConcat
-                             [ "pg_settings.name"
-                             , "pg_settings.setting"
-                                         -- , "pg_settings.reset_val" -- Sadly, reset_val is only reflected by `ALTER DATABASE SET ..` in newly opened connections
-                             , "pg_settings.min_val"
-                             , "pg_settings.max_val"
-                             , sortArrayExpr "pg_settings.enumvals"
-                             ]
+                      $ "ARRAY_AGG(JSONB_BUILD_OBJECT('name', name, 'value', setting, 'min_val', min_val, 'max_val', max_val, 'enum_vals', TO_JSONB("
+                      <> sortArrayExpr "enumvals"
+                      <> "))"
+                                         -- TODO: Should we include pg_settings.reset_val? It is only reflected by `ALTER DATABASE SET ..` in newly opened connections
                       <> " ORDER BY pg_settings.name)"
                       )
                     ]
@@ -272,7 +254,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , checksumCols  =
                     nonAggCols
                         ++ [ ( "membership"
-                             , "ARRAY_AGG(other_role.rolname || ';' || pg_auth_members.admin_option ORDER BY other_role.rolname, pg_auth_members.admin_option)"
+                             , "COALESCE(ARRAY_AGG(JSONB_BUILD_OBJECT('role', other_role.rolname, 'admin_option', pg_auth_members.admin_option) ORDER BY other_role.rolname, pg_auth_members.admin_option) FILTER (WHERE other_role.rolname IS NOT NULL), '{}')"
                              )
                            ]
                 , fromTable     = "pg_catalog.pg_roles"
