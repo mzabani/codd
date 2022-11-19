@@ -26,5 +26,6 @@ data HashQuery = HashQuery
   , joins         :: QueryFrag
   , nonIdentWhere :: Maybe QueryFrag
   , identWhere    :: Maybe QueryFrag
+  -- ^ A WHERE clause which uniquely identifies a specific dabase object.
   , groupByCols   :: [QueryFrag]
   }

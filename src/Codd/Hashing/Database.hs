@@ -53,8 +53,8 @@ data HashReq a where
   deriving stock (Typeable)
 
 instance Eq (HashReq a) where
-  GetHashesReq hobj1 sn1 tn1 == GetHashesReq hobj2 sn2 tn2 =
-    (hobj1, sn1, tn1) == (hobj2, sn2, tn2)
+  GetHashesReq hobj1 sn1 tn1 == GetHashesReq sqHobj sn2 tn2 =
+    (hobj1, sn1, tn1) == (sqHobj, sn2, tn2)
 
 instance Hashable (HashReq a) where
   hashWithSalt s (GetHashesReq hobj sn tn) = hashWithSalt s (hobj, sn, tn)
@@ -85,10 +85,10 @@ type HaxlEnv
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
-  { uniqueIdx2 :: Int
-  , hobj2      :: HashableObject
-  , qp2        :: HashQuery
-  , rvar2      :: ResultVar [(ObjName, ObjHash)]
+  { sqUniqueIdx :: Int
+  , sqHobj      :: HashableObject
+  , sqQueryObj  :: HashQuery
+  , sqResults   :: ResultVar [(ObjName, ObjHash)]
   }
 
 instance DataSource HaxlEnv HashReq where
@@ -123,11 +123,11 @@ instance DataSource HaxlEnv HashReq where
                   : mergeResults is rs
               else error "idx > ridx in mergeResults"
 
-    -- This is a different batching mechanism, which will `OR` the conditions for queries with the same
+    -- This is a batching mechanism which will `OR` the conditions for queries with the same
     -- HashableObject, because they have the same SELECT, FROM and JOINs. Then, prepend an increasing number to the select exprs
-    -- which is 1 if the first "WHERE expression" is True, 2 when the second is True, 3 for the third and so on..
-    -- Hopefully it'll all just turn into a big sequential scan, so we'll have one sequential scan for tables,
-    -- one for views, one for triggers and so on..
+    -- which is 1 if the first `identWhere` expression is True, 2 when the second is True, 3 for the third and so on..
+    -- This requires mutually exclusive where conditions (`identWhere` satisfies that) and batches queries for objects
+    -- of the same kind (e.g. all tables or all views or all triggers etc.) into a single query.
     combineQueriesWithWhere blockedFetches = do
       let
         allHashReqs :: [SameQueryFormatFetch]
@@ -148,12 +148,11 @@ instance DataSource HaxlEnv HashReq where
           ]
 
         fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch]
-        fetchesPerQueryFormat = NE.groupAllWith hobj2 allHashReqs
+        fetchesPerQueryFormat = NE.groupAllWith sqHobj allHashReqs
 
         queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch)]
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
           let
-            -- This form of batching only works if the WHERE expressions of each query are mutually exclusive!
             -- We use nested jsonb_insert because it throws errors for duplicate keys
             jsonObject =
               foldl'
@@ -167,7 +166,7 @@ instance DataSource HaxlEnv HashReq where
                       <> "), 'null'::jsonb))"
                   )
                   "'{}'::jsonb"
-                $ checksumCols (qp2 x)
+                $ checksumCols (sqQueryObj x)
             finalHashExpr = if hashedChecksums
               then "MD5(" <> jsonObject <> "::text)"
               else jsonObject <> "::text"
@@ -176,30 +175,32 @@ instance DataSource HaxlEnv HashReq where
                                       <> foldMap
                                            (\qip ->
                                              "\n WHEN "
-                                               <> fromMaybe "TRUE"
-                                                            (identWhere (qp2 qip))
-                                               <> QueryFrag " THEN ?"
-                                                            (DB.Only (uniqueIdx2 qip))
+                                               <> fromMaybe
+                                                    "TRUE"
+                                                    (identWhere (sqQueryObj qip))
+                                               <> QueryFrag
+                                                    " THEN ?"
+                                                    (DB.Only (sqUniqueIdx qip))
                                            )
                                            sffs
                                       <> " END AS artificial_idx, "
-                                      <> objNameCol (qp2 x)
+                                      <> objNameCol (sqQueryObj x)
                                       <> ", "
                                       <> finalHashExpr
-              , fromTbl             = fromTable (qp2 x)
-              , joinClauses         = joins (qp2 x)
-              , nonIdentifyingWhere = nonIdentWhere (qp2 x)
+              , fromTbl             = fromTable (sqQueryObj x)
+              , joinClauses         = joins (sqQueryObj x)
+              , nonIdentifyingWhere = nonIdentWhere (sqQueryObj x)
               , identifyingWheres   = case
-                                        mapMaybe (identWhere . qp2)
+                                        mapMaybe (identWhere . sqQueryObj)
                                           $ NE.toList sffs
                                       of
                                         [] -> Nothing
                                         fs -> Just $ interspBy True " OR " fs
-              , groupByExprs        = if null (groupByCols (qp2 x))
+              , groupByExprs        = if null (groupByCols (sqQueryObj x))
                 then Nothing
                 else
                   Just $ interspBy False ", " $ "artificial_idx" : groupByCols
-                    (qp2 x)
+                    (sqQueryObj x)
               }
           in
             (finalQip, sffs)
@@ -209,7 +210,7 @@ instance DataSource HaxlEnv HashReq where
         allResults <- getResultsGroupedPerIdx qip
         -- print allResults
         let mergedResults = mergeResults
-              (map (\sff -> (uniqueIdx2 sff, rvar2 sff)) $ NE.toList sffs)
+              (map (\sff -> (sqUniqueIdx sff, sqResults sff)) $ NE.toList sffs)
               allResults
         forM_ mergedResults $ uncurry putSuccess
 
@@ -308,7 +309,7 @@ readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash,
             $ "Not all features of PostgreSQL version "
             <> Text.pack (show majorVersion)
             <> " may be supported by codd. Please file an issue for us to support this newer version properly."
-          readHashesFromDatabase Pg12.hashQueryFor
+          readHashesFromDatabase Pg14.hashQueryFor
                                  conn
                                  schemasToHash
                                  rolesToHash
