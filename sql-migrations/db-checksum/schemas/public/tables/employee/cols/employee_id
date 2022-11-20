@@ -1,1 +1,1 @@
-{"type": "int4", "local": true, "order": 1, "default": "nextval('employee_employee_id_seq'::regclass)", "notnull": true, "identity": "", "inhcount": 0, "collation": null, "generated": "", "hasdefault": true, "privileges": null, "collation_nsp": null}
+{"privileges":null,"inhcount":0,"generated":"","type":"int4","notnull":true,"identity":"","hasdefault":true,"local":true,"default":"nextval('employee_employee_id_seq'::regclass)","collation":null,"collation_nsp":null,"order":1}

@@ -1,6 +1,8 @@
 module TypesGen where
 
+import           AesonValueGen                  ( )
 import           Codd.Hashing
+import           Data.Aeson                     ( Value )
 import           Data.Function                  ( on )
 import           Data.List                      ( nubBy )
 import qualified Data.Map.Strict               as Map
@@ -14,44 +16,44 @@ instance Arbitrary DbHashesGen where
     arbitrary =
         fmap DbHashesGen
             $   DbHashes
-            <$> genObjHash
+            <$> arbitrary
             <*> uniqueMapOf 3 schemaHashGen objName
             <*> uniqueMapOf 2 roleHashGen   objName
       where
         schemaHashGen =
             SchemaHash
                 <$> genObjName
-                <*> genObjHash
+                <*> arbitrary
                 <*> uniqueMapOf 20 tableGen     objName
                 <*> uniqueMapOf 5  viewGen      objName
                 <*> uniqueMapOf 10 routineGen   objName
                 <*> uniqueMapOf 15 sequenceGen  objName
                 <*> uniqueMapOf 2  collationGen objName
                 <*> uniqueMapOf 5  typeGen      objName
-        roleHashGen = RoleHash <$> genObjName <*> genObjHash
+        roleHashGen = RoleHash <$> genObjName <*> arbitrary
 
         -- Per-schema object generators
         tableGen =
             TableHash
                 <$> genObjName
-                <*> genObjHash
+                <*> arbitrary
                 <*> uniqueMapOf 20 colGen        objName
                 <*> uniqueMapOf 5  constraintGen objName
                 <*> uniqueMapOf 1  triggerGen    objName
                 <*> uniqueMapOf 2  policyGen     objName
                 <*> uniqueMapOf 3  indexGen      objName
-        viewGen       = ViewHash <$> genObjName <*> genObjHash
-        routineGen    = RoutineHash <$> genObjName <*> genObjHash
-        sequenceGen   = SequenceHash <$> genObjName <*> genObjHash
-        collationGen  = CollationHash <$> genObjName <*> genObjHash
-        typeGen       = TypeHash <$> genObjName <*> genObjHash
+        viewGen       = ViewHash <$> genObjName <*> arbitrary
+        routineGen    = RoutineHash <$> genObjName <*> arbitrary
+        sequenceGen   = SequenceHash <$> genObjName <*> arbitrary
+        collationGen  = CollationHash <$> genObjName <*> arbitrary
+        typeGen       = TypeHash <$> genObjName <*> arbitrary
 
         -- Per-table object generators
-        colGen        = TableColumn <$> genObjName <*> genObjHash
-        constraintGen = TableConstraint <$> genObjName <*> genObjHash
-        triggerGen    = TableTrigger <$> genObjName <*> genObjHash
-        policyGen     = TablePolicy <$> genObjName <*> genObjHash
-        indexGen      = TableIndex <$> genObjName <*> genObjHash
+        colGen        = TableColumn <$> genObjName <*> arbitrary
+        constraintGen = TableConstraint <$> genObjName <*> arbitrary
+        triggerGen    = TableTrigger <$> genObjName <*> arbitrary
+        policyGen     = TablePolicy <$> genObjName <*> arbitrary
+        indexGen      = TableIndex <$> genObjName <*> arbitrary
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy =
@@ -87,6 +89,3 @@ genObjName = ObjName . Text.pack <$> frequency
             ++ validUpperOtherChars
         pure $ c : r
     genNastyIdentifier = getPrintableString <$> arbitrary @PrintableString
-
-genObjHash :: Gen ObjHash
-genObjHash = ObjHash . Text.pack . getASCIIString <$> arbitrary @ASCIIString

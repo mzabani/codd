@@ -1,1 +1,1 @@
-{"type": "int8", "local": true, "order": 1, "default": null, "notnull": true, "identity": "d", "inhcount": 0, "collation": null, "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": null}
+{"privileges":null,"inhcount":0,"generated":"","type":"int8","notnull":true,"identity":"d","hasdefault":false,"local":true,"default":null,"collation":null,"collation_nsp":null,"order":1}

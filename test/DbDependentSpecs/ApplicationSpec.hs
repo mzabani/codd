@@ -41,6 +41,7 @@ import           Control.Monad.Logger           ( LogStr
                                                 )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
+import qualified Data.Aeson                    as Aeson
 import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
 import           Data.Text                      ( Text
@@ -284,10 +285,8 @@ spec = do
                       it
                               "Strict checking and lax checking behaviour on mismatched checksums"
                           $ \emptyTestDbInfo -> do
-                                let
-                                    bogusDbHashes = DbHashes (ObjHash "")
-                                                             Map.empty
-                                                             Map.empty
+                                let bogusDbHashes =
+                                        DbHashes Aeson.Null Map.empty Map.empty
                                 void @IO
                                     $ withConnection
                                           (migsConnString emptyTestDbInfo)
@@ -370,7 +369,7 @@ spec = do
                                         $ \emptyTestDbInfo -> do
                                               let
                                                   bogusDbHashes = DbHashes
-                                                      (ObjHash "")
+                                                      Aeson.Null
                                                       Map.empty
                                                       Map.empty
                                               void @IO

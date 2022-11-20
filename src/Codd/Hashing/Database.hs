@@ -27,6 +27,7 @@ import           Control.Monad                  ( forM_ )
 import           Control.Monad.Logger           ( MonadLogger
                                                 , logWarnN
                                                 )
+import           Data.Aeson                     ( Value )
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Hashable
 import           Data.List                      ( foldl' )
@@ -49,7 +50,7 @@ import           UnliftIO                       ( MonadIO(..)
                                                 )
 
 data HashReq a where
-  GetHashesReq ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, ObjHash)]
+  GetHashesReq ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, Value)]
   deriving stock (Typeable)
 
 instance Eq (HashReq a) where
@@ -75,38 +76,32 @@ instance DataSourceName HashReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv
-  = ( PgVersionHasher
-    , DB.Connection
-    , SchemaSelection
-    , [SqlRole]
-    , ChecksumAlgo
-    , Bool
-    )
+  = (PgVersionHasher, DB.Connection, SchemaSelection, [SqlRole], ChecksumAlgo)
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
   { sqUniqueIdx :: Int
   , sqHobj      :: HashableObject
   , sqQueryObj  :: HashQuery
-  , sqResults   :: ResultVar [(ObjName, ObjHash)]
+  , sqResults   :: ResultVar [(ObjName, Value)]
   }
 
 instance DataSource HaxlEnv HashReq where
-  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo, hashedChecksums)
-    = SyncFetch combineQueriesWithWhere
+  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo) =
+    SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
 
     getResultsGroupedPerIdx
-      :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, ObjHash)]
+      :: QueryInPieces -> IO [NE.NonEmpty (Int, ObjName, Value)]
     getResultsGroupedPerIdx qip =
       let qf = queryInPiecesToQueryFrag qip <> "\n ORDER BY artificial_idx"
       in  NE.groupWith fst3 <$> withQueryFrag qf (DB.query conn)
 
     mergeResults
-      :: [(Int, ResultVar [(ObjName, ObjHash)])]
-      -> [NE.NonEmpty (Int, ObjName, ObjHash)]
-      -> [(ResultVar [(ObjName, ObjHash)], [(ObjName, ObjHash)])]
+      :: [(Int, ResultVar [(ObjName, Value)])]
+      -> [NE.NonEmpty (Int, ObjName, Value)]
+      -> [(ResultVar [(ObjName, Value)], [(ObjName, Value)])]
     mergeResults [] [] = []
     mergeResults [] _ =
       error "Empty idx list but non empty results in mergeResults"
@@ -167,10 +162,9 @@ instance DataSource HaxlEnv HashReq where
                   )
                   "'{}'::jsonb"
                 $ checksumCols (sqQueryObj x)
-            finalHashExpr = if hashedChecksums
-              then "MD5(" <> jsonObject <> "::text)"
-              else jsonObject <> "::text"
-            finalQip = QueryInPieces
+            -- TODO: Remove finalHashExpr identifier?
+            finalHashExpr = jsonObject
+            finalQip      = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap
                                            (\qip ->
@@ -263,7 +257,7 @@ readHashesFromDatabaseWithSettings
   => CoddSettings
   -> DB.Connection
   -> m DbHashes
-readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash, hashedChecksums } conn
+readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash } conn
   = do
     majorVersion <- queryServerMajorVersion conn
     let rolesToHash =
@@ -275,31 +269,26 @@ readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash,
                                    schemasToHash
                                    rolesToHash
                                    checksumAlgo
-                                   hashedChecksums
       11 -> readHashesFromDatabase Pg11.hashQueryFor
                                    conn
                                    schemasToHash
                                    rolesToHash
                                    checksumAlgo
-                                   hashedChecksums
       12 -> readHashesFromDatabase Pg12.hashQueryFor
                                    conn
                                    schemasToHash
                                    rolesToHash
                                    checksumAlgo
-                                   hashedChecksums
       13 -> readHashesFromDatabase Pg13.hashQueryFor
                                    conn
                                    schemasToHash
                                    rolesToHash
                                    checksumAlgo
-                                   hashedChecksums
       14 -> readHashesFromDatabase Pg14.hashQueryFor
                                    conn
                                    schemasToHash
                                    rolesToHash
                                    checksumAlgo
-                                   hashedChecksums
       v
         | v < 10 -> error
         $  "Unsupported PostgreSQL version "
@@ -314,7 +303,6 @@ readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash,
                                  schemasToHash
                                  rolesToHash
                                  checksumAlgo
-                                 hashedChecksums
 
 readHashesFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
@@ -323,29 +311,25 @@ readHashesFromDatabase
   -> SchemaSelection
   -> [SqlRole]
   -> ChecksumAlgo
-  -> Bool
   -> m DbHashes
-readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo hashedChecksums
-  = do
-    let stateStore = stateSet UserState{} stateEmpty
-    env0 <- liftIO $ initEnv
-      stateStore
-      (pgVer, conn, schemaSel, allRoles, checksumAlgo, hashedChecksums)
-    liftIO $ runHaxl env0 $ do
-      allDbSettings <- dataFetch
-        $ GetHashesReq HDatabaseSettings Nothing Nothing
-      roles   <- dataFetch $ GetHashesReq HRole Nothing Nothing
-      schemas <- dataFetch $ GetHashesReq HSchema Nothing Nothing
-      let
-        dbSettings = case allDbSettings of
-          [(_, h)] -> h
-          _ ->
-            error
-              "More than one database returned from pg_database. Please file a bug."
-      DbHashes dbSettings <$> getSchemaHash schemas <*> pure
-        (listToMap $ map (uncurry RoleHash) roles)
+readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo = do
+  let stateStore = stateSet UserState{} stateEmpty
+  env0 <- liftIO
+    $ initEnv stateStore (pgVer, conn, schemaSel, allRoles, checksumAlgo)
+  liftIO $ runHaxl env0 $ do
+    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
+    roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing
+    schemas       <- dataFetch $ GetHashesReq HSchema Nothing Nothing
+    let
+      dbSettings = case allDbSettings of
+        [(_, h)] -> h
+        _ ->
+          error
+            "More than one database returned from pg_database. Please file a bug."
+    DbHashes dbSettings <$> getSchemaHash schemas <*> pure
+      (listToMap $ map (uncurry RoleHash) roles)
 
-getSchemaHash :: [(ObjName, ObjHash)] -> Haxl (Map ObjName SchemaHash)
+getSchemaHash :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaHash)
 getSchemaHash schemas =
   fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
     tables      <- dataFetch $ GetHashesReq HTable (Just schemaName) Nothing
@@ -368,7 +352,7 @@ getSchemaHash schemas =
                    (listToMap $ map (uncurry TypeHash) types)
       )
 
-getTablesHashes :: ObjName -> [(ObjName, ObjHash)] -> Haxl [TableHash]
+getTablesHashes :: ObjName -> [(ObjName, Value)] -> Haxl [TableHash]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
   columns <- dataFetch $ GetHashesReq HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch

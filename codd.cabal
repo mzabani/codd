@@ -158,6 +158,7 @@ test-suite codd-test
       LiftedExpectations
       ParsingSpec
       TypesGen
+      AesonValueGen
       Paths_codd
       WritingReadingChecksumsSpec
   autogen-modules:
@@ -194,7 +195,7 @@ test-suite codd-test
   -- build-tools:
   --     hspec-discover
   build-depends:
-      QuickCheck
+      aeson
     , attoparsec
     , base >=4.7 && <5
     , codd
@@ -207,11 +208,15 @@ test-suite codd-test
     , mtl
     , network-uri
     , postgresql-simple
+    , QuickCheck
     , random
     , resourcet
+    , scientific
     , semialign
     , streaming
     , text
     , time
     , unliftio
+    , unordered-containers
+    , vector
   default-language: Haskell2010

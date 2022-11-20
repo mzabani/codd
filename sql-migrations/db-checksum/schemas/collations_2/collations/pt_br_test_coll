@@ -1,1 +1,1 @@
-{"ctype": "pt_br.utf8", "owner": "codd_admin", "collate": "pt_br.utf8", "encoding": "utf8", "provider": "c", "deterministic": true}
+{"ctype":"pt_br.utf8","owner":"codd_admin","deterministic":true,"encoding":"utf8","provider":"c","collate":"pt_br.utf8"}

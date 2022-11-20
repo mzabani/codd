@@ -1,1 +1,1 @@
-{"type": "numeric", "local": true, "order": 4, "default": null, "notnull": false, "identity": "", "inhcount": 0, "collation": null, "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": null}
+{"privileges":null,"inhcount":0,"generated":"","type":"numeric","notnull":false,"identity":"","hasdefault":false,"local":true,"default":null,"collation":null,"collation_nsp":null,"order":4}

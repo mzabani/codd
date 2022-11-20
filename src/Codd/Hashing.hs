@@ -4,7 +4,6 @@ module Codd.Hashing
     , module Codd.Hashing.Disk
     , logChecksumsComparison
     , hashDifferences
-    , matchOrd
     ) where
 
 import           Codd.Hashing.Database          ( readHashesFromDatabase
@@ -38,8 +37,10 @@ logChecksumsComparison dbHashes expectedChecksums =
     if dbHashes /= expectedChecksums
         then
         -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
+        -- Also, we need to make sure we output as much as possible in a single
+        -- line to be amenable to logging infrastructure
             logErrorN
-            $ "DB and expected checksums do not match. Differences are (Left is Database, Right is expected): "
+            $  "DB and expected checksums do not match. Differences are: "
             <> decodeUtf8
                    (toStrict $ encode $ hashDifferences dbHashes
                                                         expectedChecksums
@@ -49,15 +50,15 @@ logChecksumsComparison dbHashes expectedChecksums =
 hashDifferences :: DbHashes -> DbHashes -> Map FilePath DiffType
 hashDifferences l r =
     let matches = matchOrd fst (toFiles l) (toFiles r)
-    in
-        Map.fromList $ mapMaybe
+    in  Map.fromList $ mapMaybe
             (\case
-                (Nothing       , Nothing       ) -> Nothing
-                (Just (name, _), Nothing       ) -> Just (name, OnlyLeft)
-                (Nothing       , Just (name, _)) -> Just (name, OnlyRight)
-                (Just (name, h1), Just (_, h2))
-                    | h1 == h2  -> Nothing
-                    | otherwise -> Just (name, BothButDifferent)
+                (Nothing, Nothing) -> Nothing
+                (Just (name, foundInDB), Nothing) ->
+                    Just (name, NotExpectedButFound foundInDB)
+                (Nothing, Just (name, _)) -> Just (name, ExpectedButNotFound)
+                (Just (name, foundInDB), Just (_, expected))
+                    | foundInDB == expected -> Nothing
+                    | otherwise -> Just (name, BothButDifferent foundInDB)
             )
             matches
 

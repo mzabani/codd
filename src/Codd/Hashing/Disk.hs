@@ -19,16 +19,19 @@ import           Control.Monad.Except           ( MonadError(..)
                                                 , runExceptT
                                                 )
 import           Control.Monad.Identity         ( runIdentity )
+import           Data.Aeson                     ( Value
+                                                , decode
+                                                , encode
+                                                )
 import           Data.Bifunctor                 ( first )
+import qualified Data.ByteString.Lazy          as LBS
 import           Data.List                      ( sortOn )
 import qualified Data.Map.Strict               as Map
 import           Data.Map.Strict                ( Map )
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text
                                                 , pack
                                                 , unpack
-                                                )
-import           Data.Text.IO                   ( readFile
-                                                , writeFile
                                                 )
 import           GHC.Stack                      ( HasCallStack )
 import           System.FilePath                ( (</>)
@@ -66,13 +69,13 @@ class DbDiskObj a where
         -- ^ When recursing into a new sub-structure, this function
         -- will be called with a relative folder where that substructure's
         -- root belongs to.
-        -> (FilePath -> ObjHash -> m d)
+        -> (FilePath -> Value -> m d)
         -- ^ This function will be called when writing to a file. A relative path
         -- to this structure's root will be passed.
         -> m [d]
 
 simpleDbDiskObj
-    :: Functor m => ObjName -> ObjHash -> (FilePath -> ObjHash -> m d) -> m [d]
+    :: Functor m => ObjName -> Value -> (FilePath -> Value -> m d) -> m [d]
 simpleDbDiskObj oname ohash ffile = (: []) <$> ffile (mkPathFrag oname) ohash
 
 instance DbDiskObj DbHashes where
@@ -136,10 +139,10 @@ instance DbDiskObj CollationHash where
 instance DbDiskObj TypeHash where
     appr (TypeHash typeName typeHash) _ = simpleDbDiskObj typeName typeHash
 
-toFiles :: DbHashes -> [(FilePath, ObjHash)]
+toFiles :: DbHashes -> [(FilePath, Value)]
 toFiles = sortOn fst . frec
   where
-    frec :: DbDiskObj a => a -> [(FilePath, ObjHash)]
+    frec :: DbDiskObj a => a -> [(FilePath, Value)]
     frec sobj = concat $ runIdentity $ appr
         sobj
         (\parentDir obj -> pure $ prependDir parentDir $ frec obj)
@@ -172,7 +175,7 @@ persistHashesToDisk dbHashes rootDir = do
             createDirectoryIfMissing True (dir </> parentDir)
             writeRec (dir </> parentDir) sobj
         )
-        (\fn (ObjHash fh) -> writeFile (dir </> fn) fh)
+        (\fn jsonRep -> LBS.writeFile (dir </> fn) (encode jsonRep))
 
 readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
 readAllHashes dir =
@@ -216,7 +219,7 @@ readType = simpleObjHashFileRead TypeHash
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
-readFileAsHash :: (MonadError Text m, MonadIO m) => FilePath -> m ObjHash
+readFileAsHash :: (MonadError Text m, MonadIO m) => FilePath -> m Value
 readFileAsHash filepath = do
     exists <- liftIO $ doesFileExist filepath
     unless exists
@@ -224,11 +227,19 @@ readFileAsHash filepath = do
         $  "File "
         <> pack filepath
         <> " was expected but does not exist"
-    liftIO $ ObjHash <$> readFile filepath
+    liftIO
+        $   fromMaybe
+                (  error
+                $  "File '"
+                ++ filepath
+                ++ "' was supposed to contain a JSON value"
+                )
+        .   decode
+        <$> LBS.readFile filepath
 
 simpleObjHashFileRead
     :: (MonadError Text m, MonadIO m)
-    => (ObjName -> ObjHash -> a)
+    => (ObjName -> Value -> a)
     -> FilePath
     -> m a
 simpleObjHashFileRead f filepath =

@@ -22,6 +22,7 @@ import           Control.Monad.Logger           ( LoggingT
                                                 , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
+import qualified Data.Aeson                    as Aeson
 import           Data.List                      ( isInfixOf )
 import qualified Data.Map                      as Map
 import qualified Database.PostgreSQL.Simple    as DB
@@ -57,7 +58,7 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskHashes   = Right $ DbHashes Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
@@ -85,7 +86,7 @@ doesNotModifyExistingDb
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskHashes   = Right $ DbHashes Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"

@@ -21,14 +21,12 @@ data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
-data DbHashes = DbHashes ObjHash
-                         (Map ObjName SchemaHash)
-                         (Map ObjName RoleHash)
+data DbHashes = DbHashes Value (Map ObjName SchemaHash) (Map ObjName RoleHash)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
 data SchemaHash = SchemaHash ObjName
-                             ObjHash
+                             Value
                              (Map ObjName TableHash)
                              (Map ObjName ViewHash)
                              (Map ObjName RoutineHash)
@@ -39,7 +37,7 @@ data SchemaHash = SchemaHash ObjName
     deriving anyclass (FromJSON, ToJSON)
 
 data TableHash = TableHash ObjName
-                           ObjHash
+                           Value
                            (Map ObjName TableColumn)
                            (Map ObjName TableConstraint)
                            (Map ObjName TableTrigger)
@@ -48,37 +46,37 @@ data TableHash = TableHash ObjName
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
-data ViewHash = ViewHash ObjName ObjHash
+data ViewHash = ViewHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data RoutineHash = RoutineHash ObjName ObjHash
+data RoutineHash = RoutineHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data SequenceHash = SequenceHash ObjName ObjHash
+data SequenceHash = SequenceHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data CollationHash = CollationHash ObjName ObjHash
+data CollationHash = CollationHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableColumn = TableColumn ObjName ObjHash
+data TableColumn = TableColumn ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableConstraint = TableConstraint ObjName ObjHash
+data TableConstraint = TableConstraint ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableTrigger = TableTrigger ObjName ObjHash
+data TableTrigger = TableTrigger ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TablePolicy = TablePolicy ObjName ObjHash
+data TablePolicy = TablePolicy ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableIndex = TableIndex ObjName ObjHash
+data TableIndex = TableIndex ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data RoleHash = RoleHash ObjName ObjHash
+data RoleHash = RoleHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TypeHash = TypeHash ObjName ObjHash
+data TypeHash = TypeHash ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
@@ -131,14 +129,16 @@ instance HasName TypeHash where
 listToMap :: HasName a => [a] -> Map ObjName a
 listToMap = Map.fromList . map (\obj -> (objName obj, obj))
 
-data DiffType = OnlyRight | OnlyLeft | BothButDifferent
+data DiffType = ExpectedButNotFound | NotExpectedButFound Value | BothButDifferent Value
     deriving stock (Eq, Show)
 
 instance ToJSON DiffType where
-    toJSON v = String $ case v of
-        OnlyRight        -> "only-right"
-        OnlyLeft         -> "only-left"
-        BothButDifferent -> "different-checksums"
+    toJSON v = case v of
+        ExpectedButNotFound -> String "expected-but-not-found"
+        NotExpectedButFound foundInDB ->
+            toJSON ("not-expected-but-found" :: Text, foundInDB)
+        BothButDifferent foundInDB ->
+            toJSON ("different-checksums" :: Text, foundInDB)
 
 data HashDiff = HashDiff
     { objectName :: FilePath

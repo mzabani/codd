@@ -1,1 +1,1 @@
-{"type": "text", "local": true, "order": 2, "default": null, "notnull": true, "identity": "", "inhcount": 0, "collation": "default", "generated": "", "hasdefault": false, "privileges": null, "collation_nsp": "pg_catalog"}
+{"privileges":null,"inhcount":0,"generated":"","type":"text","notnull":true,"identity":"","hasdefault":false,"local":true,"default":null,"collation":"default","collation_nsp":"pg_catalog","order":2}

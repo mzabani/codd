@@ -56,6 +56,7 @@ import           Control.Monad.State            ( MonadState(put)
 import           Control.Monad.State.Class      ( get )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
+import           Data.Functor                   ( (<&>) )
 import           Data.List                      ( nubBy )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( fromMaybe )
@@ -86,7 +87,15 @@ import           Test.QuickCheck.Arbitrary      ( Arbitrary(arbitrary) )
 import           UnliftIO                       ( liftIO )
 import           UnliftIO.Concurrent            ( threadDelay )
 
-data DbChange = ChangeEq [(FilePath, DiffType)] | SomeChange
+data DiffTypeSimplified = DBothButDifferent | DExpectedButNotFound | DNotExpectedButFound
+  deriving stock (Show, Eq)
+data DbChange = ChangeEq [(FilePath, DiffTypeSimplified)] | SomeChange
+
+simplifyDiff :: DiffType -> DiffTypeSimplified
+simplifyDiff = \case
+  ExpectedButNotFound   -> DExpectedButNotFound
+  NotExpectedButFound _ -> DNotExpectedButFound
+  BothButDifferent    _ -> DBothButDifferent
 
 -- | Contains either text or a migration first and the SQL to undo it next.
 data MU a = MU a (Maybe Text)
@@ -159,20 +168,28 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT)"
       "DROP TABLE employee"
     $ ChangeEq
-        [ ("schemas/public/sequences/employee_employee_id_seq", OnlyRight)
-        , ("schemas/public/tables/employee/cols/employee_id"  , OnlyRight)
-        , ("schemas/public/tables/employee/cols/employee_name", OnlyRight)
-        , ( "schemas/public/tables/employee/constraints/employee_pkey"
-          , OnlyRight
+        [ ( "schemas/public/sequences/employee_employee_id_seq"
+          , DExpectedButNotFound
           )
-        , ("schemas/public/tables/employee/indexes/employee_pkey", OnlyRight)
-        , ("schemas/public/tables/employee/objhash"              , OnlyRight)
+        , ( "schemas/public/tables/employee/cols/employee_id"
+          , DExpectedButNotFound
+          )
+        , ( "schemas/public/tables/employee/cols/employee_name"
+          , DExpectedButNotFound
+          )
+        , ( "schemas/public/tables/employee/constraints/employee_pkey"
+          , DExpectedButNotFound
+          )
+        , ( "schemas/public/tables/employee/indexes/employee_pkey"
+          , DExpectedButNotFound
+          )
+        , ("schemas/public/tables/employee/objhash", DExpectedButNotFound)
         ]
   addMig_ "ALTER TABLE employee ALTER COLUMN employee_name SET NOT NULL"
           "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/cols/employee_name"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -181,8 +198,8 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
       "ALTER TABLE employee DROP COLUMN deathday; ALTER TABLE employee DROP COLUMN birthday;"
     $ ChangeEq
-        [ ("schemas/public/tables/employee/cols/birthday", OnlyRight)
-        , ("schemas/public/tables/employee/cols/deathday", OnlyRight)
+        [ ("schemas/public/tables/employee/cols/birthday", DExpectedButNotFound)
+        , ("schemas/public/tables/employee/cols/deathday", DExpectedButNotFound)
         ]
 
     -- Column order matters because of things like 'SELECT *'
@@ -194,14 +211,14 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
           \ ALTER TABLE employee ADD COLUMN birthday DATE; ALTER TABLE employee ADD COLUMN deathday DATE;"
 
     $ ChangeEq
-        [ ("schemas/public/tables/employee/cols/birthday", BothButDifferent)
-        , ("schemas/public/tables/employee/cols/deathday", BothButDifferent)
+        [ ("schemas/public/tables/employee/cols/birthday", DBothButDifferent)
+        , ("schemas/public/tables/employee/cols/deathday", DBothButDifferent)
         ]
 
   addMig_ "ALTER TABLE employee ALTER COLUMN birthday TYPE TIMESTAMP;"
           "ALTER TABLE employee ALTER COLUMN birthday TYPE DATE;"
     $ ChangeEq
-        [("schemas/public/tables/employee/cols/birthday", BothButDifferent)]
+        [("schemas/public/tables/employee/cols/birthday", DBothButDifferent)]
 
   addMigNoChanges_
     "ALTER TABLE employee ADD COLUMN IF NOT EXISTS birthday TIMESTAMP;"
@@ -210,7 +227,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-03';"
       "ALTER TABLE employee ALTER COLUMN deathday DROP DEFAULT;"
     $ ChangeEq
-        [("schemas/public/tables/employee/cols/deathday", BothButDifferent)]
+        [("schemas/public/tables/employee/cols/deathday", DBothButDifferent)]
 
   addMigNoChanges_
     "ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-03';"
@@ -221,7 +238,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee ALTER COLUMN deathday SET DEFAULT '2100-02-03';"
 
     $ ChangeEq
-        [("schemas/public/tables/employee/cols/deathday", BothButDifferent)]
+        [("schemas/public/tables/employee/cols/deathday", DBothButDifferent)]
 
 
   -- Recreating a column exactly like it was before will affect column order, which will affect the index and the sequence too
@@ -232,15 +249,15 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
              \ ALTER TABLE employee ADD COLUMN deathday DATE DEFAULT '2100-02-04'; ALTER TABLE employee ADD COLUMN birthday TIMESTAMP;"
 
     $ ChangeEq
-        [ ("schemas/public/tables/employee/cols/employee_id", BothButDifferent)
+        [ ("schemas/public/tables/employee/cols/employee_id", DBothButDifferent)
           -- Other columns in the same table have their relative order changed as well
-        , ("schemas/public/tables/employee/cols/birthday"   , BothButDifferent)
-        , ("schemas/public/tables/employee/cols/deathday"   , BothButDifferent)
+        , ("schemas/public/tables/employee/cols/birthday"   , DBothButDifferent)
+        , ("schemas/public/tables/employee/cols/deathday"   , DBothButDifferent)
         , ( "schemas/public/tables/employee/cols/employee_name"
-          , BothButDifferent
+          , DBothButDifferent
           )
         , ( "schemas/public/sequences/employee_employee_id_seq"
-          , BothButDifferent
+          , DBothButDifferent
           ) -- This change happens because due to sequence ownership, we need to
       -- either include the owner column's name or its attnum. We chose the latter thinking it's more common case to rename columns than change
       -- their relative positions.
@@ -251,38 +268,38 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     -- SEQUENCES
   addMig_ "CREATE SEQUENCE some_seq MINVALUE 1 MAXVALUE 100"
           "DROP SEQUENCE some_seq"
-    $ ChangeEq [("schemas/public/sequences/some_seq", OnlyRight)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DExpectedButNotFound)]
 
     -- MINVALUE and MAXVALUE that fit other types so we are sure changing just the seq. type has an effect
   addMig_ "ALTER SEQUENCE some_seq AS smallint"
           "ALTER SEQUENCE some_seq AS bigint"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq AS integer"
           "ALTER SEQUENCE some_seq AS smallint"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq START WITH 3"
           "ALTER SEQUENCE some_seq START WITH 1"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq RESTART WITH 7"
           "ALTER SEQUENCE some_seq RESTART WITH 1"
     $ ChangeEq []
     -- TODO: Where can I find in pg_catalog the restart_with value? Currently it does not affect hashing, sadly.
   addMig_ "ALTER SEQUENCE some_seq MINVALUE 2"
           "ALTER SEQUENCE some_seq MINVALUE 1"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq MAXVALUE 99999"
           "ALTER SEQUENCE some_seq MAXVALUE 100"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq INCREMENT BY 2"
           "ALTER SEQUENCE some_seq INCREMENT BY 1"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq CYCLE" "ALTER SEQUENCE some_seq NO CYCLE"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq CACHE 2" "ALTER SEQUENCE some_seq CACHE 1"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
   addMig_ "ALTER SEQUENCE some_seq OWNED BY employee.employee_id"
           "ALTER SEQUENCE some_seq OWNED BY NONE"
-    $ ChangeEq [("schemas/public/sequences/some_seq", BothButDifferent)]
+    $ ChangeEq [("schemas/public/sequences/some_seq", DBothButDifferent)]
 
     -- CHECK CONSTRAINTS
   addMig_
@@ -290,7 +307,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee DROP CONSTRAINT employee_ck_name"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/constraints/employee_ck_name"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         ]
 
@@ -302,7 +319,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/constraints/employee_ck_name"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -311,9 +328,13 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "CREATE TABLE employee_car (employee_id INT NOT NULL, car_model TEXT NOT NULL)"
       "DROP TABLE employee_car"
     $ ChangeEq
-        [ ("schemas/public/tables/employee_car/cols/car_model"  , OnlyRight)
-        , ("schemas/public/tables/employee_car/cols/employee_id", OnlyRight)
-        , ("schemas/public/tables/employee_car/objhash"         , OnlyRight)
+        [ ( "schemas/public/tables/employee_car/cols/car_model"
+          , DExpectedButNotFound
+          )
+        , ( "schemas/public/tables/employee_car/cols/employee_id"
+          , DExpectedButNotFound
+          )
+        , ("schemas/public/tables/employee_car/objhash", DExpectedButNotFound)
         ]
 
   addMig_
@@ -321,18 +342,20 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "DROP TABLE employee_computer"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_computer/cols/computer_model"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         , ( "schemas/public/tables/employee_computer/cols/employee_id"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         , ( "schemas/public/tables/employee_computer/constraints/employee_computer_employee_id_key"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         , ( "schemas/public/tables/employee_computer/indexes/employee_computer_employee_id_key"
-          , OnlyRight
+          , DExpectedButNotFound
           )
-        , ("schemas/public/tables/employee_computer/objhash", OnlyRight)
+        , ( "schemas/public/tables/employee_computer/objhash"
+          , DExpectedButNotFound
+          )
         ]
 
   addMig_
@@ -340,7 +363,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car DROP CONSTRAINT employee_car_employee_fk"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         ]
 
@@ -349,7 +372,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk NOT DEFERRABLE INITIALLY IMMEDIATE"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -358,7 +381,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk DEFERRABLE INITIALLY DEFERRED"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -367,7 +390,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car ALTER CONSTRAINT employee_car_employee_fk DEFERRABLE INITIALLY IMMEDIATE"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee_car_employee_fk"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -376,7 +399,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car DROP CONSTRAINT employee__employee_fk"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         ]
 
@@ -386,7 +409,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee_car DROP CONSTRAINT employee__employee_fk; ALTER TABLE employee_car ADD CONSTRAINT employee__employee_fk FOREIGN KEY (employee_id) REFERENCES employee(employee_id)"
     $ ChangeEq
         [ ( "schemas/public/tables/employee_car/constraints/employee__employee_fk"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -402,15 +425,17 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee RENAME CONSTRAINT employee_unique_name TO unique_employee"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/constraints/employee_unique_name"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         , ( "schemas/public/tables/employee/constraints/unique_employee"
-          , OnlyLeft
+          , DNotExpectedButFound
           )
         , ( "schemas/public/tables/employee/indexes/employee_unique_name"
-          , OnlyRight
+          , DExpectedButNotFound
           )
-        , ("schemas/public/tables/employee/indexes/unique_employee", OnlyLeft)
+        , ( "schemas/public/tables/employee/indexes/unique_employee"
+          , DNotExpectedButFound
+          )
         ]
 
   addMig_
@@ -418,7 +443,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "DROP INDEX unique_employee_idx"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/indexes/unique_employee_idx"
-          , OnlyRight
+          , DExpectedButNotFound
           )
         ]
 
@@ -428,28 +453,31 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$\
           \BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
       "DROP FUNCTION increment(integer)"
-    $ ChangeEq [("schemas/public/routines/increment;int4", OnlyRight)]
+    $ ChangeEq
+        [("schemas/public/routines/increment;int4", DExpectedButNotFound)]
 
   addMig_
       "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$\
            \BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       "CREATE OR REPLACE FUNCTION increment(i integer) RETURNS integer AS $$\
                                                                               \BEGIN  \n RETURN i + 1;  \n END;  \n $$ LANGUAGE plpgsql;"
-    $ ChangeEq [("schemas/public/routines/increment;int4", BothButDifferent)]
+    $ ChangeEq [("schemas/public/routines/increment;int4", DBothButDifferent)]
 
     -- Change in function args means new function
   addMig_
       "CREATE OR REPLACE FUNCTION increment(i integer, x text) RETURNS integer AS $$\
            \BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       "DROP FUNCTION increment(integer, text)"
-    $ ChangeEq [("schemas/public/routines/increment;int4,text", OnlyRight)]
+    $ ChangeEq
+        [("schemas/public/routines/increment;int4,text", DExpectedButNotFound)]
 
       -- Change in function args means new function
   addMig_
       "CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$\
            \BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
       "DROP FUNCTION increment(text, integer)"
-    $ ChangeEq [("schemas/public/routines/increment;text,int4", OnlyRight)]
+    $ ChangeEq
+        [("schemas/public/routines/increment;text,int4", DExpectedButNotFound)]
 
       -- Same everything as existing function, just changing return type
   addMig_
@@ -458,14 +486,15 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "DROP FUNCTION increment(text, integer); CREATE OR REPLACE FUNCTION increment(x text, i integer) RETURNS integer AS $$\
                                                                            \BEGIN  \n RETURN i + 2;  \n END;  \n $$ LANGUAGE plpgsql;"
     $ ChangeEq
-        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
   -- SQL bodied functions are also checksummed
   addMig_
       "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
           \SELECT i + 1; \n $$ LANGUAGE sql;"
       "DROP FUNCTION increment_sql(integer)"
-    $ ChangeEq [("schemas/public/routines/increment_sql;int4", OnlyRight)]
+    $ ChangeEq
+        [("schemas/public/routines/increment_sql;int4", DExpectedButNotFound)]
 
   addMig_
       "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
@@ -473,33 +502,33 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
           \SELECT i + 1; \n $$ LANGUAGE sql;"
     $ ChangeEq
-        [("schemas/public/routines/increment_sql;int4", BothButDifferent)]
+        [("schemas/public/routines/increment_sql;int4", DBothButDifferent)]
 
   addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
           "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
     $ ChangeEq
-        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
   addMig_ "ALTER FUNCTION increment(text, integer) PARALLEL RESTRICTED;"
           "ALTER FUNCTION increment(text, integer) PARALLEL UNSAFE;"
     $ ChangeEq
-        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
   addMig_ "ALTER FUNCTION increment(text, integer) PARALLEL SAFE;"
           "ALTER FUNCTION increment(text, integer) PARALLEL RESTRICTED;"
     $ ChangeEq
-        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
   addMig_ "ALTER FUNCTION increment(text, integer) LEAKPROOF;"
           "ALTER FUNCTION increment(text, integer) NOT LEAKPROOF;"
     $ ChangeEq
-        [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+        [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
   -- TODO: SECURITY attribute should be checksummed, but the following fails for some reason.
   -- addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
   --         "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
   --   $ ChangeEq
-  --       [("schemas/public/routines/increment;text,int4", BothButDifferent)]
+  --       [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
     -- TRIGGERS
   addMig_ "ALTER TABLE employee ADD COLUMN name TEXT"
@@ -522,7 +551,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         "DROP TRIGGER employee_old_app_update_column_name ON employee;"
       $ ChangeEq
           [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
-            , OnlyRight
+            , DExpectedButNotFound
             )
           ]
 
@@ -536,7 +565,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       (dropTrigger <> createTrigger1)
     $ ChangeEq
         [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -548,7 +577,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         \ \n EXECUTE PROCEDURE employee_name_rename_set_new()"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/triggers/employee_old_app_update_column_name"
-          , OnlyLeft
+          , DNotExpectedButFound
           )
         ]
 
@@ -578,12 +607,13 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)"
       "DROP VIEW all_employee_names"
-    $ ChangeEq [("schemas/public/views/all_employee_names", OnlyRight)]
+    $ ChangeEq
+        [("schemas/public/views/all_employee_names", DExpectedButNotFound)]
 
   addMig_
       "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
       "CREATE OR REPLACE VIEW all_employee_names (employee_name) AS (SELECT employee_name FROM employee)"
-    $ ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+    $ ChangeEq [("schemas/public/views/all_employee_names", DBothButDifferent)]
 
   addMigNoChanges_
     "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
@@ -591,32 +621,35 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT 'Mr. ' || employee_name FROM employee)"
       "CREATE OR REPLACE VIEW all_employee_names (employee_name) WITH (security_barrier=TRUE) AS (SELECT employee_name FROM employee)"
-    $ ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+    $ ChangeEq [("schemas/public/views/all_employee_names", DBothButDifferent)]
 
   addMig_ "ALTER VIEW all_employee_names OWNER TO \"codd-test-user\""
           "ALTER VIEW all_employee_names OWNER TO \"postgres\""
-    $ ChangeEq [("schemas/public/views/all_employee_names", BothButDifferent)]
+    $ ChangeEq [("schemas/public/views/all_employee_names", DBothButDifferent)]
 
 
     -- ROW LEVEL SECURITY
   addMig_ "ALTER TABLE employee ENABLE ROW LEVEL SECURITY"
           "ALTER TABLE employee DISABLE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "ALTER TABLE employee FORCE ROW LEVEL SECURITY"
           "ALTER TABLE employee NO FORCE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "ALTER TABLE employee NO FORCE ROW LEVEL SECURITY"
           "ALTER TABLE employee FORCE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   (createPolicy1, dropPolicy) <-
     addMig
         "CREATE POLICY some_policy ON employee USING (employee_name <> 'Some Name');"
         "DROP POLICY some_policy ON employee;"
       $ ChangeEq
-          [("schemas/public/tables/employee/policies/some_policy", OnlyRight)]
+          [ ( "schemas/public/tables/employee/policies/some_policy"
+            , DExpectedButNotFound
+            )
+          ]
 
   (dropCreatePolicy2, _) <-
     addMig
@@ -624,7 +657,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         (dropPolicy <> createPolicy1)
       $ ChangeEq
           [ ( "schemas/public/tables/employee/policies/some_policy"
-            , BothButDifferent
+            , DBothButDifferent
             )
           ]
 
@@ -634,7 +667,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         dropCreatePolicy2
       $ ChangeEq
           [ ( "schemas/public/tables/employee/policies/some_policy"
-            , BothButDifferent
+            , DBothButDifferent
             )
           ]
 
@@ -644,7 +677,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         dropCreatePolicy3
       $ ChangeEq
           [ ( "schemas/public/tables/employee/policies/some_policy"
-            , BothButDifferent
+            , DBothButDifferent
             )
           ]
 
@@ -656,7 +689,10 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     $ ChangeEq []
 
   addMig_ "DROP POLICY some_policy ON employee;" createPolicy5 $ ChangeEq
-    [("schemas/public/tables/employee/policies/some_policy", OnlyLeft)]
+    [ ( "schemas/public/tables/employee/policies/some_policy"
+      , DNotExpectedButFound
+      )
+    ]
 
     -- ROLES
   (createUnmappedRole, dropUnmappedRole) <-
@@ -665,17 +701,17 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_ dropUnmappedRole createUnmappedRole $ ChangeEq []
   addMig_ "CREATE ROLE \"extra-codd-test-user\""
           "DROP ROLE \"extra-codd-test-user\""
-    $ ChangeEq [("roles/extra-codd-test-user", OnlyRight)]
+    $ ChangeEq [("roles/extra-codd-test-user", DExpectedButNotFound)]
 
   addMig_
       "ALTER ROLE \"codd-test-user\" SET search_path TO public, pg_catalog"
       "ALTER ROLE \"codd-test-user\" RESET search_path"
-    $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMig_
       "ALTER ROLE \"codd-test-user\" WITH BYPASSRLS; ALTER ROLE \"codd-test-user\" WITH REPLICATION;"
       "ALTER ROLE \"codd-test-user\" WITH NOBYPASSRLS; ALTER ROLE \"codd-test-user\" WITH NOREPLICATION; "
-    $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMigNoChanges_ "ALTER ROLE \"codd-test-user\" WITH BYPASSRLS"
 
@@ -684,11 +720,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     addMig
         "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM \"codd-test-user\""
         "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
-      $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMig_ "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
           revokeConnect
-    $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMigNoChanges_ grantConnect
 
@@ -696,24 +732,24 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   (grantRole, revokeRole) <-
     addMig "GRANT \"extra-codd-test-user\" TO \"codd-test-user\""
            "REVOKE \"extra-codd-test-user\" FROM \"codd-test-user\""
-      $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+      $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMig_ revokeRole grantRole
-    $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   -- Config attributes
   addMig_ "ALTER ROLE postgres SET search_path TO public, pg_catalog"
           "ALTER ROLE postgres RESET search_path"
-    $ ChangeEq [("roles/postgres", BothButDifferent)]
+    $ ChangeEq [("roles/postgres", DBothButDifferent)]
 
   addMig_
       "ALTER ROLE \"codd-test-user\" SET search_path TO DEFAULT"
       "ALTER ROLE \"codd-test-user\" SET search_path TO public, pg_catalog"
-    $ ChangeEq [("roles/codd-test-user", BothButDifferent)]
+    $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
   addMig_ "ALTER ROLE postgres SET search_path TO DEFAULT"
           "ALTER ROLE postgres SET search_path TO public, pg_catalog"
-    $ ChangeEq [("roles/postgres", BothButDifferent)]
+    $ ChangeEq [("roles/postgres", DBothButDifferent)]
 
   addMigNoChanges_ "ALTER ROLE postgres SET search_path TO DEFAULT"
 
@@ -726,15 +762,15 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
   addMig_ "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
           "REVOKE SELECT ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "GRANT INSERT ON TABLE employee TO \"codd-test-user\""
           "REVOKE INSERT ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "GRANT DELETE ON TABLE employee TO \"codd-test-user\""
           "REVOKE DELETE ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
     -- For sequences
   addMig_
@@ -742,7 +778,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "REVOKE SELECT ON SEQUENCE employee_employee_id_seq FROM \"codd-test-user\";"
     $ ChangeEq
         [ ( "schemas/public/sequences/employee_employee_id_seq"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
@@ -751,11 +787,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   -- Order of granting does not matter, nor do grantors
   addMig_ "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
           "GRANT SELECT,INSERT,DELETE ON TABLE employee TO \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\";"
           "REVOKE INSERT, DELETE ON TABLE employee FROM \"codd-test-user\";"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   -- At this point codd-test-user has I+D permissions on the employee table
   addMig_
@@ -767,11 +803,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "GRANT ALL ON TABLE employee TO \"codd-test-user\""
       "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMig_ "GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
           "REVOKE ALL ON TABLE employee FROM \"extra-codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
   addMigNoChanges_
     "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
@@ -779,7 +815,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "GRANT ALL ON TABLE employee TO PUBLIC"
       "REVOKE ALL ON TABLE employee FROM PUBLIC; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\";"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", BothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
 
 
     -- Permissions of unmapped role don't affect hashing
@@ -799,10 +835,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   (createMappedSchema, dropMappedSchema) <-
     addMig "CREATE SCHEMA \"codd-extra-mapped-schema\""
            "DROP SCHEMA \"codd-extra-mapped-schema\""
-      $ ChangeEq [("schemas/codd-extra-mapped-schema/objhash", OnlyRight)]
+      $ ChangeEq
+          [("schemas/codd-extra-mapped-schema/objhash", DExpectedButNotFound)]
 
-  addMig_ dropMappedSchema createMappedSchema
-    $ ChangeEq [("schemas/codd-extra-mapped-schema/objhash", OnlyLeft)]
+  addMig_ dropMappedSchema createMappedSchema $ ChangeEq
+    [("schemas/codd-extra-mapped-schema/objhash", DNotExpectedButFound)]
 
 
     -- DATABASE SETTINGS
@@ -814,7 +851,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   -- Privileges for public affect db-settings, not some role
   addMig_ "REVOKE CONNECT ON DATABASE \"codd-test-db\" FROM public;"
           grantConnectPublic
-    $ ChangeEq [("db-settings", BothButDifferent)]
+    $ ChangeEq [("db-settings", DBothButDifferent)]
 
   -- codd-test-user owns codd-test-db, so it already has permissions to connect to it
   addMigNoChanges_
@@ -823,24 +860,26 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'; SET default_transaction_isolation TO 'serializable';"
       "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation; RESET default_transaction_isolation;"
-    $ ChangeEq [("db-settings", BothButDifferent)]
+    $ ChangeEq [("db-settings", DBothButDifferent)]
 
   -- COLLATIONS
   (createCutf8Coll, dropColl) <-
     addMig "CREATE COLLATION new_collation (locale = 'C.utf8');"
            "DROP COLLATION new_collation;"
-      $ ChangeEq [("schemas/public/collations/new_collation", OnlyRight)]
+      $ ChangeEq
+          [("schemas/public/collations/new_collation", DExpectedButNotFound)]
   (dropCreatePtBRColl, _) <-
     addMig
         (dropColl <> " CREATE COLLATION new_collation (locale = 'pt_BR.utf8');")
         (dropColl <> createCutf8Coll)
-      $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent)]
+      $ ChangeEq
+          [("schemas/public/collations/new_collation", DBothButDifferent)]
   addMig_
       (dropColl
       <> " CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
       )
       dropCreatePtBRColl
-    $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent)]
+    $ ChangeEq [("schemas/public/collations/new_collation", DBothButDifferent)]
 
   addMig_ "ALTER TABLE employee ADD COLUMN employee_surname TEXT;"
           "ALTER TABLE employee DROP COLUMN employee_surname;"
@@ -851,12 +890,12 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       "ALTER TABLE employee ALTER COLUMN employee_surname TYPE TEXT COLLATE \"default\";"
     $ ChangeEq
         [ ( "schemas/public/tables/employee/cols/employee_surname"
-          , BothButDifferent
+          , DBothButDifferent
           )
         ]
 
   -- Deterministic collations were introduced in Pg 12..
-  -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", BothButDifferent )]
+  -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", DBothButDifferent )]
 
   -- TYPES
 
@@ -864,41 +903,45 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   (createExp, dropExp) <-
     addMig "CREATE TYPE experience AS ENUM ('junior', 'senior');"
            "DROP TYPE experience;"
-      $ ChangeEq [("schemas/public/types/experience", OnlyRight)]
+      $ ChangeEq [("schemas/public/types/experience", DExpectedButNotFound)]
 
   addMig_
       "-- codd: no-txn\n\
             \ALTER TYPE experience ADD VALUE 'intern' BEFORE 'junior';"
       (dropExp <> createExp)
-    $ ChangeEq [("schemas/public/types/experience", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/experience", DBothButDifferent)]
 
   -- Composite types
   (createComplex1, dropComplex) <-
     addMig "CREATE TYPE complex AS (a double precision);" "DROP TYPE complex;"
-      $ ChangeEq [("schemas/public/types/complex", OnlyRight)]
+      $ ChangeEq [("schemas/public/types/complex", DExpectedButNotFound)]
   addMig_ "ALTER TYPE complex ADD ATTRIBUTE b double precision;"
           "ALTER TYPE complex DROP ATTRIBUTE b"
-    $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/complex", DBothButDifferent)]
 
   addMig_
       "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE text;"
       "ALTER TYPE complex ALTER ATTRIBUTE b SET DATA TYPE double precision;"
-    $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/complex", DBothButDifferent)]
 
   addMig_
       "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE new_collation;"
       "ALTER TYPE complex ALTER ATTRIBUTE b TYPE text COLLATE \"default\";"
-    $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/complex", DBothButDifferent)]
 
   addMig_ "ALTER TYPE complex ADD ATTRIBUTE c employee;"
           "ALTER TYPE complex DROP ATTRIBUTE c;"
-    $ ChangeEq [("schemas/public/types/complex", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/complex", DBothButDifferent)]
 
   -- We don't want the type to change when the table changes
   -- because it'd be unnecessarily verbose.
   addMig_ "ALTER TABLE employee ADD COLUMN anycolumn TEXT;"
           "ALTER TABLE employee DROP COLUMN anycolumn;"
-    $ ChangeEq [("schemas/public/tables/employee/cols/anycolumn", OnlyRight)]
+    $ ChangeEq
+        [ ( "schemas/public/tables/employee/cols/anycolumn"
+          , DExpectedButNotFound
+          )
+        ]
 
   -- Range types
   (createFloatRange1, dropFloatRange) <-
@@ -907,21 +950,27 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         "DROP TYPE floatrange;"
       $ ChangeEq
           -- Range and multirange constructor/types functions created by PG too
-          (  [ ("schemas/public/types/floatrange"                 , OnlyRight)
-             , ("schemas/public/routines/floatrange;float8,float8", OnlyRight)
+          (  [ ("schemas/public/types/floatrange", DExpectedButNotFound)
+             , ( "schemas/public/routines/floatrange;float8,float8"
+               , DExpectedButNotFound
+               )
              , ( "schemas/public/routines/floatrange;float8,float8,text"
-               , OnlyRight
+               , DExpectedButNotFound
                )
              ]
           ++ if pgVersion >= 14
                then
-                 [ ("schemas/public/types/floatmultirange"    , OnlyRight)
-                 , ("schemas/public/routines/floatmultirange;", OnlyRight)
+                 [ ( "schemas/public/types/floatmultirange"
+                   , DExpectedButNotFound
+                   )
+                 , ( "schemas/public/routines/floatmultirange;"
+                   , DExpectedButNotFound
+                   )
                  , ( "schemas/public/routines/floatmultirange;floatrange"
-                   , OnlyRight
+                   , DExpectedButNotFound
                    )
                  , ( "schemas/public/routines/floatmultirange;_floatrange"
-                   , OnlyRight
+                   , DExpectedButNotFound
                    )
                  ]
                else []
@@ -939,12 +988,18 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
       )
       (dropFloatRange <> createFloatRange1)
     $ ChangeEq
-        [ ("schemas/public/types/floatrange", BothButDifferent)
+        [ ("schemas/public/types/floatrange"             , DBothButDifferent)
         -- Constructor functions:
-        , ("schemas/public/routines/floatrange;time,time"         , OnlyRight)
-        , ("schemas/public/routines/floatrange;time,time,text"    , OnlyRight)
-        , ("schemas/public/routines/floatrange;float8,float8"     , OnlyLeft)
-        , ("schemas/public/routines/floatrange;float8,float8,text", OnlyLeft)
+        , ("schemas/public/routines/floatrange;time,time", DExpectedButNotFound)
+        , ( "schemas/public/routines/floatrange;time,time,text"
+          , DExpectedButNotFound
+          )
+        , ( "schemas/public/routines/floatrange;float8,float8"
+          , DNotExpectedButFound
+          )
+        , ( "schemas/public/routines/floatrange;float8,float8,text"
+          , DNotExpectedButFound
+          )
         ]
         -- Multirange constructors are unchanged since the type of their arguments
         -- is exclusively `floatrange`.
@@ -952,43 +1007,43 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   -- Domain types
   addMig_ "CREATE DOMAIN non_empty_text TEXT NOT NULL CHECK (VALUE != '');"
           "DROP DOMAIN non_empty_text;"
-    $ ChangeEq [("schemas/public/types/non_empty_text", OnlyRight)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DExpectedButNotFound)]
 
   addMig_ "ALTER DOMAIN non_empty_text SET DEFAULT 'empty';"
           "ALTER DOMAIN non_empty_text DROP DEFAULT;"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   addMig_ "ALTER DOMAIN non_empty_text DROP NOT NULL;"
           "ALTER DOMAIN non_empty_text SET NOT NULL;"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   (addTypeCheck, dropTypeCheck) <-
     addMig
         "ALTER DOMAIN non_empty_text ADD CONSTRAINT new_constraint CHECK(TRIM(VALUE) != '') NOT VALID;"
         "ALTER DOMAIN non_empty_text DROP CONSTRAINT new_constraint;"
-      $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+      $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   addMig_ "ALTER DOMAIN non_empty_text VALIDATE CONSTRAINT new_constraint;"
           (dropTypeCheck <> addTypeCheck)
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   addMig_
       "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint TO new_constraint_2;"
       "ALTER DOMAIN non_empty_text RENAME CONSTRAINT new_constraint_2 TO new_constraint;"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   -- Change type permissions/ownership.
   addMig_ "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\""
           "ALTER DOMAIN non_empty_text OWNER TO postgres;"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   addMig_ "ALTER DOMAIN non_empty_text OWNER TO postgres"
           "ALTER DOMAIN non_empty_text OWNER TO \"codd-test-user\";"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   addMig_ "GRANT ALL ON DOMAIN non_empty_text TO \"codd-test-user\""
           "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\";"
-    $ ChangeEq [("schemas/public/types/non_empty_text", BothButDifferent)]
+    $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
   -- CRUD
   addMig_ "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
@@ -1086,25 +1141,25 @@ spec = do
 
           -- The time_subtype_diff function shouldn't have its hash change,
           -- but the constructors of floatrange and floatmultirange should.
-          hashDifferences laxRangeHashes strictRangeHashes
+          (hashDifferences laxRangeHashes strictRangeHashes <&> simplifyDiff)
             `shouldBe` Map.fromList
                          ([ ( "schemas/public/routines/floatrange;float8,float8"
-                            , BothButDifferent
+                            , DBothButDifferent
                             )
                           , ( "schemas/public/routines/floatrange;float8,float8,text"
-                            , BothButDifferent
+                            , DBothButDifferent
                             )
                           ]
                          ++ if pgVersion >= 14
                               then
                                 [ ( "schemas/public/routines/floatmultirange;"
-                                  , BothButDifferent
+                                  , DBothButDifferent
                                   )
                                 , ( "schemas/public/routines/floatmultirange;floatrange"
-                                  , BothButDifferent
+                                  , DBothButDifferent
                                   )
                                 , ( "schemas/public/routines/floatmultirange;_floatrange"
-                                  , BothButDifferent
+                                  , DBothButDifferent
                                   )
                                 ]
                               else []
@@ -1158,10 +1213,12 @@ spec = do
 
           -- Only the removed column should have its checksum file removed.
           -- The other column and all dependent objects should not change one bit.
-          afterDropHashes
-            `hashDifferences` initialHashes
-            `shouldBe`        Map.fromList
-                                [("schemas/public/tables/tbl/cols/col1", OnlyRight)]
+          (afterDropHashes `hashDifferences` initialHashes <&> simplifyDiff)
+            `shouldBe` Map.fromList
+                         [ ( "schemas/public/tables/tbl/cols/col1"
+                           , DExpectedButNotFound
+                           )
+                         ]
 
     aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
       let
@@ -1297,7 +1354,7 @@ spec = do
           let diff = hashDifferences hashSoFar dbHashesAfterMig
           case expectedChanges of
             ChangeEq c -> do
-              diff `shouldBe` Map.fromList c
+              (simplifyDiff <$> diff) `shouldBe` Map.fromList c
               -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
               if null c
                 then hashSoFar `shouldBe` dbHashesAfterMig
