@@ -87,8 +87,6 @@ mkPathFrag (ObjName n) = Text.unpack n
 fromPathFrag :: FilePath -> ObjName
 fromPathFrag fp = ObjName $ Text.pack fp
 
-newtype ObjHash = ObjHash { unObjHash :: Text }
-    deriving newtype (FromField, Eq, Ord, Show, Hashable, FromJSON, ToJSON)
 newtype ObjName = ObjName { unObjName :: Text }
     deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable, FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 

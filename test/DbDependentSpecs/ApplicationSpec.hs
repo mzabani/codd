@@ -10,9 +10,7 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.Hashing.Types             ( DbHashes(..)
-                                                , ObjHash(..)
-                                                )
+import           Codd.Hashing.Types             ( DbHashes(..) )
 import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , collectAndApplyMigrations
