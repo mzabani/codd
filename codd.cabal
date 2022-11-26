@@ -97,6 +97,7 @@ library
     , transformers
     , unliftio
     , unliftio-core
+    , unordered-containers
   default-language: Haskell2010
 
 executable codd
