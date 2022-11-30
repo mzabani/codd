@@ -1,1 +1,1 @@
-{"noinherit":false,"inhcount":0,"fk_deltype":" ","deferrable":false,"deferred":false,"supporting_index":null,"type":"c","parent_constraint":null,"definition":"CHECK ((value > (0)::numeric))","local":true,"fk_matchtype":" ","fk_ref_table":null,"validated":true,"fk_updtype":" "}
+{"deferrable":false,"deferred":false,"definition":"CHECK ((value > (0)::numeric))","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":false,"parent_constraint":null,"supporting_index":null,"type":"c","validated":true}

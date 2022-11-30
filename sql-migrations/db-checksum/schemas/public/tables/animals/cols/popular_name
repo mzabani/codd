@@ -1,1 +1,1 @@
-{"privileges":null,"inhcount":0,"generated":"","type":"text","notnull":true,"identity":"","hasdefault":false,"local":true,"default":null,"collation":"default","collation_nsp":"pg_catalog","order":2}
+{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"text"}

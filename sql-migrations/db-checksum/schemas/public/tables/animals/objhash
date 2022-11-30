@@ -1,1 +1,1 @@
-{"privileges":{"codd_admin":"codd_admin=arwdDxt/codd_admin"},"amoptions":null,"rowtype":"animals","kind":"r","shared":false,"owner":"codd_admin","replident":"d","rowsecurity":false,"persistence":"p","accessmethod":"heap","compositetype":null,"forcerowsecurity":false,"partition":false}
+{"accessmethod":"heap","amoptions":null,"compositetype":null,"forcerowsecurity":false,"kind":"r","owner":"codd_admin","partition":false,"persistence":"p","privileges":{"codd_admin":"codd_admin=arwdDxt/codd_admin"},"replident":"d","rowsecurity":false,"rowtype":"animals","shared":false}

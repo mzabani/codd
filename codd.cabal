@@ -58,6 +58,7 @@ library
       DeriveFunctor
       DeriveGeneric
       DerivingStrategies
+      DerivingVia
       LambdaCase
       FlexibleContexts
       FlexibleInstances
@@ -98,6 +99,7 @@ library
     , unliftio
     , unliftio-core
     , unordered-containers
+    , vector
   default-language: Haskell2010
 
 executable codd
@@ -114,6 +116,7 @@ executable codd
       DeriveFunctor
       DeriveGeneric
       DerivingStrategies
+      DerivingVia
       LambdaCase
       FlexibleContexts
       FlexibleInstances

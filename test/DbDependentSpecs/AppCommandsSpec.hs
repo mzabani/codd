@@ -10,6 +10,7 @@ import           Codd.AppCommands.WriteChecksums
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( DbHashes(..) )
+import           Codd.Hashing.Types             ( Json(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)

@@ -2,6 +2,7 @@ module AesonValueGen
     () where
 
 
+import           Codd.Hashing.Types             ( Json(..) )
 import           Data.Aeson                     ( Array
                                                 , Object
                                                 , Value(..)

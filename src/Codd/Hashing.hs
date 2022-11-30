@@ -16,13 +16,10 @@ import           Control.Monad.Logger           ( MonadLogger
                                                 , logErrorN
                                                 , logInfoN
                                                 )
-import           Data.Aeson                     ( encode )
-import           Data.ByteString.Lazy           ( toStrict )
 import           Data.List                      ( sortOn )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
-import           Data.Text.Encoding             ( decodeUtf8 )
 
 -- | Takes the DB and the expected hashes and logErrorN's the differences, if any,
 -- or logInfoN that they match otherwise.
@@ -41,10 +38,7 @@ logChecksumsComparison dbHashes expectedChecksums =
         -- line to be amenable to logging infrastructure
             logErrorN
             $  "DB and expected checksums do not match. Differences are: "
-            <> decodeUtf8
-                   (toStrict $ encode $ hashDifferences dbHashes
-                                                        expectedChecksums
-                   )
+            <> detEncodeJSON (hashDifferences dbHashes expectedChecksums)
         else logInfoN "Database and expected schemas match."
 
 hashDifferences :: DbHashes -> DbHashes -> Map FilePath DiffType

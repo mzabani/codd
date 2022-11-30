@@ -1,1 +1,1 @@
-{"membership":[],"canlogin":true,"config":null,"createrole":true,"superuser":false,"replication":false,"bypassrls":false,"createdb":false,"inherit":true,"db_privileges":"codd_admin=CTc/codd_admin"}
+{"bypassrls":false,"canlogin":true,"config":null,"createdb":false,"createrole":true,"db_privileges":"codd_admin=CTc/codd_admin","inherit":true,"membership":[],"replication":false,"superuser":false}

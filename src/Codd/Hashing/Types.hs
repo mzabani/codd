@@ -4,13 +4,18 @@ import           Data.Aeson                     ( FromJSON
                                                 , FromJSONKey
                                                 , ToJSON(..)
                                                 , ToJSONKey
-                                                , Value(String)
+                                                , Value(Array, Object, String)
                                                 )
+import           Data.Aeson.Encoding            ( encodingToLazyByteString )
+import           Data.ByteString.Lazy           ( toStrict )
+import qualified Data.HashMap.Strict           as HM
 import           Data.Hashable                  ( Hashable )
 import qualified Data.Map                      as Map
 import           Data.Map.Strict                ( Map )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
+import           Data.Text.Encoding             ( decodeUtf8 )
+import qualified Data.Vector                   as Vector
 import           Database.PostgreSQL.Simple.FromField
                                                 ( FromField )
 import           Database.PostgreSQL.Simple.ToField
@@ -20,6 +25,26 @@ import           GHC.Generics                   ( Generic )
 data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
+
+-- | Deterministic `ToJSON` instances, i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardles of hashable's initial seed.
+-- We should be able to remove this after we drop support for aeson-1.
+detEncodeJSON :: ToJSON a => a -> Text
+detEncodeJSON =
+    decodeUtf8
+        . toStrict
+        . encodingToLazyByteString
+        . toEncoding
+        . Json
+        . toJSON
+
+newtype Json = Json Value
+instance ToJSON Json where
+    toJSON (Json v) = v
+    toEncoding (Json val) = case val of
+        Object m   -> toEncoding $ fmap Json $ Map.fromList $ HM.toList m
+        Array  arr -> toEncoding $ Json <$> Vector.toList arr
+        _          -> toEncoding val
 
 data DbHashes = DbHashes Value (Map ObjName SchemaHash) (Map ObjName RoleHash)
     deriving stock (Show, Eq, Generic)

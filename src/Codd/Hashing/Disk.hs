@@ -21,7 +21,6 @@ import           Control.Monad.Except           ( MonadError(..)
 import           Control.Monad.Identity         ( runIdentity )
 import           Data.Aeson                     ( Value
                                                 , decode
-                                                , encode
                                                 )
 import           Data.Bifunctor                 ( first )
 import qualified Data.ByteString.Lazy          as LBS
@@ -33,6 +32,7 @@ import           Data.Text                      ( Text
                                                 , pack
                                                 , unpack
                                                 )
+import qualified Data.Text.IO                  as Text
 import           GHC.Stack                      ( HasCallStack )
 import           System.FilePath                ( (</>)
                                                 , takeFileName
@@ -175,7 +175,7 @@ persistHashesToDisk dbHashes rootDir = do
             createDirectoryIfMissing True (dir </> parentDir)
             writeRec (dir </> parentDir) sobj
         )
-        (\fn jsonRep -> LBS.writeFile (dir </> fn) (encode jsonRep))
+        (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
 
 readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
 readAllHashes dir =

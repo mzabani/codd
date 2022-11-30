@@ -6,15 +6,13 @@ module Codd.AppCommands.WriteChecksums
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
 import qualified Codd.Hashing                  as Codd
+import           Codd.Hashing                   ( detEncodeJSON )
 import qualified Codd.Internal                 as Codd
 import           Codd.Logging                   ( runErrorsOnlyLogger )
 import           Control.Monad.IO.Unlift        ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
 import           Control.Monad.Logger           ( runStdoutLoggingT )
-import           Data.Aeson                     ( encode )
-import           Data.ByteString.Lazy           ( toStrict )
-import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
 
@@ -44,5 +42,4 @@ writeChecksums dbInfo@CoddSettings { migsConnString } opts = case opts of
       (secondsToDiffTime 5)
       (Codd.readHashesFromDatabaseWithSettings dbInfo)
 
-    -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
-    liftIO $ Text.putStr $ decodeUtf8 $ toStrict $ encode checksums
+    liftIO $ Text.putStr $ detEncodeJSON checksums

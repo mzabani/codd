@@ -1,1 +1,1 @@
-{"noinherit":true,"inhcount":0,"fk_deltype":" ","deferrable":false,"deferred":false,"supporting_index":"employee_pkey","type":"p","parent_constraint":null,"definition":"PRIMARY KEY (employee_id)","local":true,"fk_matchtype":" ","fk_ref_table":null,"validated":true,"fk_updtype":" "}
+{"deferrable":false,"deferred":false,"definition":"PRIMARY KEY (employee_id)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"employee_pkey","type":"p","validated":true}
