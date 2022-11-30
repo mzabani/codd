@@ -23,6 +23,7 @@ import           Data.Aeson                     ( Value
                                                 , decode
                                                 )
 import           Data.Bifunctor                 ( first )
+import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Lazy          as LBS
 import           Data.List                      ( sortOn )
 import qualified Data.Map.Strict               as Map
@@ -219,7 +220,8 @@ readType = simpleObjHashFileRead TypeHash
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
-readFileAsHash :: (MonadError Text m, MonadIO m) => FilePath -> m Value
+readFileAsHash
+    :: forall m . (MonadError Text m, MonadIO m) => FilePath -> m Value
 readFileAsHash filepath = do
     exists <- liftIO $ doesFileExist filepath
     unless exists
@@ -227,15 +229,19 @@ readFileAsHash filepath = do
         $  "File "
         <> pack filepath
         <> " was expected but does not exist"
-    liftIO
-        $   fromMaybe
-                (  error
-                $  "File '"
-                ++ filepath
-                ++ "' was supposed to contain a JSON value"
-                )
-        .   decode
-        <$> LBS.readFile filepath
+    -- Careful, LBS.readFile is lazy and does not close
+    -- the file handle unless we force the thunk. So we
+    -- use BS.readFile to be on the safe side
+    fileContents <- liftIO $ BS.readFile filepath
+    pure
+        $ fromMaybe
+              (  error
+              $  "File '"
+              ++ filepath
+              ++ "' was supposed to contain a JSON value"
+              )
+        $ decode
+        $ LBS.fromStrict fileContents
 
 simpleObjHashFileRead
     :: (MonadError Text m, MonadIO m)
