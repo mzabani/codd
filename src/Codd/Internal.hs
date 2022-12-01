@@ -4,7 +4,7 @@ module Codd.Internal where
 import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbHashes
+import           Codd.Hashing                   ( DbRep
                                                 , logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 )
@@ -579,7 +579,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
 strictCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
-    -> DbHashes
+    -> DbRep
     -> ([BlockOfMigrations m] -> DB.Connection -> m ())
 strictCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
@@ -596,8 +596,8 @@ strictCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
 laxCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
-    -> DbHashes
-    -> ([BlockOfMigrations m] -> DB.Connection -> m DbHashes)
+    -> DbRep
+    -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
 laxCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
     cksums <- readHashesFromDatabaseWithSettings coddSettings conn
     logChecksumsComparison cksums expectedHashes

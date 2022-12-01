@@ -1,4 +1,4 @@
-module Codd.Hashing.Disk
+module Codd.Representations.Disk
     ( persistHashesToDisk
     , readHashesFromDisk
     , toFiles
@@ -8,7 +8,7 @@ import           Prelude                 hiding ( readFile
                                                 , writeFile
                                                 )
 
-import           Codd.Hashing.Types
+import           Codd.Representations.Types
 import           Control.Monad                  ( forM
                                                 , forM_
                                                 , unless
@@ -79,18 +79,18 @@ simpleDbDiskObj
     :: Functor m => ObjName -> Value -> (FilePath -> Value -> m d) -> m [d]
 simpleDbDiskObj oname ohash ffile = (: []) <$> ffile (mkPathFrag oname) ohash
 
-instance DbDiskObj DbHashes where
-    appr (DbHashes dbSettingsHash schemas roles) frec ffile = do
+instance DbDiskObj DbRep where
+    appr (DbRep dbSettingsHash schemas roles) frec ffile = do
         x  <- ffile "db-settings" dbSettingsHash
         rs <- forM (Map.elems roles) $ frec "roles"
         ss <- forM (Map.toList schemas) $ \(schemaName, schema) ->
             frec ("schemas" </> mkPathFrag schemaName) schema
         pure $ x : rs ++ ss
 
-instance DbDiskObj RoleHash where
-    appr (RoleHash roleName roleHash) _ = simpleDbDiskObj roleName roleHash
-instance DbDiskObj SchemaHash where
-    appr (SchemaHash _schemaName schemaHash tables views routines seqs colls types) frec ffile
+instance DbDiskObj RoleRep where
+    appr (RoleRep roleName roleHash) _ = simpleDbDiskObj roleName roleHash
+instance DbDiskObj SchemaRep where
+    appr (SchemaRep _schemaName schemaHash tables views routines seqs colls types) frec ffile
         = do
             x    <- ffile "objhash" schemaHash
             tbls <- forM (Map.toList tables) $ \(tableName, table) ->
@@ -102,8 +102,8 @@ instance DbDiskObj SchemaHash where
             ts <- forM (Map.elems types) $ frec "types"
             pure $ x : tbls ++ vs ++ rs ++ ss ++ cs ++ ts
 
-instance DbDiskObj TableHash where
-    appr (TableHash _tblName tblHash columns constraints triggers policies indexes) frec ffile
+instance DbDiskObj TableRep where
+    appr (TableRep _tblName tblHash columns constraints triggers policies indexes) frec ffile
         = do
             let mkpath p = p
             x       <- ffile (mkpath "objhash") tblHash
@@ -115,32 +115,31 @@ instance DbDiskObj TableHash where
             idxs  <- forM (Map.elems indexes) $ frec (mkpath "indexes")
             pure $ x : cols ++ constrs ++ trgrs ++ pols ++ idxs
 
-instance DbDiskObj TableColumn where
-    appr (TableColumn colName colHash) _ = simpleDbDiskObj colName colHash
-instance DbDiskObj TableConstraint where
-    appr (TableConstraint constrName constrHash) _ =
+instance DbDiskObj TableColumnRep where
+    appr (TableColumnRep colName colHash) _ = simpleDbDiskObj colName colHash
+instance DbDiskObj TableConstraintRep where
+    appr (TableConstraintRep constrName constrHash) _ =
         simpleDbDiskObj constrName constrHash
-instance DbDiskObj TableTrigger where
-    appr (TableTrigger triggerName triggerHash) _ =
+instance DbDiskObj TableTriggerRep where
+    appr (TableTriggerRep triggerName triggerHash) _ =
         simpleDbDiskObj triggerName triggerHash
-instance DbDiskObj TablePolicy where
-    appr (TablePolicy polName polHash) _ = simpleDbDiskObj polName polHash
-instance DbDiskObj TableIndex where
-    appr (TableIndex idxName idxHash) _ = simpleDbDiskObj idxName idxHash
-instance DbDiskObj ViewHash where
-    appr (ViewHash viewName viewHash) _ = simpleDbDiskObj viewName viewHash
-instance DbDiskObj RoutineHash where
-    appr (RoutineHash routineName routineHash) _ =
+instance DbDiskObj TablePolicyRep where
+    appr (TablePolicyRep polName polHash) _ = simpleDbDiskObj polName polHash
+instance DbDiskObj TableIndexRep where
+    appr (TableIndexRep idxName idxHash) _ = simpleDbDiskObj idxName idxHash
+instance DbDiskObj ViewRep where
+    appr (ViewRep viewName viewHash) _ = simpleDbDiskObj viewName viewHash
+instance DbDiskObj RoutineRep where
+    appr (RoutineRep routineName routineHash) _ =
         simpleDbDiskObj routineName routineHash
-instance DbDiskObj SequenceHash where
-    appr (SequenceHash seqName seqHash) _ = simpleDbDiskObj seqName seqHash
-instance DbDiskObj CollationHash where
-    appr (CollationHash collName collHash) _ =
-        simpleDbDiskObj collName collHash
-instance DbDiskObj TypeHash where
-    appr (TypeHash typeName typeHash) _ = simpleDbDiskObj typeName typeHash
+instance DbDiskObj SequenceRep where
+    appr (SequenceRep seqName seqHash) _ = simpleDbDiskObj seqName seqHash
+instance DbDiskObj CollationRep where
+    appr (CollationRep collName collHash) _ = simpleDbDiskObj collName collHash
+instance DbDiskObj TypeRep where
+    appr (TypeRep typeName typeHash) _ = simpleDbDiskObj typeName typeHash
 
-toFiles :: DbHashes -> [(FilePath, Value)]
+toFiles :: DbRep -> [(FilePath, Value)]
 toFiles = sortOn fst . frec
   where
     frec :: DbDiskObj a => a -> [(FilePath, Value)]
@@ -151,8 +150,7 @@ toFiles = sortOn fst . frec
     prependDir dir = map (first (dir </>))
 
 -- | Wipes out completely the supplied folder and writes the hashes of the Database's structures to it again.
-persistHashesToDisk
-    :: (HasCallStack, MonadIO m) => DbHashes -> FilePath -> m ()
+persistHashesToDisk :: (HasCallStack, MonadIO m) => DbRep -> FilePath -> m ()
 persistHashesToDisk dbHashes rootDir = do
     tempDir <- (</> "temp-db-dir") <$> getTemporaryDirectory
     whenM (doesDirectoryExist tempDir) $ wipeDir tempDir
@@ -178,15 +176,15 @@ persistHashesToDisk dbHashes rootDir = do
         )
         (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
 
-readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbHashes
+readAllHashes :: (MonadError Text m, MonadIO m) => FilePath -> m DbRep
 readAllHashes dir =
-    DbHashes
+    DbRep
         <$> readFileAsHash (dir </> "db-settings")
         <*> readMultiple (dir </> "schemas") readSchemaHash
-        <*> readMultiple (dir </> "roles")   (simpleObjHashFileRead RoleHash)
-readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaHash
+        <*> readMultiple (dir </> "roles")   (simpleObjHashFileRead RoleRep)
+readSchemaHash :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaRep
 readSchemaHash dir =
-    SchemaHash (readObjName dir)
+    SchemaRep (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
         <*> readMultiple (dir </> "tables")     readTable
         <*> readMultiple (dir </> "views")      readView
@@ -195,28 +193,29 @@ readSchemaHash dir =
         <*> readMultiple (dir </> "collations") readCollation
         <*> readMultiple (dir </> "types")      readType
 
-readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableHash
-readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewHash
-readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineHash
-readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceHash
-readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationHash
-readType :: (MonadError Text m, MonadIO m) => FilePath -> m TypeHash
+readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableRep
+readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewRep
+readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineRep
+readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceRep
+readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationRep
+readType :: (MonadError Text m, MonadIO m) => FilePath -> m TypeRep
 readTable dir =
-    TableHash (readObjName dir)
+    TableRep (readObjName dir)
         <$> readFileAsHash (dir </> "objhash")
-        <*> readMultiple (dir </> "cols") (simpleObjHashFileRead TableColumn)
+        <*> readMultiple (dir </> "cols") (simpleObjHashFileRead TableColumnRep)
         <*> readMultiple (dir </> "constraints")
-                         (simpleObjHashFileRead TableConstraint)
+                         (simpleObjHashFileRead TableConstraintRep)
         <*> readMultiple (dir </> "triggers")
-                         (simpleObjHashFileRead TableTrigger)
+                         (simpleObjHashFileRead TableTriggerRep)
         <*> readMultiple (dir </> "policies")
-                         (simpleObjHashFileRead TablePolicy)
-        <*> readMultiple (dir </> "indexes") (simpleObjHashFileRead TableIndex)
-readView = simpleObjHashFileRead ViewHash
-readRoutine = simpleObjHashFileRead RoutineHash
-readSequence = simpleObjHashFileRead SequenceHash
-readCollation = simpleObjHashFileRead CollationHash
-readType = simpleObjHashFileRead TypeHash
+                         (simpleObjHashFileRead TablePolicyRep)
+        <*> readMultiple (dir </> "indexes")
+                         (simpleObjHashFileRead TableIndexRep)
+readView = simpleObjHashFileRead ViewRep
+readRoutine = simpleObjHashFileRead RoutineRep
+readSequence = simpleObjHashFileRead SequenceRep
+readCollation = simpleObjHashFileRead CollationRep
+readType = simpleObjHashFileRead TypeRep
 
 readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
@@ -265,7 +264,7 @@ readMultiple dir f = do
             return $ listToMap objList
         else pure Map.empty
 
-readHashesFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbHashes
+readHashesFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbRep
 readHashesFromDisk dir = do
     allHashesE <- runExceptT $ readAllHashes dir
     case allHashesE of

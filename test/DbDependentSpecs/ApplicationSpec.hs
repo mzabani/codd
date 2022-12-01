@@ -10,9 +10,6 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.Hashing.Types             ( DbHashes(..)
-                                                , Json(..)
-                                                )
 import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , collectAndApplyMigrations
@@ -26,6 +23,9 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations.Types     ( DbRep(..)
+                                                , Json(..)
+                                                )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
@@ -286,7 +286,7 @@ spec = do
                               "Strict checking and lax checking behaviour on mismatched checksums"
                           $ \emptyTestDbInfo -> do
                                 let bogusDbHashes =
-                                        DbHashes Aeson.Null Map.empty Map.empty
+                                        DbRep Aeson.Null Map.empty Map.empty
                                 void @IO
                                     $ withConnection
                                           (migsConnString emptyTestDbInfo)
@@ -368,7 +368,7 @@ spec = do
                                             )
                                         $ \emptyTestDbInfo -> do
                                               let
-                                                  bogusDbHashes = DbHashes
+                                                  bogusDbHashes = DbRep
                                                       Aeson.Null
                                                       Map.empty
                                                       Map.empty

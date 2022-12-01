@@ -10,18 +10,18 @@ import           Data.Map.Strict                ( Map )
 import qualified Data.Text                     as Text
 import           Test.QuickCheck
 
-newtype DbHashesGen = DbHashesGen { unDbHashesGen :: DbHashes } deriving stock Show
+newtype DbHashesGen = DbHashesGen { unDbHashesGen :: DbRep } deriving stock Show
 
 instance Arbitrary DbHashesGen where
     arbitrary =
         fmap DbHashesGen
-            $   DbHashes
+            $   DbRep
             <$> arbitrary
             <*> uniqueMapOf 3 schemaHashGen objName
             <*> uniqueMapOf 2 roleHashGen   objName
       where
         schemaHashGen =
-            SchemaHash
+            SchemaRep
                 <$> genObjName
                 <*> arbitrary
                 <*> uniqueMapOf 20 tableGen     objName
@@ -30,11 +30,11 @@ instance Arbitrary DbHashesGen where
                 <*> uniqueMapOf 15 sequenceGen  objName
                 <*> uniqueMapOf 2  collationGen objName
                 <*> uniqueMapOf 5  typeGen      objName
-        roleHashGen = RoleHash <$> genObjName <*> arbitrary
+        roleHashGen = RoleRep <$> genObjName <*> arbitrary
 
         -- Per-schema object generators
         tableGen =
-            TableHash
+            TableRep
                 <$> genObjName
                 <*> arbitrary
                 <*> uniqueMapOf 20 colGen        objName
@@ -42,18 +42,18 @@ instance Arbitrary DbHashesGen where
                 <*> uniqueMapOf 1  triggerGen    objName
                 <*> uniqueMapOf 2  policyGen     objName
                 <*> uniqueMapOf 3  indexGen      objName
-        viewGen       = ViewHash <$> genObjName <*> arbitrary
-        routineGen    = RoutineHash <$> genObjName <*> arbitrary
-        sequenceGen   = SequenceHash <$> genObjName <*> arbitrary
-        collationGen  = CollationHash <$> genObjName <*> arbitrary
-        typeGen       = TypeHash <$> genObjName <*> arbitrary
+        viewGen       = ViewRep <$> genObjName <*> arbitrary
+        routineGen    = RoutineRep <$> genObjName <*> arbitrary
+        sequenceGen   = SequenceRep <$> genObjName <*> arbitrary
+        collationGen  = CollationRep <$> genObjName <*> arbitrary
+        typeGen       = TypeRep <$> genObjName <*> arbitrary
 
         -- Per-table object generators
-        colGen        = TableColumn <$> genObjName <*> arbitrary
-        constraintGen = TableConstraint <$> genObjName <*> arbitrary
-        triggerGen    = TableTrigger <$> genObjName <*> arbitrary
-        policyGen     = TablePolicy <$> genObjName <*> arbitrary
-        indexGen      = TableIndex <$> genObjName <*> arbitrary
+        colGen        = TableColumnRep <$> genObjName <*> arbitrary
+        constraintGen = TableConstraintRep <$> genObjName <*> arbitrary
+        triggerGen    = TableTriggerRep <$> genObjName <*> arbitrary
+        policyGen     = TablePolicyRep <$> genObjName <*> arbitrary
+        indexGen      = TableIndexRep <$> genObjName <*> arbitrary
 
 uniqueListOf :: Eq b => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy =

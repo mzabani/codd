@@ -1,4 +1,4 @@
-module Codd.Hashing.Database.Model where
+module Codd.Representations.Database.Model where
 
 import           Data.String                    ( IsString(..) )
 import           Database.PostgreSQL.Simple     ( Query

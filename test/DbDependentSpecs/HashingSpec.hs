@@ -11,14 +11,12 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbHashes(..)
+import           Codd.Hashing                   ( DbRep(..)
                                                 , DiffType(..)
                                                 , ObjName
                                                 , hashDifferences
                                                 , readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.Hashing.Database          ( queryServerMajorVersion )
-import           Codd.Hashing.Types             ( ObjName(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction
@@ -36,6 +34,8 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations.Database  ( queryServerMajorVersion )
+import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , SchemaSelection(..)
                                                 , singleTryPolicy
@@ -1064,7 +1064,7 @@ instance Arbitrary NumMigsToReverse where
     <$> chooseBoundedIntegral (5, length (migrationsAndHashChangeText 0) - 1)
 
 -- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
-newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbHashes)]
+newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbRep)]
 
 spec :: Spec
 spec = do
@@ -1232,7 +1232,7 @@ spec = do
           { schemasToHash = IncludeSchemas ["non-existing-schema", "pg_catalog"]
           }
         getSchemaHashes dbinfo = do
-          DbHashes _ hashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
+          DbRep _ hashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
             dbinfo
             Nothing
             testConnTimeout
@@ -1274,7 +1274,7 @@ spec = do
             allMigsAndExpectedChanges <- map (hoistMU lift)
               <$> migrationsAndHashChange pgVersion
             hashBeforeEverything <- getHashes emptyDbInfo
-            (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbHashes
+            (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbRep
                 , Maybe Text
                 )
               ]                                                           ) <-

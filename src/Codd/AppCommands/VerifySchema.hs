@@ -1,5 +1,5 @@
-module Codd.AppCommands.VerifyChecksums
-  ( verifyChecksums
+module Codd.AppCommands.VerifySchema
+  ( verifySchema
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
@@ -7,8 +7,8 @@ import           Codd.Hashing                   ( logChecksumsComparison
                                                 , readHashesFromDatabaseWithSettings
                                                 , readHashesFromDisk
                                                 )
-import           Codd.Hashing.Types             ( DbHashes )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Representations.Types     ( DbRep )
 import           Control.Monad                  ( when )
 import           Control.Monad.Logger           ( MonadLoggerIO
                                                 , logInfoN
@@ -26,19 +26,19 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 , stdin
                                                 )
 
-verifyChecksums
+verifySchema
   :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> m ()
-verifyChecksums dbInfoWithAllMigs@CoddSettings { onDiskHashes, migsConnString } fromStdin
+verifySchema dbInfoWithAllMigs@CoddSettings { onDiskHashes, migsConnString } fromStdin
   = do
     let dbInfoDontApplyAnything = dbInfoWithAllMigs { sqlMigrations = [] }
-    expectedChecksums :: DbHashes <- if fromStdin
+    expectedChecksums :: DbRep <- if fromStdin
       then do
         liftIO $ hSetBinaryMode stdin True
         inputs <- liftIO $ hGetContents stdin
         pure
           $ fromMaybe
               (error
-                "Could not decode the JSON input as a DB-checksum representation. Make sure it is the output of 'codd write-checksums --to-stdout' and that the versions of codd are exactly the same."
+                "Could not decode the JSON input as a DB-checksum representation. Make sure it is the output of 'codd write-schema --to-stdout' and that the versions of codd are exactly the same."
               )
           $ decode inputs
       else either readHashesFromDisk pure onDiskHashes

@@ -1,24 +1,31 @@
-module Codd.Hashing.Database
+module Codd.Representations.Database
   ( queryServerMajorVersion
   , readHashesFromDatabase
   , readHashesFromDatabaseWithSettings
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing.Database.Model    ( HashQuery(..)
+import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations.Database.Model
+                                                ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 , withQueryFrag
                                                 )
-import qualified Codd.Hashing.Database.Pg10    as Pg10
-import qualified Codd.Hashing.Database.Pg11    as Pg11
-import qualified Codd.Hashing.Database.Pg12    as Pg12
-import qualified Codd.Hashing.Database.Pg13    as Pg13
-import qualified Codd.Hashing.Database.Pg14    as Pg14
-import           Codd.Hashing.Database.SqlGen   ( interspBy
+import qualified Codd.Representations.Database.Pg10
+                                               as Pg10
+import qualified Codd.Representations.Database.Pg11
+                                               as Pg11
+import qualified Codd.Representations.Database.Pg12
+                                               as Pg12
+import qualified Codd.Representations.Database.Pg13
+                                               as Pg13
+import qualified Codd.Representations.Database.Pg14
+                                               as Pg14
+import           Codd.Representations.Database.SqlGen
+                                                ( interspBy
                                                 , parens
                                                 )
-import           Codd.Hashing.Types
-import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations.Types
 import           Codd.Types                     ( ChecksumAlgo
                                                 , SchemaSelection
                                                 , SqlRole(..)
@@ -50,7 +57,7 @@ import           UnliftIO                       ( MonadIO(..)
                                                 )
 
 data HashReq a where
-  GetHashesReq ::HashableObject -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, Value)]
+  GetHashesReq ::ObjectRep -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, Value)]
   deriving stock (Typeable)
 
 instance Eq (HashReq a) where
@@ -81,7 +88,7 @@ type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
   { sqUniqueIdx :: Int
-  , sqHobj      :: HashableObject
+  , sqHobj      :: ObjectRep
   , sqQueryObj  :: HashQuery
   , sqResults   :: ResultVar [(ObjName, Value)]
   }
@@ -119,7 +126,7 @@ instance DataSource HaxlEnv HashReq where
               else error "idx > ridx in mergeResults"
 
     -- This is a batching mechanism which will `OR` the conditions for queries with the same
-    -- HashableObject, because they have the same SELECT, FROM and JOINs. Then, prepend an increasing number to the select exprs
+    -- ObjectRep, because they have the same SELECT, FROM and JOINs. Then, prepend an increasing number to the select exprs
     -- which is 1 if the first `identWhere` expression is True, 2 when the second is True, 3 for the third and so on..
     -- This requires mutually exclusive where conditions (`identWhere` satisfies that) and batches queries for objects
     -- of the same kind (e.g. all tables or all views or all triggers etc.) into a single query.
@@ -214,7 +221,7 @@ type PgVersionHasher
   -> ChecksumAlgo
   -> Maybe ObjName
   -> Maybe ObjName
-  -> HashableObject
+  -> ObjectRep
   -> HashQuery
 
 data QueryInPieces = QueryInPieces
@@ -256,7 +263,7 @@ readHashesFromDatabaseWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
   => CoddSettings
   -> DB.Connection
-  -> m DbHashes
+  -> m DbRep
 readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash } conn
   = do
     majorVersion <- queryServerMajorVersion conn
@@ -311,7 +318,7 @@ readHashesFromDatabase
   -> SchemaSelection
   -> [SqlRole]
   -> ChecksumAlgo
-  -> m DbHashes
+  -> m DbRep
 readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo = do
   let stateStore = stateSet UserState{} stateEmpty
   env0 <- liftIO
@@ -326,10 +333,10 @@ readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo = do
         _ ->
           error
             "More than one database returned from pg_database. Please file a bug."
-    DbHashes dbSettings <$> getSchemaHash schemas <*> pure
-      (listToMap $ map (uncurry RoleHash) roles)
+    DbRep dbSettings <$> getSchemaHash schemas <*> pure
+      (listToMap $ map (uncurry RoleRep) roles)
 
-getSchemaHash :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaHash)
+getSchemaHash :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaRep)
 getSchemaHash schemas =
   fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
     tables      <- dataFetch $ GetHashesReq HTable (Just schemaName) Nothing
@@ -342,17 +349,17 @@ getSchemaHash schemas =
     tableHashes <- getTablesHashes schemaName tables
     pure
       ( schemaName
-      , SchemaHash schemaName
-                   schemaHash
-                   (listToMap tableHashes)
-                   (listToMap $ map (uncurry ViewHash) views)
-                   (listToMap $ map (uncurry RoutineHash) routines)
-                   (listToMap $ map (uncurry SequenceHash) sequences)
-                   (listToMap $ map (uncurry CollationHash) collations)
-                   (listToMap $ map (uncurry TypeHash) types)
+      , SchemaRep schemaName
+                  schemaHash
+                  (listToMap tableHashes)
+                  (listToMap $ map (uncurry ViewRep) views)
+                  (listToMap $ map (uncurry RoutineRep) routines)
+                  (listToMap $ map (uncurry SequenceRep) sequences)
+                  (listToMap $ map (uncurry CollationRep) collations)
+                  (listToMap $ map (uncurry TypeRep) types)
       )
 
-getTablesHashes :: ObjName -> [(ObjName, Value)] -> Haxl [TableHash]
+getTablesHashes :: ObjName -> [(ObjName, Value)] -> Haxl [TableRep]
 getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
   columns <- dataFetch $ GetHashesReq HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch
@@ -360,10 +367,10 @@ getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
   triggers <- dataFetch $ GetHashesReq HTrigger (Just schemaName) (Just tblName)
   policies <- dataFetch $ GetHashesReq HPolicy (Just schemaName) (Just tblName)
   indexes  <- dataFetch $ GetHashesReq HIndex (Just schemaName) (Just tblName)
-  pure $ TableHash tblName
-                   tableHash
-                   (listToMap $ map (uncurry TableColumn) columns)
-                   (listToMap $ map (uncurry TableConstraint) constraints)
-                   (listToMap $ map (uncurry TableTrigger) triggers)
-                   (listToMap $ map (uncurry TablePolicy) policies)
-                   (listToMap $ map (uncurry TableIndex) indexes)
+  pure $ TableRep tblName
+                  tableHash
+                  (listToMap $ map (uncurry TableColumnRep) columns)
+                  (listToMap $ map (uncurry TableConstraintRep) constraints)
+                  (listToMap $ map (uncurry TableTriggerRep) triggers)
+                  (listToMap $ map (uncurry TablePolicyRep) policies)
+                  (listToMap $ map (uncurry TableIndexRep) indexes)

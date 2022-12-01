@@ -8,7 +8,7 @@ module Codd
     ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbHashes
+import           Codd.Hashing                   ( DbRep
                                                 , readHashesFromDisk
                                                 )
 import           Codd.Internal                  ( collectAndApplyMigrations
@@ -33,10 +33,10 @@ data CheckHashes = LaxCheck | StrictCheck
     deriving stock (Show)
 
 data ChecksumsPair = ChecksumsPair
-    { expectedChecksums :: DbHashes
-    , databaseChecksums :: DbHashes
+    { expectedChecksums :: DbRep
+    , databaseChecksums :: DbRep
     }
-data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbHashes | ChecksumsNotVerified
+data ApplyResult = ChecksumsDiffer ChecksumsPair | ChecksumsMatch DbRep | ChecksumsNotVerified
 
 -- | Collects pending migrations from disk and applies them all, returning
 -- the Database's checksums if they're not the ones expected or a success result otherwise.

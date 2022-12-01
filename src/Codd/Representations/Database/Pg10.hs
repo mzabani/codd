@@ -1,16 +1,18 @@
-module Codd.Hashing.Database.Pg10
+module Codd.Representations.Database.Pg10
     ( aclArrayTbl
     , hashQueryFor
     , pronameExpr
     , sortArrayExpr
     ) where
 
-import           Codd.Hashing.Database.Model    ( HashQuery(..)
+import           Codd.Representations.Database.Model
+                                                ( HashQuery(..)
                                                 , QueryFrag(..)
                                                 )
-import           Codd.Hashing.Database.SqlGen   ( sqlIn )
-import           Codd.Hashing.Types             ( HashableObject(..)
-                                                , ObjName
+import           Codd.Representations.Database.SqlGen
+                                                ( sqlIn )
+import           Codd.Representations.Types     ( ObjName
+                                                , ObjectRep(..)
                                                 )
 import           Codd.Types                     ( ChecksumAlgo(..)
                                                 , SchemaSelection(..)
@@ -170,7 +172,7 @@ hashQueryFor
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
-    -> HashableObject
+    -> ObjectRep
     -> HashQuery
 hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
     HDatabaseSettings ->

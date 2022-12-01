@@ -1,6 +1,6 @@
-module Codd.AppCommands.WriteChecksums
-  ( WriteChecksumsOpts(..)
-  , writeChecksums
+module Codd.AppCommands.WriteSchema
+  ( WriteSchemaOpts(..)
+  , writeSchema
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
@@ -16,11 +16,11 @@ import           Control.Monad.Logger           ( runStdoutLoggingT )
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
 
-data WriteChecksumsOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
+data WriteSchemaOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 
-writeChecksums
-  :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> WriteChecksumsOpts -> m ()
-writeChecksums dbInfo@CoddSettings { migsConnString } opts = case opts of
+writeSchema
+  :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> WriteSchemaOpts -> m ()
+writeSchema dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToDisk mdest -> runStdoutLoggingT $ do
     checksum <- Codd.withConnection
       migsConnString

@@ -24,20 +24,20 @@ library
       Codd.Analysis
       Codd.AppCommands
       Codd.AppCommands.AddMigration
-      Codd.AppCommands.VerifyChecksums
-      Codd.AppCommands.WriteChecksums
+      Codd.AppCommands.VerifySchema
+      Codd.AppCommands.WriteSchema
       Codd.Environment
       Codd.Hashing
-      Codd.Hashing.Database
-      Codd.Hashing.Database.Model
-      Codd.Hashing.Database.Pg10
-      Codd.Hashing.Database.Pg11
-      Codd.Hashing.Database.Pg12
-      Codd.Hashing.Database.Pg13
-      Codd.Hashing.Database.Pg14
-      Codd.Hashing.Database.SqlGen
-      Codd.Hashing.Disk
-      Codd.Hashing.Types
+      Codd.Representations.Database
+      Codd.Representations.Database.Model
+      Codd.Representations.Database.Pg10
+      Codd.Representations.Database.Pg11
+      Codd.Representations.Database.Pg12
+      Codd.Representations.Database.Pg13
+      Codd.Representations.Database.Pg14
+      Codd.Representations.Database.SqlGen
+      Codd.Representations.Disk
+      Codd.Representations.Types
       Codd.Internal
       Codd.Internal.MultiQueryStatement
       Codd.Internal.Retry

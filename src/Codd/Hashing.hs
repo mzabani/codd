@@ -1,16 +1,16 @@
 module Codd.Hashing
-    ( module Codd.Hashing.Database
-    , module Codd.Hashing.Types
-    , module Codd.Hashing.Disk
+    ( module Codd.Representations.Database
+    , module Codd.Representations.Types
+    , module Codd.Representations.Disk
     , logChecksumsComparison
     , hashDifferences
     ) where
 
-import           Codd.Hashing.Database          ( readHashesFromDatabase
+import           Codd.Representations.Database  ( readHashesFromDatabase
                                                 , readHashesFromDatabaseWithSettings
                                                 )
-import           Codd.Hashing.Disk
-import           Codd.Hashing.Types
+import           Codd.Representations.Disk
+import           Codd.Representations.Types
 
 import           Control.Monad.Logger           ( MonadLogger
                                                 , logErrorN
@@ -25,9 +25,9 @@ import           Data.Maybe                     ( mapMaybe )
 -- or logInfoN that they match otherwise.
 logChecksumsComparison
     :: MonadLogger m
-    => DbHashes
+    => DbRep
     -- ^ Database hashes
-    -> DbHashes
+    -> DbRep
  -- ^ Expected hashes
     -> m ()
 logChecksumsComparison dbHashes expectedChecksums =
@@ -41,7 +41,7 @@ logChecksumsComparison dbHashes expectedChecksums =
             <> detEncodeJSON (hashDifferences dbHashes expectedChecksums)
         else logInfoN "Database and expected schemas match."
 
-hashDifferences :: DbHashes -> DbHashes -> Map FilePath DiffType
+hashDifferences :: DbRep -> DbRep -> Map FilePath DiffType
 hashDifferences l r =
     let matches = matchOrd fst (toFiles l) (toFiles r)
     in  Map.fromList $ mapMaybe

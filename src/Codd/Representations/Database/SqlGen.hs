@@ -1,10 +1,11 @@
-module Codd.Hashing.Database.SqlGen
+module Codd.Representations.Database.SqlGen
     ( interspBy
     , sqlIn
     , parens
     ) where
 
-import           Codd.Hashing.Database.Model    ( QueryFrag(..) )
+import           Codd.Representations.Database.Model
+                                                ( QueryFrag(..) )
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.ToField
                                                as DB

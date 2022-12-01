@@ -31,7 +31,7 @@ $ psql -c "SELECT popular_name FROM animals"
 ````shell
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
-$ codd verify-checksums
+$ codd verify-schema
 [Error] DB and expected checksums do not match. Differences are (Left is Database, Right is expected): {"schemas/public/tables/animals/cols/popular_name":"different-checksums"}
 ````
 
@@ -171,7 +171,7 @@ INSERT INTO employee (employee_name) VALUES ('John Doe');
 Add this migration with `codd add` just like you did to the previous one and it will be added and applied.
 
 Before we finish this tutorial, some things you might want to do:
-- psql into your database and manually create a table there, without a migration. Then run `codd verify-checksums`.
+- psql into your database and manually create a table there, without a migration. Then run `codd verify-schema`.
 - Run `dropdb codd_experiments` and then `codd up` to get a fresh database from the start.
 - Read all the knobs you can configure codd with in [CONFIGURATION.md](docs/CONFIGURATION.md).
 - Read [safety considerations](#safety-considerations).
@@ -188,7 +188,7 @@ We recommend following these instructions closely to catch as many possible issu
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-checksums` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 - Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions

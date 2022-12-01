@@ -1,11 +1,13 @@
-module Codd.Hashing.Database.Pg12
+module Codd.Representations.Database.Pg12
     ( hashQueryFor
     ) where
 
-import           Codd.Hashing.Database.Model    ( HashQuery(..) )
-import qualified Codd.Hashing.Database.Pg11    as Pg11
-import           Codd.Hashing.Types             ( HashableObject(..)
-                                                , ObjName
+import           Codd.Representations.Database.Model
+                                                ( HashQuery(..) )
+import qualified Codd.Representations.Database.Pg11
+                                               as Pg11
+import           Codd.Representations.Types     ( ObjName
+                                                , ObjectRep(..)
                                                 )
 import           Codd.Types                     ( ChecksumAlgo
                                                 , SchemaSelection
@@ -18,7 +20,7 @@ hashQueryFor
     -> ChecksumAlgo
     -> Maybe ObjName
     -> Maybe ObjName
-    -> HashableObject
+    -> ObjectRep
     -> HashQuery
 hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName hobj =
     let hq = Pg11.hashQueryFor allRoles

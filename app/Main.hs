@@ -4,11 +4,11 @@ import qualified Codd
 import           Codd.AppCommands.AddMigration  ( AddMigrationOptions(..)
                                                 , addMigration
                                                 )
-import           Codd.AppCommands.VerifyChecksums
-                                                ( verifyChecksums )
-import           Codd.AppCommands.WriteChecksums
-                                                ( WriteChecksumsOpts(..)
-                                                , writeChecksums
+import           Codd.AppCommands.VerifySchema
+                                                ( verifySchema )
+import           Codd.AppCommands.WriteSchema
+                                                ( WriteSchemaOpts(..)
+                                                , writeSchema
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
@@ -26,7 +26,7 @@ import           Options.Applicative
 import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
 
-data Cmd = Up (Maybe Codd.CheckHashes) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteChecksumsOpts | VerifyChecksum Verbosity Bool
+data Cmd = Up (Maybe Codd.CheckHashes) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteChecksum WriteSchemaOpts | VerifyChecksum Verbosity Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -47,15 +47,15 @@ cmdParser = hsubparser
          )
        )
   <> command
-       "write-checksums"
+       "write-schema"
        (info
-         writeChecksumsParser
+         writeSchemaParser
          (progDesc
            "Writes files and folders to the checksums's folder that represent the DB's current schema"
          )
        )
   <> command
-       "verify-checksums"
+       "verify-schema"
        (info
          verifyChecksumParser
          (progDesc
@@ -122,8 +122,8 @@ addParser =
           <> help "The complete path of the .sql file to be added"
           )
 
-writeChecksumsParser :: Parser Cmd
-writeChecksumsParser =
+writeSchemaParser :: Parser Cmd
+writeSchemaParser =
   fmap WriteChecksum
     $   flag'
           WriteToStdout
@@ -142,7 +142,7 @@ verifyChecksumParser :: Parser Cmd
 verifyChecksumParser = VerifyChecksum <$> quietSwitch <*> switch
   (  long "from-stdin"
   <> help
-       "Reads a JSON representation of the expected checksums from stdin (also see 'codd write-checkums'), instead of using on-disk checksums."
+       "Reads a JSON representation of the expected schema from stdin (also see 'codd write-schema'), instead of using the on-disk expected schema files."
   )
 
 sqlFilePathReader :: ReadM SqlFilePath
@@ -204,5 +204,5 @@ doWork dbInfo (Up mCheckHashes connectTimeout) =
 doWork dbInfo (Add addOpts destFolder verbosity fp) =
   runVerbosityLogger verbosity $ addMigration dbInfo addOpts destFolder fp
 doWork dbInfo (VerifyChecksum verbosity fromStdin) =
-  runVerbosityLogger verbosity $ verifyChecksums dbInfo fromStdin
-doWork dbInfo (WriteChecksum opts) = writeChecksums dbInfo opts
+  runVerbosityLogger verbosity $ verifySchema dbInfo fromStdin
+doWork dbInfo (WriteChecksum opts) = writeSchema dbInfo opts

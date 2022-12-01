@@ -1,4 +1,28 @@
-module Codd.Hashing.Types where
+module Codd.Representations.Types
+    ( ObjectRep(..)
+    , ObjName(..)
+    , HasName(..)
+    , DiffType(..)
+    , Json(..)
+    , DbRep(..)
+    , SchemaRep(..)
+    , TableRep(..)
+    , RoleRep(..)
+    , ViewRep(..)
+    , RoutineRep(..)
+    , SequenceRep(..)
+    , CollationRep(..)
+    , TableColumnRep(..)
+    , TableConstraintRep(..)
+    , TableIndexRep(..)
+    , TablePolicyRep(..)
+    , TableTriggerRep(..)
+    , TypeRep(..)
+    , detEncodeJSON
+    , fromPathFrag
+    , listToMap
+    , mkPathFrag
+    ) where
 
 import           Data.Aeson                     ( FromJSON
                                                 , FromJSONKey
@@ -22,7 +46,7 @@ import           Database.PostgreSQL.Simple.ToField
                                                 ( ToField )
 import           GHC.Generics                   ( Generic )
 
-data HashableObject = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
+data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
@@ -46,62 +70,62 @@ instance ToJSON Json where
         Array  arr -> toEncoding $ Json <$> Vector.toList arr
         _          -> toEncoding val
 
-data DbHashes = DbHashes Value (Map ObjName SchemaHash) (Map ObjName RoleHash)
+data DbRep = DbRep Value (Map ObjName SchemaRep) (Map ObjName RoleRep)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
-data SchemaHash = SchemaHash ObjName
-                             Value
-                             (Map ObjName TableHash)
-                             (Map ObjName ViewHash)
-                             (Map ObjName RoutineHash)
-                             (Map ObjName SequenceHash)
-                             (Map ObjName CollationHash)
-                             (Map ObjName TypeHash)
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass (FromJSON, ToJSON)
-
-data TableHash = TableHash ObjName
+data SchemaRep = SchemaRep ObjName
                            Value
-                           (Map ObjName TableColumn)
-                           (Map ObjName TableConstraint)
-                           (Map ObjName TableTrigger)
-                           (Map ObjName TablePolicy)
-                           (Map ObjName TableIndex)
+                           (Map ObjName TableRep)
+                           (Map ObjName ViewRep)
+                           (Map ObjName RoutineRep)
+                           (Map ObjName SequenceRep)
+                           (Map ObjName CollationRep)
+                           (Map ObjName TypeRep)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
-data ViewHash = ViewHash ObjName Value
+data TableRep = TableRep ObjName
+                         Value
+                         (Map ObjName TableColumnRep)
+                         (Map ObjName TableConstraintRep)
+                         (Map ObjName TableTriggerRep)
+                         (Map ObjName TablePolicyRep)
+                         (Map ObjName TableIndexRep)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data RoutineHash = RoutineHash ObjName Value
+
+data ViewRep = ViewRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data SequenceHash = SequenceHash ObjName Value
+data RoutineRep = RoutineRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data CollationHash = CollationHash ObjName Value
+data SequenceRep = SequenceRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableColumn = TableColumn ObjName Value
+data CollationRep = CollationRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableConstraint = TableConstraint ObjName Value
+data TableColumnRep = TableColumnRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableTrigger = TableTrigger ObjName Value
+data TableConstraintRep = TableConstraintRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TablePolicy = TablePolicy ObjName Value
+data TableTriggerRep = TableTriggerRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TableIndex = TableIndex ObjName Value
+data TablePolicyRep = TablePolicyRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data RoleHash = RoleHash ObjName Value
+data TableIndexRep = TableIndexRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
-data TypeHash = TypeHash ObjName Value
+data RoleRep = RoleRep ObjName Value
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
+data TypeRep = TypeRep ObjName Value
     deriving stock (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
@@ -119,35 +143,35 @@ newtype ObjName = ObjName { unObjName :: Text }
 class HasName a where
     objName :: a -> ObjName
 
-instance HasName RoleHash where
-    objName (RoleHash n _) = n
-instance HasName SchemaHash where
-    objName (SchemaHash n _ _ _ _ _ _ _) = n
+instance HasName RoleRep where
+    objName (RoleRep n _) = n
+instance HasName SchemaRep where
+    objName (SchemaRep n _ _ _ _ _ _ _) = n
 
-instance HasName TableHash where
-    objName (TableHash n _ _ _ _ _ _) = n
+instance HasName TableRep where
+    objName (TableRep n _ _ _ _ _ _) = n
 
-instance HasName TableColumn where
-    objName (TableColumn n _) = n
-instance HasName TableConstraint where
-    objName (TableConstraint n _) = n
-instance HasName TableTrigger where
-    objName (TableTrigger n _) = n
-instance HasName TablePolicy where
-    objName (TablePolicy n _) = n
-instance HasName TableIndex where
-    objName (TableIndex n _) = n
-instance HasName ViewHash where
-    objName (ViewHash n _) = n
-instance HasName RoutineHash where
-    objName (RoutineHash n _) = n
-instance HasName SequenceHash where
-    objName (SequenceHash n _) = n
-instance HasName CollationHash where
-    objName (CollationHash n _) = n
+instance HasName TableColumnRep where
+    objName (TableColumnRep n _) = n
+instance HasName TableConstraintRep where
+    objName (TableConstraintRep n _) = n
+instance HasName TableTriggerRep where
+    objName (TableTriggerRep n _) = n
+instance HasName TablePolicyRep where
+    objName (TablePolicyRep n _) = n
+instance HasName TableIndexRep where
+    objName (TableIndexRep n _) = n
+instance HasName ViewRep where
+    objName (ViewRep n _) = n
+instance HasName RoutineRep where
+    objName (RoutineRep n _) = n
+instance HasName SequenceRep where
+    objName (SequenceRep n _) = n
+instance HasName CollationRep where
+    objName (CollationRep n _) = n
 
-instance HasName TypeHash where
-    objName (TypeHash n _) = n
+instance HasName TypeRep where
+    objName (TypeRep n _) = n
 
 listToMap :: HasName a => [a] -> Map ObjName a
 listToMap = Map.fromList . map (\obj -> (objName obj, obj))
@@ -162,9 +186,3 @@ instance ToJSON DiffType where
             toJSON ("not-expected-but-found" :: Text, foundInDB)
         BothButDifferent foundInDB ->
             toJSON ("different-checksums" :: Text, foundInDB)
-
-data HashDiff = HashDiff
-    { objectName :: FilePath
-    , objectDiff :: DiffType
-    }
-    deriving stock (Eq, Show)
