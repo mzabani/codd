@@ -27,7 +27,7 @@ library
       Codd.AppCommands.VerifySchema
       Codd.AppCommands.WriteSchema
       Codd.Environment
-      Codd.Hashing
+      Codd.Representations
       Codd.Representations.Database
       Codd.Representations.Database.Model
       Codd.Representations.Database.Pg10
@@ -155,7 +155,7 @@ test-suite codd-test
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
-      DbDependentSpecs.HashingSpec
+      DbDependentSpecs.SchemaVerificationSpec
       DbDependentSpecs.InvariantsSpec
       DbUtils
       EnvironmentSpec
@@ -164,7 +164,7 @@ test-suite codd-test
       TypesGen
       AesonValueGen
       Paths_codd
-      WritingReadingChecksumsSpec
+      WritingReadingRepresentationsSpec
   autogen-modules:
       Paths_codd
   hs-source-dirs:

@@ -1,13 +1,13 @@
-module Codd.Hashing
+module Codd.Representations
     ( module Codd.Representations.Database
     , module Codd.Representations.Types
     , module Codd.Representations.Disk
-    , logChecksumsComparison
-    , hashDifferences
+    , logSchemasComparison
+    , schemaDifferences
     ) where
 
-import           Codd.Representations.Database  ( readHashesFromDatabase
-                                                , readHashesFromDatabaseWithSettings
+import           Codd.Representations.Database  ( readRepresentationsFromDbWithSettings
+                                                , readSchemaFromDatabase
                                                 )
 import           Codd.Representations.Disk
 import           Codd.Representations.Types
@@ -21,28 +21,24 @@ import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
 
--- | Takes the DB and the expected hashes and logErrorN's the differences, if any,
+-- | Takes the DB and the expected schemas and logErrorN's the differences, if any,
 -- or logInfoN that they match otherwise.
-logChecksumsComparison
+logSchemasComparison
     :: MonadLogger m
     => DbRep
-    -- ^ Database hashes
+    -- ^ Database schema
     -> DbRep
- -- ^ Expected hashes
+    -- ^ Expected schema
     -> m ()
-logChecksumsComparison dbHashes expectedChecksums =
-    if dbHashes /= expectedChecksums
-        then
-        -- Urgh.. UTF-8 Text as output from Aeson would be perfect here..
-        -- Also, we need to make sure we output as much as possible in a single
-        -- line to be amenable to logging infrastructure
-            logErrorN
-            $  "DB and expected checksums do not match. Differences are: "
-            <> detEncodeJSON (hashDifferences dbHashes expectedChecksums)
-        else logInfoN "Database and expected schemas match."
+logSchemasComparison dbSchema expectedSchemas = if dbSchema /= expectedSchemas
+    then
+        logErrorN
+        $  "DB and expected schemas do not match. Differences are: "
+        <> detEncodeJSON (schemaDifferences dbSchema expectedSchemas)
+    else logInfoN "Database and expected schemas match."
 
-hashDifferences :: DbRep -> DbRep -> Map FilePath DiffType
-hashDifferences l r =
+schemaDifferences :: DbRep -> DbRep -> Map FilePath DiffType
+schemaDifferences l r =
     let matches = matchOrd fst (toFiles l) (toFiles r)
     in  Map.fromList $ mapMaybe
             (\case

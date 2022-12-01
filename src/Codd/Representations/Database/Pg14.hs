@@ -1,9 +1,9 @@
 module Codd.Representations.Database.Pg14
-    ( hashQueryFor
+    ( objRepQueryFor
     ) where
 
 import           Codd.Representations.Database.Model
-                                                ( HashQuery(..)
+                                                ( DbObjRepresentationQuery(..)
                                                 , QueryFrag(..)
                                                 )
 import           Codd.Representations.Database.Pg10
@@ -16,7 +16,7 @@ import qualified Codd.Representations.Database.Pg13
 import           Codd.Representations.Types     ( ObjName
                                                 , ObjectRep(..)
                                                 )
-import           Codd.Types                     ( ChecksumAlgo
+import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole
                                                 , strictRangeCtorOwnership
@@ -24,21 +24,21 @@ import           Codd.Types                     ( ChecksumAlgo
 import qualified Database.PostgreSQL.Simple    as DB
 
 -- Postgres 14 introduced multirange types.
-hashQueryFor
+objRepQueryFor
     :: [SqlRole]
     -> SchemaSelection
-    -> ChecksumAlgo
+    -> SchemaAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> ObjectRep
-    -> HashQuery
-hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
-    let hq = Pg13.hashQueryFor allRoles
-                               allSchemas
-                               checksumAlgo
-                               schemaName
-                               tableName
-                               hobj
+    -> DbObjRepresentationQuery
+objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
+    let hq = Pg13.objRepQueryFor allRoles
+                                 allSchemas
+                                 schemaAlgoOpts
+                                 schemaName
+                                 tableName
+                                 hobj
     in
         case hobj of
             HRoutine ->
@@ -73,16 +73,16 @@ hashQueryFor allRoles allSchemas checksumAlgo schemaName tableName hobj =
                     -- conservative and assume it does for now.
                             ]
                             ++ [ ( "owner"
-                                 , if strictRangeCtorOwnership checksumAlgo
+                                 , if strictRangeCtorOwnership schemaAlgoOpts
                                      then "pg_roles.rolname"
                                      else
                                          "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
                                  )
                                ]
                 in
-                    HashQuery
+                    DbObjRepresentationQuery
                         { objNameCol    = pronameExpr "pg_proc"
-                        , checksumCols  = nonAggCols
+                        , repCols       = nonAggCols
                         , fromTable     = "pg_catalog.pg_proc"
                         -- A different JOIN condition for pg_range is one of the important
                         -- changes compared to previous versions

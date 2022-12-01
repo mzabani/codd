@@ -121,7 +121,7 @@ Here's a super quick way to get a taste of _codd_ if you have postgres running. 
 ````shell
 $ export CODD_CONNECTION=postgres://postgres@localhost/codd_experiments
 $ export CODD_MIGRATION_DIRS=sql-migrations
-$ export CODD_CHECKSUM_DIR=codd-checksums
+$ export CODD_EXPECTED_SCHEMA_DIR=expected-schema
 ````
 
 Make sure you create the `sql-migrations` folder. If you're using docker, it helps to have these environment variables in a _.env_ file.
@@ -154,9 +154,9 @@ $ # If you're using the docker image with a .env file:
 $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "$(pwd):/working-dir" mzabani/codd add bootstrap-db.sql
 ````
 
-The file should now have been timestamped and moved to the `sql-migrations` folder. The migration ran and so the `codd_experiments` database was created, and checksums were written to the `codd-checksums` folder.
+The file should now have been timestamped and moved to the `sql-migrations` folder. The migration ran and so the `codd_experiments` database was created, and schema representation files were written to the `expected-schema` folder.
 
-Optionally, explore the `codd-checksums` folder. You won't find much yet, but all the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments match and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
+Optionally, explore the `expected-schema` folder. You won't find much yet, but all the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments match and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
 
 Just for completeness, let's now create a table. Write the following to a `create-employees-table.sql`:
 
@@ -188,10 +188,10 @@ We recommend following these instructions closely to catch as many possible issu
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies checksums, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
+- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies schemas, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
 - Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions
 
-1. ### Why does taking and restoring a database dump affect my checksums?
+1. ### Why does taking and restoring a database dump affect my expected codd schema?
    `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more when possible instead. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.

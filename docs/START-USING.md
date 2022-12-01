@@ -16,5 +16,5 @@ If you already have a Database and would like to start using _codd_, here's a gu
 8.  Run `codd add dump-migration.sql --dest-folder your-dev-only-folder`
 9.  You should now have your database back and managed through _codd_.
 10. Make sure your Production environment variable `CODD_MIGRATION_DIRS` does not contain your `dev-only` folder. Add any future SQL migrations to your `all-migrations` folder.
-11. Before deploying with _codd_, we strongly recommend you run `codd verify-schema` with your environment variables connected to your Production database and make sure checksums match.
+11. Before deploying with _codd_, we strongly recommend you run `codd verify-schema` with your environment variables connected to your Production database and make sure schemas match.
 12. In Production, we strongly recommend running `codd up --lax-check` to start with until you get acquainted enough to consider strict-checking. Make sure you read `codd up --help` to better understand your options.

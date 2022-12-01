@@ -8,7 +8,7 @@ import           Codd.AppCommands.WriteSchema
                                                 , writeSchema
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbRep(..) )
+import           Codd.Representations                   ( DbRep(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -57,7 +57,7 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbRep Aeson.Null Map.empty Map.empty
+            { onDiskReps   = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
@@ -85,7 +85,7 @@ doesNotModifyExistingDb
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbRep Aeson.Null Map.empty Map.empty
+            { onDiskReps   = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"

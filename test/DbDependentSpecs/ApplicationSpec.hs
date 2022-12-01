@@ -1,6 +1,6 @@
 module DbDependentSpecs.ApplicationSpec where
 
-import           Codd                           ( CheckHashes(..)
+import           Codd                           ( VerifySchemas(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
@@ -8,8 +8,6 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
-                                                )
 import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , collectAndApplyMigrations
@@ -23,6 +21,8 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations           ( readRepresentationsFromDbWithSettings
+                                                )
 import           Codd.Representations.Types     ( DbRep(..)
                                                 , Json(..)
                                                 )
@@ -283,7 +283,7 @@ spec = do
                                                                  -> "read uncommitted"
 
                       it
-                              "Strict checking and lax checking behaviour on mismatched checksums"
+                              "Strict checking and lax checking behaviour on mismatched schemas"
                           $ \emptyTestDbInfo -> do
                                 let bogusDbHashes =
                                         DbRep Aeson.Null Map.empty Map.empty
@@ -305,7 +305,7 @@ spec = do
                                           runStdoutLoggingT
                                                   (applyMigrations
                                                       (emptyTestDbInfo
-                                                          { onDiskHashes = Right
+                                                          { onDiskReps = Right
                                                               bogusDbHashes
                                                           }
                                                       )
@@ -332,7 +332,7 @@ spec = do
                                           runStdoutLoggingT
                                               (applyMigrations
                                                   (emptyTestDbInfo
-                                                      { onDiskHashes = Right
+                                                      { onDiskReps = Right
                                                           bogusDbHashes
                                                       }
                                                   )
@@ -382,7 +382,7 @@ spec = do
                                                         runStdoutLoggingT
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
-                                                                        { onDiskHashes =
+                                                                        { onDiskReps =
                                                                             Right
                                                                                 bogusDbHashes
                                                                         }

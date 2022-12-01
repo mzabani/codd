@@ -21,7 +21,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( execvoid_
                                                 , query
                                                 )
-import           Codd.Types                     ( ChecksumAlgo(..)
+import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection
                                                     ( IncludeSchemas
                                                     )
@@ -186,13 +186,12 @@ testCoddSettings = do
     pure CoddSettings
         { migsConnString   = connInfo
         , sqlMigrations    = []
-        , onDiskHashes     = Left ""
-        , schemasToHash = IncludeSchemas ["public", "codd-extra-mapped-schema"]
-        , extraRolesToHash = ["codd-test-user", "extra-codd-test-user"] -- Important for HashingSpec
+        , onDiskReps     = Left ""
+        , namespacesToCheck = IncludeSchemas ["public", "codd-extra-mapped-schema"]
+        , extraRolesToCheck = ["codd-test-user", "extra-codd-test-user"] -- Important for SchemaVerificationSpec
         , retryPolicy      = singleTryPolicy
         , txnIsolationLvl  = DbDefault
-        , checksumAlgo     = ChecksumAlgo False False False
-        , hashedChecksums  = True
+        , schemaAlgoOpts     = SchemaAlgo False False False
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.

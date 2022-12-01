@@ -1,7 +1,7 @@
 module TypesGen where
 
 import           AesonValueGen                  ( )
-import           Codd.Hashing
+import           Codd.Representations
 import           Data.Aeson                     ( Value )
 import           Data.Function                  ( on )
 import           Data.List                      ( nubBy )
@@ -10,11 +10,11 @@ import           Data.Map.Strict                ( Map )
 import qualified Data.Text                     as Text
 import           Test.QuickCheck
 
-newtype DbHashesGen = DbHashesGen { unDbHashesGen :: DbRep } deriving stock Show
+newtype DbRepsGen = DbRepsGen { unDbRepsGen :: DbRep } deriving stock Show
 
-instance Arbitrary DbHashesGen where
+instance Arbitrary DbRepsGen where
     arbitrary =
-        fmap DbHashesGen
+        fmap DbRepsGen
             $   DbRep
             <$> arbitrary
             <*> uniqueMapOf 3 schemaHashGen objName

@@ -1,44 +1,39 @@
 module Codd.Representations.Database.Pg12
-    ( hashQueryFor
+    ( objRepQueryFor
     ) where
 
 import           Codd.Representations.Database.Model
-                                                ( HashQuery(..) )
+                                                ( DbObjRepresentationQuery(..) )
 import qualified Codd.Representations.Database.Pg11
                                                as Pg11
 import           Codd.Representations.Types     ( ObjName
                                                 , ObjectRep(..)
                                                 )
-import           Codd.Types                     ( ChecksumAlgo
+import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole
                                                 )
 
-hashQueryFor
+objRepQueryFor
     :: [SqlRole]
     -> SchemaSelection
-    -> ChecksumAlgo
+    -> SchemaAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> ObjectRep
-    -> HashQuery
-hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName hobj =
-    let hq = Pg11.hashQueryFor allRoles
-                               schemaSel
-                               checksumAlgo
-                               schemaName
-                               tableName
-                               hobj
+    -> DbObjRepresentationQuery
+objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName hobj =
+    let hq = Pg11.objRepQueryFor allRoles
+                                 schemaSel
+                                 schemaAlgoOpts
+                                 schemaName
+                                 tableName
+                                 hobj
     in  case hobj of
-            HColumn -> hq
-                { checksumCols = checksumCols hq
-                                     ++ [("generated", "attgenerated")]
-                }
+            HColumn ->
+                hq { repCols = repCols hq ++ [("generated", "attgenerated")] }
             HCollation -> hq
-                { checksumCols = checksumCols hq
-                                     ++ [ ( "deterministic"
-                                          , "collisdeterministic"
-                                          )
-                                        ]
+                { repCols = repCols hq
+                                ++ [("deterministic", "collisdeterministic")]
                 }
             _ -> hq

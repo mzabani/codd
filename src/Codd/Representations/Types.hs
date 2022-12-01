@@ -185,4 +185,4 @@ instance ToJSON DiffType where
         NotExpectedButFound foundInDB ->
             toJSON ("not-expected-but-found" :: Text, foundInDB)
         BothButDifferent foundInDB ->
-            toJSON ("different-checksums" :: Text, foundInDB)
+            toJSON ("different-schemas" :: Text, foundInDB)

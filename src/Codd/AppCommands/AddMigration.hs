@@ -11,12 +11,12 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( persistHashesToDisk
-                                                , readHashesFromDatabaseWithSettings
-                                                )
 import           Codd.Internal                  ( streamingReadFile )
 import           Codd.Parsing                   ( EnvVars
                                                 , parseSqlMigration
+                                                )
+import           Codd.Representations           ( persistRepsToDisk
+                                                , readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( forM_
@@ -56,7 +56,7 @@ addMigration
   -> Maybe FilePath
   -> SqlFilePath
   -> m ()
-addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
+addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskReps } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
   = do
     finalDir <- case (destFolder, sqlMigrations) of
       (Just f, _) -> pure f
@@ -64,12 +64,12 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
         error
           "Please specify '--dest-folder' or add at least one path to the CODD_MIGRATION_DIRS environment variable."
       (Nothing, f : _) -> pure f
-    onDiskHashesDir <- either
+    onDiskRepsDir <- either
       pure
       (error
-        "This functionality needs a directory to write the DB checksum to. Report this as a bug."
+        "This functionality needs a directory to write the expected representations to. Report this as a bug."
       )
-      onDiskHashes
+      onDiskReps
     exists <- doesFileExist fp
     unless exists $ error $ "Could not find file " ++ fp
     runResourceT $ do
@@ -99,14 +99,14 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskHashes } AddMigrati
       $ \finalMigFile -> do
           unless dontApply $ do
             -- Important, and we don't have a test for this:
-            -- fetch hashes in the same transaction as migrations
+            -- fetch representations in the same transaction as migrations
             -- when possible, since that's what "up" does.
-            databaseChecksums <- Codd.applyMigrationsNoCheck
+            databaseSchemas <- Codd.applyMigrationsNoCheck
               dbInfo
               Nothing
               (secondsToDiffTime 5)
-              (readHashesFromDatabaseWithSettings dbInfo)
-            persistHashesToDisk databaseChecksums onDiskHashesDir
+              (readRepresentationsFromDbWithSettings dbInfo)
+            persistRepsToDisk databaseSchemas onDiskRepsDir
 
             liftIO
               $  putStrLn

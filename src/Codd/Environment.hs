@@ -10,9 +10,9 @@ import           Codd.Parsing                   ( connStringParser
                                                 , parseWithEscapeCharProper
                                                 )
 import           Codd.Representations.Types     ( DbRep )
-import           Codd.Types                     ( ChecksumAlgo(..)
-                                                , RetryBackoffPolicy(..)
+import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
+                                                , SchemaAlgo(..)
                                                 , SchemaSelection
                                                     ( AllNonInternalSchemas
                                                     , IncludeSchemas
@@ -42,56 +42,25 @@ import           UnliftIO                       ( MonadIO(..) )
 import           UnliftIO.Environment           ( lookupEnv )
 
 data CoddSettings = CoddSettings
-    { migsConnString   :: ConnectInfo
+    { migsConnString    :: ConnectInfo
     -- ^ The Connection String which will be used to run migrations.
-    , sqlMigrations    :: [FilePath]
+    , sqlMigrations     :: [FilePath]
     -- ^ A list of directories with .sql files.
     --   All .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
-    , onDiskHashes     :: Either FilePath DbRep
-    -- ^ The directory where DB hashes are persisted to when SQL migrations are applied. In a valid setup, this should always match the Hashes obtained from the Database,
+    , onDiskReps        :: Either FilePath DbRep
+    -- ^ The directory where DB schema representations are persisted to when SQL migrations are applied. In a valid setup, this should always match the representations obtained from the Database,
     -- (perhaps only after applying migrations when deploying).
-    , schemasToHash    :: SchemaSelection
-    -- ^ Selection of Schemas in the DB that we should hash.
-    , extraRolesToHash :: [SqlRole]
-    -- ^ Selection of Roles to hash. You usually need to include at least the App User. The super user from migsConnString is always included in hashing automatically and needs not be added here.
-    , retryPolicy      :: RetryPolicy
+    , namespacesToCheck :: SchemaSelection
+    -- ^ Selection of Schemas in the DB that codd should check.
+    , extraRolesToCheck :: [SqlRole]
+    -- ^ Selection of Roles to check. The super user from migsConnString is automatically checked and needs not be added here.
+    , retryPolicy       :: RetryPolicy
     -- ^ The Retry Policy to be used when applying failing migrations.
-    , txnIsolationLvl  :: TxnIsolationLvl
+    , txnIsolationLvl   :: TxnIsolationLvl
     -- ^ Transaction isolation level to be used when applying migrations.
-    , checksumAlgo     :: ChecksumAlgo
-    -- ^ Fine tuning that changes the checksum algorithm.
-    , hashedChecksums  :: Bool
-    -- ^ Instead of computing MD5 hashes of DB objects, you can store/use the string composed by Codd without hashing it
-    -- by setting this to False.
+    , schemaAlgoOpts    :: SchemaAlgo
+    -- ^ Fine tuning that changes the schema extraction algorithm.
     }
-
--- coerceCoddSettings :: CoddSettings -> CoddSettings
--- coerceCoddSettings CoddSettings {..} = CoddSettings
---     { migsConnString
---     , sqlMigrations    = copySqlMigs sqlMigrations
---     , onDiskHashes
---     , schemasToHash
---     , extraRolesToHash
---     , retryPolicy
---     , txnIsolationLvl
---     , checksumAlgo
---     , hashedChecksums
---     }
---   where
---     copySqlMigs
---         :: Either [FilePath] [AddedSqlMigration m]
---         -> Either [FilePath] [AddedSqlMigration n]
---     copySqlMigs (Left  fp  ) = Left fp
---     copySqlMigs (Right migs) = Right $ map copySqlMig migs
-
---     copySqlMig :: AddedSqlMigration m -> AddedSqlMigration n
---     copySqlMig (AddedSqlMigration SqlMigration {..} sqlTs) = AddedSqlMigration
---         SqlMigration { migrationName
---                      , migrationSql            = Nothing
---                      , migrationInTxn
---                      , migrationCustomConnInfo
---                      }
---         sqlTs
 
 -- | Considers backslash as an espace character for space.
 spaceSeparatedObjNameParser :: Parser [Text]
@@ -141,10 +110,10 @@ txnIsolationLvlParser =
         <|> string "read uncommitted"
         *>  pure ReadUncommitted
 
-checksumAlgoParser :: Parser ChecksumAlgo
-checksumAlgoParser = do
+schemaAlgoOptsParser :: Parser SchemaAlgo
+schemaAlgoOptsParser = do
     modifiers <- validModifier `Parsec.sepBy'` char ' '
-    pure ChecksumAlgo
+    pure SchemaAlgo
         { strictCollations         = collations `elem` modifiers
         , strictRangeCtorOwnership = rangeCtorOwnership `elem` modifiers
         , ignoreColumnOrder        = ignoreColOrder `elem` modifiers
@@ -197,14 +166,14 @@ getCoddSettings = do
     adminConnInfo     <- getAdminConnInfo
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
-    onDiskHashesDir <- Text.unpack <$> readEnv "CODD_CHECKSUM_DIR"
-    schemasToHash   <- parseEnv
+    onDiskRepsDir     <- Text.unpack <$> readEnv "CODD_EXPECTED_SCHEMA_DIR"
+    namespacesToCheck <- parseEnv
         AllNonInternalSchemas
         ( fmap (IncludeSchemas . map SqlSchema)
         . parseVar spaceSeparatedObjNameParser
         )
         "CODD_SCHEMAS"
-    extraRolesToHash <- parseEnv
+    extraRolesToCheck <- parseEnv
         []
         (fmap (map SqlRole) . parseVar spaceSeparatedObjNameParser)
         "CODD_EXTRA_ROLES"
@@ -214,18 +183,17 @@ getCoddSettings = do
     txnIsolationLvl <- parseEnv DbDefault
                                 (parseVar txnIsolationLvlParser)
                                 "CODD_TXN_ISOLATION"
-    checksumAlgo <- parseEnv (ChecksumAlgo False False False)
-                             (parseVar checksumAlgoParser)
-                             "CODD_CHECKSUM_ALGO"
-    pure CoddSettings { migsConnString   = adminConnInfo
-                      , sqlMigrations    = sqlMigrationPaths
-                      , onDiskHashes     = Left onDiskHashesDir
-                      , schemasToHash    = schemasToHash
-                      , extraRolesToHash = extraRolesToHash
-                      , retryPolicy      = retryPolicy
-                      , txnIsolationLvl  = txnIsolationLvl
-                      , checksumAlgo     = checksumAlgo
-                      , hashedChecksums  = False
+    schemaAlgoOpts <- parseEnv (SchemaAlgo False False False)
+                               (parseVar schemaAlgoOptsParser)
+                               "CODD_SCHEMA_ALGO"
+    pure CoddSettings { migsConnString    = adminConnInfo
+                      , sqlMigrations     = sqlMigrationPaths
+                      , onDiskReps        = Left onDiskRepsDir
+                      , namespacesToCheck = namespacesToCheck
+                      , extraRolesToCheck = extraRolesToCheck
+                      , retryPolicy       = retryPolicy
+                      , txnIsolationLvl   = txnIsolationLvl
+                      , schemaAlgoOpts    = schemaAlgoOpts
                       }
 
   where

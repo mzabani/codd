@@ -4,9 +4,9 @@ module Codd.Internal where
 import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbRep
-                                                , logChecksumsComparison
-                                                , readHashesFromDatabaseWithSettings
+import           Codd.Representations                   ( DbRep
+                                                , logSchemasComparison
+                                                , readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction(..)
@@ -574,33 +574,33 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                 <*> act conn
 
 -- | This can be used as a last-action when applying migrations to
--- strict-check checksums, logging differences, success and throwing
+-- strict-check schemas, logging differences, success and throwing
 -- an exception if they mismatch.
 strictCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
     -> DbRep
     -> ([BlockOfMigrations m] -> DB.Connection -> m ())
-strictCheckLastAction coddSettings expectedHashes blocksOfMigs conn = do
-    cksums <- readHashesFromDatabaseWithSettings coddSettings conn
+strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
+    cksums <- readRepresentationsFromDbWithSettings coddSettings conn
     unless (all blockInTxn blocksOfMigs) $ do
         logWarnN
             "IMPORTANT: Due to the presence of no-txn or custom-connection migrations, all migrations have been applied. We'll run a schema check."
-    logChecksumsComparison cksums expectedHashes
-    when (cksums /= expectedHashes) $ throwIO $ userError
-        "Exiting. Database checksums differ from expected."
+    logSchemasComparison cksums expectedReps
+    when (cksums /= expectedReps) $ throwIO $ userError
+        "Exiting. Database's schema differ from expected."
 
 -- | This can be used as a last-action when applying migrations to
--- lax-check checksums, logging differences or success, but
--- _never_ throwing exceptions and returning database checksums.
+-- lax-check schemas, logging differences or success, but
+-- _never_ throwing exceptions and returning the database schema.
 laxCheckLastAction
     :: (MonadUnliftIO m, MonadLogger m)
     => CoddSettings
     -> DbRep
     -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
-laxCheckLastAction coddSettings expectedHashes _blocksOfMigs conn = do
-    cksums <- readHashesFromDatabaseWithSettings coddSettings conn
-    logChecksumsComparison cksums expectedHashes
+laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
+    cksums <- readRepresentationsFromDbWithSettings coddSettings conn
+    logSchemasComparison cksums expectedReps
     pure cksums
 
 data BlockOfMigrations m = BlockOfMigrations {

@@ -1,6 +1,6 @@
 module Codd.Types
     ( SqlFilePath(..)
-    , ChecksumAlgo(..)
+    , SchemaAlgo(..)
     , SqlRole(..)
     , SqlSchema(..)
     , RetryPolicy(..)
@@ -28,7 +28,7 @@ data RetryPolicy = RetryPolicy Int RetryBackoffPolicy
 
 data TxnIsolationLvl = DbDefault | Serializable | RepeatableRead | ReadCommitted | ReadUncommitted deriving stock (Show, Eq)
 
-data ChecksumAlgo = ChecksumAlgo
+data SchemaAlgo = SchemaAlgo
     { strictCollations         :: Bool
     , strictRangeCtorOwnership :: Bool
     , ignoreColumnOrder        :: Bool

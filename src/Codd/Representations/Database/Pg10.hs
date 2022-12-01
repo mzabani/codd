@@ -1,12 +1,12 @@
 module Codd.Representations.Database.Pg10
     ( aclArrayTbl
-    , hashQueryFor
+    , objRepQueryFor
     , pronameExpr
     , sortArrayExpr
     ) where
 
 import           Codd.Representations.Database.Model
-                                                ( HashQuery(..)
+                                                ( DbObjRepresentationQuery(..)
                                                 , QueryFrag(..)
                                                 )
 import           Codd.Representations.Database.SqlGen
@@ -14,7 +14,7 @@ import           Codd.Representations.Database.SqlGen
 import           Codd.Representations.Types     ( ObjName
                                                 , ObjectRep(..)
                                                 )
-import           Codd.Types                     ( ChecksumAlgo(..)
+import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
                                                 , SqlRole
                                                 )
@@ -49,9 +49,9 @@ aclArrayTbl allRoles aclKind objOwnerOidIdentifier aclArrayIdentifier =
         <>      "        ORDER BY rolname NULLS FIRST) subq)"
 
 oidArrayExpr :: QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
-oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl hashExpr =
+oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl aggExpr =
     "(SELECT ARRAY_AGG("
-        <> hashExpr
+        <> aggExpr
         <> " ORDER BY s._idx)"
         <> "\n FROM UNNEST("
         <> oidArrayCol
@@ -112,15 +112,15 @@ typeNameExpr pgTypeTbl pgTypeElemTbl =
         <> pgTypeTbl
         <> ".typname END"
 
-pgClassHashQuery
+pgClassRepQuery
     :: Maybe ([SqlRole], QueryFrag)
-            -- ^ If privileges are to be checksummed, the roles and privileges kind character for the object.
+            -- ^ If privileges are to be verified, the roles and privileges kind character for the object.
             -- See `acldefault` in https://www.postgresql.org/docs/13/functions-info.html for the kind chars.
     -> Maybe ObjName
-    -> HashQuery
-pgClassHashQuery mPrivRolesAndKind schemaName = HashQuery
+    -> DbObjRepresentationQuery
+pgClassRepQuery mPrivRolesAndKind schemaName = DbObjRepresentationQuery
     { objNameCol    = "pg_class.relname"
-    , checksumCols  = [ ("rowtype"         , "pg_reltype.typname")
+    , repCols       = [ ("rowtype"         , "pg_reltype.typname")
                       , ("compositetype"   , "pg_reloftype.typname")
                       , ("owner"           , "rel_owner_role.rolname")
                       , ("accessmethod"    , "pg_am.amname")
@@ -166,15 +166,15 @@ pgClassHashQuery mPrivRolesAndKind schemaName = HashQuery
 --     mapRelKindToPrivKind =
 --         "(CASE WHEN pg_class.relkind='S' THEN 's' ELSE 'r' END)"
 
-hashQueryFor
+objRepQueryFor
     :: [SqlRole]
     -> SchemaSelection
-    -> ChecksumAlgo
+    -> SchemaAlgo
     -> Maybe ObjName
     -> Maybe ObjName
     -> ObjectRep
-    -> HashQuery
-hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
+    -> DbObjRepresentationQuery
+objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
     HDatabaseSettings ->
         let nonAggCols =
                 [ "pg_encoding_to_char(encoding)"
@@ -183,14 +183,14 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , "rolname"
                 ]
         in
-            HashQuery
+            DbObjRepresentationQuery
                 { objNameCol    = "datname"
-                , checksumCols  =
+                , repCols       =
                     [ ("encoding", "LOWER(pg_encoding_to_char(encoding))")
                     , ("collate" , "LOWER(datcollate)")
                     , ("ctype"   , "LOWER(datctype)")
                     , ("owner"   , "rolname")
-                                  -- We checksum privileges of roles in each role, but we checksum privileges of public
+                                  -- We check privileges of roles in each role, but we check privileges of public
                                   -- in db-settings
                     , ( "public_privileges"
                       , "_codd_privs.permissions ->> 'public'"
@@ -217,9 +217,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , groupByCols   = ["datname", "_codd_privs.permissions"]
                                       ++ nonAggCols
                 }
-    HSchema -> HashQuery
+    HSchema -> DbObjRepresentationQuery
         { objNameCol    = "nspname"
-        , checksumCols  = [ ("owner"     , "nsp_owner.rolname")
+        , repCols       = [ ("owner"     , "nsp_owner.rolname")
                           , ("privileges", "_codd_roles.permissions")
                           ]
         , fromTable     = "pg_catalog.pg_namespace"
@@ -251,9 +251,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                   )
                 ]
         in
-            HashQuery
+            DbObjRepresentationQuery
                 { objNameCol    = "pg_roles.rolname"
-                , checksumCols  =
+                , repCols       =
                     nonAggCols
                         ++ [ ( "membership"
                              , "COALESCE(ARRAY_AGG(JSONB_BUILD_OBJECT('role', other_role.rolname, 'admin_option', pg_auth_members.admin_option) ORDER BY other_role.rolname, pg_auth_members.admin_option) FILTER (WHERE other_role.rolname IS NOT NULL), '{}')"
@@ -272,27 +272,26 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , groupByCols   = "pg_roles.rolname" : map snd nonAggCols
                 }
     HTable ->
-        let hq = pgClassHashQuery (Just (allRoles, "'r'")) schemaName
+        let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
         in  hq { nonIdentWhere = Just "relkind IN ('r', 'f', 'p')" }
     HView ->
-        let hq = pgClassHashQuery (Just (allRoles, "'r'")) schemaName
+        let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
         in
             hq
-                { checksumCols = ("definition_md5", "MD5(pg_views.definition)")
-                                     : checksumCols hq
-                , joins        =
+                { repCols = ("definition_md5", "MD5(pg_views.definition)")
+                                : repCols hq
+                , joins   =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_views ON pg_views.schemaname=pg_namespace.nspname AND pg_views.viewname=pg_class.relname"
                 }
-    HPolicy -> HashQuery
+    HPolicy -> DbObjRepresentationQuery
         { objNameCol    = "polname"
-        , checksumCols  =
-            [ ("cmd"          , "polcmd")
-            , ("permissive"   , "polpermissive")
-            , ("qual"         , "pg_get_expr(polqual, polrelid)")
-            , ("withcheck"    , "pg_get_expr(polwithcheck, polrelid)")
-            , ("roles_applied", "ARRAY_AGG(rolname ORDER BY rolname)")
-            ]
+        , repCols = [ ("cmd"          , "polcmd")
+                    , ("permissive"   , "polpermissive")
+                    , ("qual"         , "pg_get_expr(polqual, polrelid)")
+                    , ("withcheck"    , "pg_get_expr(polwithcheck, polrelid)")
+                    , ("roles_applied", "ARRAY_AGG(rolname ORDER BY rolname)")
+                    ]
         , fromTable     = "pg_catalog.pg_policy"
         , joins         =
             "LEFT JOIN pg_catalog.pg_roles ON pg_roles.oid = ANY(polroles)"
@@ -319,27 +318,25 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                           ] -- Need to group by due to join against pg_roles
         }
     HSequence ->
-        let hq = pgClassHashQuery (Just (allRoles, "'s'")) schemaName
+        let hq = pgClassRepQuery (Just (allRoles, "'s'")) schemaName
         in
             hq
-                { checksumCols = checksumCols hq
-                                 ++ [ ("seq_type"   , "pg_seq_type.typname")
-                                    , ("start"      , "seqstart")
-                                    , ("increment"  , "seqincrement")
-                                    , ("max"        , "seqmax")
-                                    , ("min"        , "seqmin")
-                                    , ("cache"      , "seqcache")
-                                    , ("cycle"      , "seqcycle")
-                                    , ("owner_table", "owner_column.tablename")
-                                    ]
+                { repCols = repCols hq
+                            ++ [ ("seq_type"   , "pg_seq_type.typname")
+                               , ("start"      , "seqstart")
+                               , ("increment"  , "seqincrement")
+                               , ("max"        , "seqmax")
+                               , ("min"        , "seqmin")
+                               , ("cache"      , "seqcache")
+                               , ("cycle"      , "seqcycle")
+                               , ("owner_table", "owner_column.tablename")
+                               ]
                                         -- Num instead of name doesn't touch the sequence if the column's renamed,
                                         -- but touches it if the column changes positions (which is probably better)
-                                 ++ [ ( "owner_col_order"
-                                      , "owner_col_order.colorder"
-                                      )
-                                    | not (ignoreColumnOrder checksumAlgo)
-                                    ]
-                , joins        =
+                            ++ [ ("owner_col_order", "owner_col_order.colorder")
+                               | not (ignoreColumnOrder schemaAlgoOpts)
+                               ]
+                , joins   =
                     joins hq
                         <> "\nJOIN pg_catalog.pg_sequence pg_sequence ON seqrelid=pg_class.oid \
                           \\n JOIN pg_catalog.pg_type AS pg_seq_type ON pg_seq_type.oid=pg_sequence.seqtypid \
@@ -383,16 +380,16 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 -- is enabled. Read why in DATABASE-EQUALITY.md
                     ]
                     ++ [ ( "owner"
-                         , if strictRangeCtorOwnership checksumAlgo
+                         , if strictRangeCtorOwnership schemaAlgoOpts
                              then "pg_roles.rolname"
                              else
                                  "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
                          )
                        ]
         in
-            HashQuery
+            DbObjRepresentationQuery
                 { objNameCol    = pronameExpr "pg_proc"
-                , checksumCols  = nonAggCols
+                , repCols       = nonAggCols
                 , fromTable     = "pg_catalog.pg_proc"
                 , joins         =
                     "JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pronamespace \
@@ -412,9 +409,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                       (DB.Only <$> schemaName)
                 , groupByCols = ["proname", "proargtypes"] ++ map snd nonAggCols
                 }
-    HColumn -> HashQuery
+    HColumn -> DbObjRepresentationQuery
         { objNameCol    = "attname"
-        , checksumCols  =
+        , repCols       =
             [ ("type"      , "pg_type.typname")
                 , ("notnull"   , "attnotnull")
                 , ("hasdefault", "atthasdef")
@@ -436,7 +433,7 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 ++ [ ( "order"
                      , "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
                      )
-                   | not (ignoreColumnOrder checksumAlgo)
+                   | not (ignoreColumnOrder schemaAlgoOpts)
                    ]
         , fromTable     = "pg_catalog.pg_attribute"
         , joins         =
@@ -462,28 +459,27 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                    (DB.Only <$> tableName)
         , groupByCols   = []
         }
-    HTableConstraint -> HashQuery
+    HTableConstraint -> DbObjRepresentationQuery
         { objNameCol    = constraintnameExpr "pg_constraint" "pg_domain_type"
-        , checksumCols  =
-            [ ("type"            , "pg_constraint.contype")
-            , ("deferrable"      , "pg_constraint.condeferrable")
-            , ("deferred"        , "pg_constraint.condeferred")
-            , ("validated"       , "pg_constraint.convalidated")
-            , ("supporting_index", "pg_class_ind.relname")
-            , ("fk_ref_table"    , "pg_class_frel.relname")
-            , ("fk_updtype"      , "pg_constraint.confupdtype")
-            , ("fk_deltype"      , "pg_constraint.confdeltype")
-            , ("fk_matchtype"    , "pg_constraint.confmatchtype")
-            , ("local"           , "pg_constraint.conislocal")
-            , ("inhcount"        , "pg_constraint.coninhcount")
-            , ("noinherit"       , "pg_constraint.connoinherit")
+        , repCols = [ ("type"            , "pg_constraint.contype")
+                    , ("deferrable"      , "pg_constraint.condeferrable")
+                    , ("deferred"        , "pg_constraint.condeferred")
+                    , ("validated"       , "pg_constraint.convalidated")
+                    , ("supporting_index", "pg_class_ind.relname")
+                    , ("fk_ref_table"    , "pg_class_frel.relname")
+                    , ("fk_updtype"      , "pg_constraint.confupdtype")
+                    , ("fk_deltype"      , "pg_constraint.confdeltype")
+                    , ("fk_matchtype"    , "pg_constraint.confmatchtype")
+                    , ("local"           , "pg_constraint.conislocal")
+                    , ("inhcount"        , "pg_constraint.coninhcount")
+                    , ("noinherit"       , "pg_constraint.connoinherit")
                           -- We don't reference conkey and confkey because the constraint definition will already contain
                           -- referenced columns' names, AND because attnum is affected by dropped columns.
                         --   , "pg_constraint.conkey"
                         --   , "pg_constraint.confkey"
-            , ("definition"      , "pg_get_constraintdef(pg_constraint.oid)")
+                    , ("definition", "pg_get_constraintdef(pg_constraint.oid)")
                           -- , "conbin" -- A pg_node_tree
-            ]
+                    ]
         , fromTable     = "pg_catalog.pg_constraint"
         , joins         =
             "JOIN pg_catalog.pg_class ON pg_class.oid=pg_constraint.conrelid"
@@ -503,13 +499,13 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
         , groupByCols   = []
         }
     HIndex ->
-        let hq = pgClassHashQuery Nothing schemaName
+        let hq = pgClassRepQuery Nothing schemaName
         in
             hq
                 {
             -- TODO: Lots of columns still missing!! But pg_get_indexdef should do a good enough job for now
-                  checksumCols =
-                    checksumCols hq
+                  repCols    =
+                    repCols hq
                         ++ [ ("unique"   , "indisunique")
                            , ("primary"  , "indisprimary")
                            , ("exclusion", "indisexclusion")
@@ -520,20 +516,20 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                                         -- , "indexprs" -- pg_node_tree
                                         -- , "indpred" -- pg_node_tree
                            ]
-                , joins        =
+                , joins      =
                     joins hq
                         <> "\n JOIN pg_catalog.pg_index ON pg_index.indexrelid=pg_class.oid \
                                   \\n JOIN pg_catalog.pg_class pg_index_table ON pg_index.indrelid=pg_index_table.oid"
-                , identWhere   =
+                , identWhere =
                     (<> maybe ""
                               (QueryFrag " AND pg_index_table.relname=?")
                               (DB.Only <$> tableName)
                         )
                         <$> identWhere hq
                 }
-    HTrigger -> HashQuery
+    HTrigger -> DbObjRepresentationQuery
         { objNameCol    = "tgname"
-        , checksumCols  =
+        , repCols       =
             [ ("function"        , pronameExpr "pg_proc")
             , ("type"            , "tgtype")
             , ("enabled"         , "tgenabled")
@@ -577,9 +573,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
         , groupByCols   = []
         }
 
-    HCollation -> HashQuery
+    HCollation -> DbObjRepresentationQuery
         { objNameCol    = "collname"
-        , checksumCols  =
+        , repCols       =
             [ ("provider", "collprovider")
                 , ( "encoding"
                   , "LOWER(pg_catalog.pg_encoding_to_char(pg_collation.collencoding))"
@@ -588,10 +584,10 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , ("ctype"  , "LOWER(collctype)")
                 , ("owner"  , "coll_owner_role.rolname")
                 ]
-                ++ if strictCollations checksumAlgo
+                ++ if strictCollations schemaAlgoOpts
                        then
                            [
-                           -- Read more about collation checksumming in DATABASE-EQUALITY.md
+                           -- Read more about collation schema representations in DATABASE-EQUALITY.md
                              ("version", "collversion")
                            , ( "actual_version"
                              , "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
@@ -641,9 +637,9 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
                 , ("privileges"              , "typacl.permissions")
                 ]
         in
-            HashQuery
+            DbObjRepresentationQuery
                 { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
-                , checksumCols  =
+                , repCols       =
                     ckCols
                         ++ [ ( "composite_type_attrs"
                              , "ARRAY_TO_STRING(\
@@ -732,6 +728,6 @@ hashQueryFor allRoles schemaSel checksumAlgo schemaName tableName = \case
         -- === To understand:
         -- typrelid (what's a free-standing composite type?)
         -- typtypmod (what's a typmod that's applied to a base type?)
-        -- typndims (is this necessary if we hash the base type by name?)
+        -- typndims (is this necessary if we check the base type by name?)
         -- === Filter by:
         -- typisdefined=true (also investigate what this means, is this related to shell types?)

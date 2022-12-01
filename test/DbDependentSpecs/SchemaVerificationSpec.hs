@@ -1,9 +1,9 @@
-module DbDependentSpecs.HashingSpec where
+module DbDependentSpecs.SchemaVerificationSpec where
 
 import           Codd                           ( ApplyResult(..)
-                                                , CheckHashes(..)
-                                                , ChecksumsPair(..)
                                                 , CoddSettings(migsConnString)
+                                                , SchemasPair(..)
+                                                , VerifySchemas(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
@@ -11,12 +11,6 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbRep(..)
-                                                , DiffType(..)
-                                                , ObjName
-                                                , hashDifferences
-                                                , readHashesFromDatabaseWithSettings
-                                                )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
                                                 ( InTransaction
@@ -34,9 +28,15 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations           ( DbRep(..)
+                                                , DiffType(..)
+                                                , ObjName
+                                                , readRepresentationsFromDbWithSettings
+                                                , schemaDifferences
+                                                )
 import           Codd.Representations.Database  ( queryServerMajorVersion )
 import           Codd.Representations.Types     ( ObjName(..) )
-import           Codd.Types                     ( ChecksumAlgo(..)
+import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
                                                 , singleTryPolicy
                                                 )
@@ -123,12 +123,12 @@ hoistMU
 hoistMU f (MU sqlMig tst, change) =
   (MU (hoistAddedSqlMigration f sqlMig) tst, change)
 
-migrationsAndHashChange
+migrationsAndRepChange
   :: forall m
    . (MonadThrow m, EnvVars m)
   => Int
   -> m [(MU (AddedSqlMigration m), DbChange)]
-migrationsAndHashChange pgVersion = zipWithM
+migrationsAndRepChange pgVersion = zipWithM
   (\(MU doSql undoSql, c) i -> do
     mig <-
       either (error "Could not parse SQL migration") id
@@ -145,11 +145,11 @@ migrationsAndHashChange pgVersion = zipWithM
       , c
       )
   )
-  (migrationsAndHashChangeText pgVersion)
+  (migrationsAndRepChangeText pgVersion)
   (map fromInteger [0 ..]) -- This would be a list of DiffTime, which would have 10^-12s resolution and fail in the DB
 
-migrationsAndHashChangeText :: Int -> [(MU Text, DbChange)]
-migrationsAndHashChangeText pgVersion = flip execState [] $ do
+migrationsAndRepChangeText :: Int -> [(MU Text, DbChange)]
+migrationsAndRepChangeText pgVersion = flip execState [] $ do
       -- MISSING:
       -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
       -- EXCLUSION CONSTRAINTS
@@ -183,7 +183,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         , ( "schemas/public/tables/employee/indexes/employee_pkey"
           , DExpectedButNotFound
           )
-        , ("schemas/public/tables/employee/objhash", DExpectedButNotFound)
+        , ("schemas/public/tables/employee/objrep", DExpectedButNotFound)
         ]
   addMig_ "ALTER TABLE employee ALTER COLUMN employee_name SET NOT NULL"
           "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
@@ -261,7 +261,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
           ) -- This change happens because due to sequence ownership, we need to
       -- either include the owner column's name or its attnum. We chose the latter thinking it's more common case to rename columns than change
       -- their relative positions.
-      -- Constraints, however, reference column names (argh..) due to their expressions being checksummed
+      -- Constraints, however, reference column names (argh..) due to their expressions being verified
         ]
 
 
@@ -334,7 +334,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         , ( "schemas/public/tables/employee_car/cols/employee_id"
           , DExpectedButNotFound
           )
-        , ("schemas/public/tables/employee_car/objhash", DExpectedButNotFound)
+        , ("schemas/public/tables/employee_car/objrep", DExpectedButNotFound)
         ]
 
   addMig_
@@ -353,7 +353,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
         , ( "schemas/public/tables/employee_computer/indexes/employee_computer_employee_id_key"
           , DExpectedButNotFound
           )
-        , ( "schemas/public/tables/employee_computer/objhash"
+        , ( "schemas/public/tables/employee_computer/objrep"
           , DExpectedButNotFound
           )
         ]
@@ -488,7 +488,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     $ ChangeEq
         [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
-  -- SQL bodied functions are also checksummed
+  -- SQL bodied functions are also verified
   addMig_
       "CREATE OR REPLACE FUNCTION increment_sql(i integer) RETURNS integer AS $$\
           \SELECT i + 1; \n $$ LANGUAGE sql;"
@@ -524,7 +524,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     $ ChangeEq
         [("schemas/public/routines/increment;text,int4", DBothButDifferent)]
 
-  -- TODO: SECURITY attribute should be checksummed, but the following fails for some reason.
+  -- TODO: SECURITY attribute should be verified, but the following fails for some reason.
   -- addMig_ "ALTER FUNCTION increment(text, integer) SECURITY DEFINER;"
   --         "ALTER FUNCTION increment(text, integer) SECURITY INVOKER;"
   --   $ ChangeEq
@@ -631,15 +631,15 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     -- ROW LEVEL SECURITY
   addMig_ "ALTER TABLE employee ENABLE ROW LEVEL SECURITY"
           "ALTER TABLE employee DISABLE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "ALTER TABLE employee FORCE ROW LEVEL SECURITY"
           "ALTER TABLE employee NO FORCE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "ALTER TABLE employee NO FORCE ROW LEVEL SECURITY"
           "ALTER TABLE employee FORCE ROW LEVEL SECURITY"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   (createPolicy1, dropPolicy) <-
     addMig
@@ -762,15 +762,15 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
 
   addMig_ "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
           "REVOKE SELECT ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "GRANT INSERT ON TABLE employee TO \"codd-test-user\""
           "REVOKE INSERT ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "GRANT DELETE ON TABLE employee TO \"codd-test-user\""
           "REVOKE DELETE ON TABLE employee FROM \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
     -- For sequences
   addMig_
@@ -787,11 +787,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   -- Order of granting does not matter, nor do grantors
   addMig_ "REVOKE ALL ON TABLE employee FROM \"codd-test-user\""
           "GRANT SELECT,INSERT,DELETE ON TABLE employee TO \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\";"
           "REVOKE INSERT, DELETE ON TABLE employee FROM \"codd-test-user\";"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   -- At this point codd-test-user has I+D permissions on the employee table
   addMig_
@@ -803,11 +803,11 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "GRANT ALL ON TABLE employee TO \"codd-test-user\""
       "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT INSERT, DELETE ON TABLE employee TO \"codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMig_ "GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
           "REVOKE ALL ON TABLE employee FROM \"extra-codd-test-user\""
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
   addMigNoChanges_
     "REVOKE ALL ON TABLE employee FROM \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\""
@@ -815,7 +815,7 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
   addMig_
       "GRANT ALL ON TABLE employee TO PUBLIC"
       "REVOKE ALL ON TABLE employee FROM PUBLIC; GRANT ALL ON TABLE employee TO \"codd-test-user\"; GRANT ALL ON TABLE employee TO \"extra-codd-test-user\";"
-    $ ChangeEq [("schemas/public/tables/employee/objhash", DBothButDifferent)]
+    $ ChangeEq [("schemas/public/tables/employee/objrep", DBothButDifferent)]
 
 
     -- Permissions of unmapped role don't affect hashing
@@ -836,10 +836,10 @@ migrationsAndHashChangeText pgVersion = flip execState [] $ do
     addMig "CREATE SCHEMA \"codd-extra-mapped-schema\""
            "DROP SCHEMA \"codd-extra-mapped-schema\""
       $ ChangeEq
-          [("schemas/codd-extra-mapped-schema/objhash", DExpectedButNotFound)]
+          [("schemas/codd-extra-mapped-schema/objrep", DExpectedButNotFound)]
 
   addMig_ dropMappedSchema createMappedSchema $ ChangeEq
-    [("schemas/codd-extra-mapped-schema/objhash", DNotExpectedButFound)]
+    [("schemas/codd-extra-mapped-schema/objrep", DNotExpectedButFound)]
 
 
     -- DATABASE SETTINGS
@@ -1061,7 +1061,7 @@ instance Arbitrary NumMigsToReverse where
    -- TODO: We know the number of migrations does not depend on the server's version,
    -- but this is really ugly. We should avoid this generate random input without
    -- an instance of Arbitrary instead.
-    <$> chooseBoundedIntegral (5, length (migrationsAndHashChangeText 0) - 1)
+    <$> chooseBoundedIntegral (5, length (migrationsAndRepChangeText 0) - 1)
 
 -- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
 newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbRep)]
@@ -1070,13 +1070,13 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     aroundFreshDatabase
-      $ it "Strict and Lax collation hashing differs"
+      $ it "Strict and Lax collation representations differ"
       $ \emptyTestDbInfo -> do
       -- It'd be nice to test that different libc/libicu versions make hashes
       -- change, but I don't know how to do that sanely.
       -- So we just test the code paths and make sure hashes differ.
           let strictCollDbInfo = emptyTestDbInfo
-                { checksumAlgo = ChecksumAlgo { strictCollations         = True
+                { schemaAlgoOpts = SchemaAlgo { strictCollations         = True
                                               , strictRangeCtorOwnership = False
                                               , ignoreColumnOrder        = False
                                               }
@@ -1099,8 +1099,9 @@ spec = do
               testConnTimeout
               (\conn ->
                 (,)
-                  <$> readHashesFromDatabaseWithSettings emptyTestDbInfo  conn
-                  <*> readHashesFromDatabaseWithSettings strictCollDbInfo conn
+                  <$> readRepresentationsFromDbWithSettings emptyTestDbInfo conn
+                  <*> readRepresentationsFromDbWithSettings strictCollDbInfo
+                                                            conn
               )
           laxCollHashes `shouldNotBe` strictCollHashes
 
@@ -1108,7 +1109,7 @@ spec = do
       $ it "Strict range constructor ownership"
       $ \emptyTestDbInfo -> do
           let strictRangeDbInfo = emptyTestDbInfo
-                { checksumAlgo = ChecksumAlgo { strictCollations         = False
+                { schemaAlgoOpts = SchemaAlgo { strictCollations         = False
                                               , strictRangeCtorOwnership = True
                                               , ignoreColumnOrder        = False
                                               }
@@ -1135,13 +1136,14 @@ spec = do
               testConnTimeout
               (\conn ->
                 (,)
-                  <$> readHashesFromDatabaseWithSettings emptyTestDbInfo   conn
-                  <*> readHashesFromDatabaseWithSettings strictRangeDbInfo conn
+                  <$> readRepresentationsFromDbWithSettings emptyTestDbInfo conn
+                  <*> readRepresentationsFromDbWithSettings strictRangeDbInfo
+                                                            conn
               )
 
-          -- The time_subtype_diff function shouldn't have its hash change,
+          -- The time_subtype_diff function shouldn't have its representation change,
           -- but the constructors of floatrange and floatmultirange should.
-          (hashDifferences laxRangeHashes strictRangeHashes <&> simplifyDiff)
+          (schemaDifferences laxRangeHashes strictRangeHashes <&> simplifyDiff)
             `shouldBe` Map.fromList
                          ([ ( "schemas/public/routines/floatrange;float8,float8"
                             , DBothButDifferent
@@ -1183,7 +1185,7 @@ spec = do
                 )
             <*> pure (getIncreasingTimestamp 0)
           let ignColOrderDbInfo = emptyTestDbInfo
-                { checksumAlgo = ChecksumAlgo { strictCollations         = False
+                { schemaAlgoOpts = SchemaAlgo { strictCollations         = False
                                               , strictRangeCtorOwnership = False
                                               , ignoreColumnOrder        = True
                                               }
@@ -1192,7 +1194,7 @@ spec = do
             ignColOrderDbInfo
             (Just [hoistAddedSqlMigration lift createMig])
             testConnTimeout
-            (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
+            (readRepresentationsFromDbWithSettings ignColOrderDbInfo)
 
           dropCol1Mig <-
             AddedSqlMigration
@@ -1209,11 +1211,11 @@ spec = do
             ignColOrderDbInfo
             (Just $ map (hoistAddedSqlMigration lift) [createMig, dropCol1Mig])
             testConnTimeout
-            (readHashesFromDatabaseWithSettings ignColOrderDbInfo)
+            (readRepresentationsFromDbWithSettings ignColOrderDbInfo)
 
-          -- Only the removed column should have its checksum file removed.
+          -- Only the removed column should have its representation file removed.
           -- The other column and all dependent objects should not change one bit.
-          (afterDropHashes `hashDifferences` initialHashes <&> simplifyDiff)
+          (afterDropHashes `schemaDifferences` initialHashes <&> simplifyDiff)
             `shouldBe` Map.fromList
                          [ ( "schemas/public/tables/tbl/cols/col1"
                            , DExpectedButNotFound
@@ -1223,23 +1225,24 @@ spec = do
     aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
       let
         nonInternalSchemasDbInfo =
-          emptyTestDbInfo { schemasToHash = AllNonInternalSchemas }
+          emptyTestDbInfo { namespacesToCheck = AllNonInternalSchemas }
         publicSchemaDbInfo =
-          emptyTestDbInfo { schemasToHash = IncludeSchemas ["public"] }
+          emptyTestDbInfo { namespacesToCheck = IncludeSchemas ["public"] }
         emptySchemasDbInfo =
-          emptyTestDbInfo { schemasToHash = IncludeSchemas [] }
+          emptyTestDbInfo { namespacesToCheck = IncludeSchemas [] }
         nonExistingAndCatalogSchemasDbInfo = emptyTestDbInfo
-          { schemasToHash = IncludeSchemas ["non-existing-schema", "pg_catalog"]
+          { namespacesToCheck = IncludeSchemas
+                                  ["non-existing-schema", "pg_catalog"]
           }
         getSchemaHashes dbinfo = do
           DbRep _ hashes _ <- runStdoutLoggingT $ applyMigrationsNoCheck
             dbinfo
             Nothing
             testConnTimeout
-            (readHashesFromDatabaseWithSettings dbinfo)
+            (readRepresentationsFromDbWithSettings dbinfo)
           pure $ Map.keys hashes
 
-      -- 1. We should not see pg_catalog in any checksummed object, but "public"
+      -- 1. We should not see pg_catalog in any verified object, but "public"
       -- should be there as the only schema. The same for the one that includes "public"
       -- explicitly
       nonInternalSchemas <- getSchemaHashes nonInternalSchemasDbInfo
@@ -1255,24 +1258,24 @@ spec = do
       pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
       pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
-    describe "Hashing tests" $ do
+    describe "Schema verification tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
         $ aroundFreshDatabase
-        $ it "Checksumming schema changes"
+        $ it "Schemaming schema changes"
         $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
-            let -- emptyDbInfo = emptyDbInfo2 { hashedChecksums = False }
+            let -- emptyDbInfo = emptyDbInfo2 { hashedSchemas = False }
                 -- Use the above definition of emptyDbInfo if it helps debugging
                 emptyDbInfo = emptyDbInfo2
                 connInfo    = migsConnString emptyDbInfo
                 getHashes sett = runStdoutLoggingT $ withConnection
                   connInfo
                   testConnTimeout
-                  (readHashesFromDatabaseWithSettings sett)
+                  (readRepresentationsFromDbWithSettings sett)
             pgVersion <- withConnection connInfo
                                         testConnTimeout
                                         queryServerMajorVersion
             allMigsAndExpectedChanges <- map (hoistMU lift)
-              <$> migrationsAndHashChange pgVersion
+              <$> migrationsAndRepChange pgVersion
             hashBeforeEverything <- getHashes emptyDbInfo
             (_, AccumChanges applyHistory, hashesAndUndo :: [ ( DbRep
                 , Maybe Text
@@ -1290,7 +1293,7 @@ spec = do
             ensureMarceloExists connInfo
 
             -- 2. Now undo part or all of the SQL migrations and check that
-            -- checksums match each step of the way in reverse!
+            -- schemas match each step of the way in reverse!
             liftIO
               $  putStrLn
               $  "Undoing migrations in reverse. Num = "
@@ -1309,8 +1312,8 @@ spec = do
                               $ mkValidSql undoSql
                       hashesAfterUndo <- getHashes emptyDbInfo
                       let
-                        diff = hashDifferences hashesAfterUndo
-                                               expectedHashesAfterUndo
+                        diff = schemaDifferences hashesAfterUndo
+                                                 expectedHashesAfterUndo
                       (undoSql, diff) `shouldBe` (undoSql, Map.empty)
                       -- What follows is just a sanity check
                       (undoSql, hashesAfterUndo)
@@ -1349,19 +1352,19 @@ spec = do
             dbInfo
             (Just newMigs)
             testConnTimeout
-            (readHashesFromDatabaseWithSettings dbInfo)
+            (readRepresentationsFromDbWithSettings dbInfo)
           -- migText <- parsedSqlText <$> migrationSql (addedSqlMig nextMig)
-          let diff = hashDifferences hashSoFar dbHashesAfterMig
+          let diff = schemaDifferences hashSoFar dbHashesAfterMig
           case expectedChanges of
             ChangeEq c -> do
               (simplifyDiff <$> diff) `shouldBe` Map.fromList c
-              -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+              -- The check below is just a safety net in case "schemaDifferences" has a problem in its implementation
               if null c
                 then hashSoFar `shouldBe` dbHashesAfterMig
                 else hashSoFar `shouldNotBe` dbHashesAfterMig
             SomeChange -> do
               diff `shouldNotBe` Map.empty
-              -- The check below is just a safety net in case "hashDifferences" has a problem in its implementation
+              -- The check below is just a safety net in case "schemaDifferences" has a problem in its implementation
               hashSoFar `shouldNotBe` dbHashesAfterMig
 
           return

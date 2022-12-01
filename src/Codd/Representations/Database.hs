@@ -1,13 +1,13 @@
 module Codd.Representations.Database
   ( queryServerMajorVersion
-  , readHashesFromDatabase
-  , readHashesFromDatabaseWithSettings
+  , readSchemaFromDatabase
+  , readRepresentationsFromDbWithSettings
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Representations.Database.Model
-                                                ( HashQuery(..)
+                                                ( DbObjRepresentationQuery(..)
                                                 , QueryFrag(..)
                                                 , withQueryFrag
                                                 )
@@ -26,7 +26,7 @@ import           Codd.Representations.Database.SqlGen
                                                 , parens
                                                 )
 import           Codd.Representations.Types
-import           Codd.Types                     ( ChecksumAlgo
+import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole(..)
                                                 )
@@ -56,45 +56,45 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
 
-data HashReq a where
-  GetHashesReq ::ObjectRep -> Maybe ObjName -> Maybe ObjName -> HashReq [(ObjName, Value)]
+data RepresentationReq a where
+  GetRepsReq ::ObjectRep -> Maybe ObjName -> Maybe ObjName -> RepresentationReq [(ObjName, Value)]
   deriving stock (Typeable)
 
-instance Eq (HashReq a) where
-  GetHashesReq hobj1 sn1 tn1 == GetHashesReq sqHobj sn2 tn2 =
+instance Eq (RepresentationReq a) where
+  GetRepsReq hobj1 sn1 tn1 == GetRepsReq sqHobj sn2 tn2 =
     (hobj1, sn1, tn1) == (sqHobj, sn2, tn2)
 
-instance Hashable (HashReq a) where
-  hashWithSalt s (GetHashesReq hobj sn tn) = hashWithSalt s (hobj, sn, tn)
+instance Hashable (RepresentationReq a) where
+  hashWithSalt s (GetRepsReq hobj sn tn) = hashWithSalt s (hobj, sn, tn)
 
 
-instance Show (HashReq a) where
-  show (GetHashesReq hobj sn tn) = "GetHashesReq: " ++ show (hobj, sn, tn)
+instance Show (RepresentationReq a) where
+  show (GetRepsReq hobj sn tn) = "GetRepsReq: " ++ show (hobj, sn, tn)
 
-instance ShowP HashReq where
+instance ShowP RepresentationReq where
   showp = show
 
 
-instance StateKey HashReq where
-  data State HashReq = UserState {}
+instance StateKey RepresentationReq where
+  data State RepresentationReq = UserState {}
 
 
-instance DataSourceName HashReq where
+instance DataSourceName RepresentationReq where
   dataSourceName _ = "CatalogHashSource"
 
 type HaxlEnv
-  = (PgVersionHasher, DB.Connection, SchemaSelection, [SqlRole], ChecksumAlgo)
+  = (PgVersionHasher, DB.Connection, SchemaSelection, [SqlRole], SchemaAlgo)
 type Haxl = GenHaxl HaxlEnv ()
 
 data SameQueryFormatFetch = SameQueryFormatFetch
   { sqUniqueIdx :: Int
   , sqHobj      :: ObjectRep
-  , sqQueryObj  :: HashQuery
+  , sqQueryObj  :: DbObjRepresentationQuery
   , sqResults   :: ResultVar [(ObjName, Value)]
   }
 
-instance DataSource HaxlEnv HashReq where
-  fetch _ _ (hashQueryFor, conn, allSchemas, allRoles, checksumAlgo) =
+instance DataSource HaxlEnv RepresentationReq where
+  fetch _ _ (objRepQueryFor, conn, allSchemas, allRoles, schemaAlgoOpts) =
     SyncFetch combineQueriesWithWhere
    where
     fst3 (a, _, _) = a
@@ -132,25 +132,25 @@ instance DataSource HaxlEnv HashReq where
     -- of the same kind (e.g. all tables or all views or all triggers etc.) into a single query.
     combineQueriesWithWhere blockedFetches = do
       let
-        allHashReqs :: [SameQueryFormatFetch]
-        allHashReqs = zipWith
+        allRepReqs :: [SameQueryFormatFetch]
+        allRepReqs = zipWith
           (\i (a, c, d) -> SameQueryFormatFetch i a c d)
           [1 ..]
           [ ( hobj
-            , hashQueryFor allRoles
-                           allSchemas
-                           checksumAlgo
-                           schemaName
-                           tblName
-                           hobj
+            , objRepQueryFor allRoles
+                             allSchemas
+                             schemaAlgoOpts
+                             schemaName
+                             tblName
+                             hobj
             , r
             )
-          | BlockedFetch (GetHashesReq hobj schemaName tblName) r <-
+          | BlockedFetch (GetRepsReq hobj schemaName tblName) r <-
             blockedFetches
           ]
 
         fetchesPerQueryFormat :: [NonEmpty SameQueryFormatFetch]
-        fetchesPerQueryFormat = NE.groupAllWith sqHobj allHashReqs
+        fetchesPerQueryFormat = NE.groupAllWith sqHobj allRepReqs
 
         queriesPerFormat :: [(QueryInPieces, NonEmpty SameQueryFormatFetch)]
         queriesPerFormat = flip map fetchesPerQueryFormat $ \sffs@(x :| _) ->
@@ -168,10 +168,8 @@ instance DataSource HaxlEnv HashReq where
                       <> "), 'null'::jsonb))"
                   )
                   "'{}'::jsonb"
-                $ checksumCols (sqQueryObj x)
-            -- TODO: Remove finalHashExpr identifier?
-            finalHashExpr = jsonObject
-            finalQip      = QueryInPieces
+                $ repCols (sqQueryObj x)
+            finalQip = QueryInPieces
               { selectExprs         = "CASE "
                                       <> foldMap
                                            (\qip ->
@@ -187,7 +185,7 @@ instance DataSource HaxlEnv HashReq where
                                       <> " END AS artificial_idx, "
                                       <> objNameCol (sqQueryObj x)
                                       <> ", "
-                                      <> finalHashExpr
+                                      <> jsonObject
               , fromTbl             = fromTable (sqQueryObj x)
               , joinClauses         = joins (sqQueryObj x)
               , nonIdentifyingWhere = nonIdentWhere (sqQueryObj x)
@@ -218,11 +216,11 @@ instance DataSource HaxlEnv HashReq where
 type PgVersionHasher
   =  [SqlRole]
   -> SchemaSelection
-  -> ChecksumAlgo
+  -> SchemaAlgo
   -> Maybe ObjName
   -> Maybe ObjName
   -> ObjectRep
-  -> HashQuery
+  -> DbObjRepresentationQuery
 
 data QueryInPieces = QueryInPieces
   { selectExprs         :: QueryFrag
@@ -259,43 +257,43 @@ queryServerMajorVersion conn = do
     Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
     Right (numVersion :: Int) -> pure $ numVersion `div` 10000
 
-readHashesFromDatabaseWithSettings
+readRepresentationsFromDbWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
   => CoddSettings
   -> DB.Connection
   -> m DbRep
-readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash, checksumAlgo, extraRolesToHash } conn
+readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesToCheck, schemaAlgoOpts, extraRolesToCheck } conn
   = do
     majorVersion <- queryServerMajorVersion conn
-    let rolesToHash =
+    let rolesToCheck =
           (SqlRole . Text.pack . DB.connectUser $ migsConnString)
-            : extraRolesToHash
+            : extraRolesToCheck
     case majorVersion of
-      10 -> readHashesFromDatabase Pg10.hashQueryFor
+      10 -> readSchemaFromDatabase Pg10.objRepQueryFor
                                    conn
-                                   schemasToHash
-                                   rolesToHash
-                                   checksumAlgo
-      11 -> readHashesFromDatabase Pg11.hashQueryFor
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
+      11 -> readSchemaFromDatabase Pg11.objRepQueryFor
                                    conn
-                                   schemasToHash
-                                   rolesToHash
-                                   checksumAlgo
-      12 -> readHashesFromDatabase Pg12.hashQueryFor
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
+      12 -> readSchemaFromDatabase Pg12.objRepQueryFor
                                    conn
-                                   schemasToHash
-                                   rolesToHash
-                                   checksumAlgo
-      13 -> readHashesFromDatabase Pg13.hashQueryFor
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
+      13 -> readSchemaFromDatabase Pg13.objRepQueryFor
                                    conn
-                                   schemasToHash
-                                   rolesToHash
-                                   checksumAlgo
-      14 -> readHashesFromDatabase Pg14.hashQueryFor
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
+      14 -> readSchemaFromDatabase Pg14.objRepQueryFor
                                    conn
-                                   schemasToHash
-                                   rolesToHash
-                                   checksumAlgo
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
       v
         | v < 10 -> error
         $  "Unsupported PostgreSQL version "
@@ -305,53 +303,53 @@ readHashesFromDatabaseWithSettings CoddSettings { migsConnString, schemasToHash,
             $ "Not all features of PostgreSQL version "
             <> Text.pack (show majorVersion)
             <> " may be supported by codd. Please file an issue for us to support this newer version properly."
-          readHashesFromDatabase Pg14.hashQueryFor
+          readSchemaFromDatabase Pg14.objRepQueryFor
                                  conn
-                                 schemasToHash
-                                 rolesToHash
-                                 checksumAlgo
+                                 namespacesToCheck
+                                 rolesToCheck
+                                 schemaAlgoOpts
 
-readHashesFromDatabase
+readSchemaFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
   => PgVersionHasher
   -> DB.Connection
   -> SchemaSelection
   -> [SqlRole]
-  -> ChecksumAlgo
+  -> SchemaAlgo
   -> m DbRep
-readHashesFromDatabase pgVer conn schemaSel allRoles checksumAlgo = do
+readSchemaFromDatabase pgVer conn schemaSel allRoles schemaAlgoOpts = do
   let stateStore = stateSet UserState{} stateEmpty
   env0 <- liftIO
-    $ initEnv stateStore (pgVer, conn, schemaSel, allRoles, checksumAlgo)
+    $ initEnv stateStore (pgVer, conn, schemaSel, allRoles, schemaAlgoOpts)
   liftIO $ runHaxl env0 $ do
-    allDbSettings <- dataFetch $ GetHashesReq HDatabaseSettings Nothing Nothing
-    roles         <- dataFetch $ GetHashesReq HRole Nothing Nothing
-    schemas       <- dataFetch $ GetHashesReq HSchema Nothing Nothing
+    allDbSettings <- dataFetch $ GetRepsReq HDatabaseSettings Nothing Nothing
+    roles         <- dataFetch $ GetRepsReq HRole Nothing Nothing
+    schemas       <- dataFetch $ GetRepsReq HSchema Nothing Nothing
     let
       dbSettings = case allDbSettings of
         [(_, h)] -> h
         _ ->
           error
             "More than one database returned from pg_database. Please file a bug."
-    DbRep dbSettings <$> getSchemaHash schemas <*> pure
+    DbRep dbSettings <$> getNamespacesReps schemas <*> pure
       (listToMap $ map (uncurry RoleRep) roles)
 
-getSchemaHash :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaRep)
-getSchemaHash schemas =
-  fmap Map.fromList $ for schemas $ \(schemaName, schemaHash) -> do
-    tables      <- dataFetch $ GetHashesReq HTable (Just schemaName) Nothing
-    views       <- dataFetch $ GetHashesReq HView (Just schemaName) Nothing
-    routines    <- dataFetch $ GetHashesReq HRoutine (Just schemaName) Nothing
-    sequences   <- dataFetch $ GetHashesReq HSequence (Just schemaName) Nothing
-    collations  <- dataFetch $ GetHashesReq HCollation (Just schemaName) Nothing
-    types       <- dataFetch $ GetHashesReq HType (Just schemaName) Nothing
+getNamespacesReps :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaRep)
+getNamespacesReps schemas =
+  fmap Map.fromList $ for schemas $ \(schemaName, namespaceRep) -> do
+    tables     <- dataFetch $ GetRepsReq HTable (Just schemaName) Nothing
+    views      <- dataFetch $ GetRepsReq HView (Just schemaName) Nothing
+    routines   <- dataFetch $ GetRepsReq HRoutine (Just schemaName) Nothing
+    sequences  <- dataFetch $ GetRepsReq HSequence (Just schemaName) Nothing
+    collations <- dataFetch $ GetRepsReq HCollation (Just schemaName) Nothing
+    types      <- dataFetch $ GetRepsReq HType (Just schemaName) Nothing
 
-    tableHashes <- getTablesHashes schemaName tables
+    tableReps  <- getTablesReps schemaName tables
     pure
       ( schemaName
       , SchemaRep schemaName
-                  schemaHash
-                  (listToMap tableHashes)
+                  namespaceRep
+                  (listToMap tableReps)
                   (listToMap $ map (uncurry ViewRep) views)
                   (listToMap $ map (uncurry RoutineRep) routines)
                   (listToMap $ map (uncurry SequenceRep) sequences)
@@ -359,16 +357,16 @@ getSchemaHash schemas =
                   (listToMap $ map (uncurry TypeRep) types)
       )
 
-getTablesHashes :: ObjName -> [(ObjName, Value)] -> Haxl [TableRep]
-getTablesHashes schemaName tables = for tables $ \(tblName, tableHash) -> do
-  columns <- dataFetch $ GetHashesReq HColumn (Just schemaName) (Just tblName)
+getTablesReps :: ObjName -> [(ObjName, Value)] -> Haxl [TableRep]
+getTablesReps schemaName tables = for tables $ \(tblName, tableRep) -> do
+  columns     <- dataFetch $ GetRepsReq HColumn (Just schemaName) (Just tblName)
   constraints <- dataFetch
-    $ GetHashesReq HTableConstraint (Just schemaName) (Just tblName)
-  triggers <- dataFetch $ GetHashesReq HTrigger (Just schemaName) (Just tblName)
-  policies <- dataFetch $ GetHashesReq HPolicy (Just schemaName) (Just tblName)
-  indexes  <- dataFetch $ GetHashesReq HIndex (Just schemaName) (Just tblName)
+    $ GetRepsReq HTableConstraint (Just schemaName) (Just tblName)
+  triggers <- dataFetch $ GetRepsReq HTrigger (Just schemaName) (Just tblName)
+  policies <- dataFetch $ GetRepsReq HPolicy (Just schemaName) (Just tblName)
+  indexes  <- dataFetch $ GetRepsReq HIndex (Just schemaName) (Just tblName)
   pure $ TableRep tblName
-                  tableHash
+                  tableRep
                   (listToMap $ map (uncurry TableColumnRep) columns)
                   (listToMap $ map (uncurry TableConstraintRep) constraints)
                   (listToMap $ map (uncurry TableTriggerRep) triggers)

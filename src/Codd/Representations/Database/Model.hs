@@ -19,9 +19,9 @@ instance Show QueryFrag where
 withQueryFrag :: QueryFrag -> (forall a . ToRow a => Query -> a -> b) -> b
 withQueryFrag (QueryFrag q args) f = f q args
 
-data HashQuery = HashQuery
+data DbObjRepresentationQuery = DbObjRepresentationQuery
   { objNameCol    :: QueryFrag
-  , checksumCols  :: [(QueryFrag, QueryFrag)]
+  , repCols       :: [(QueryFrag, QueryFrag)]
   , fromTable     :: QueryFrag
   , joins         :: QueryFrag
   , nonIdentWhere :: Maybe QueryFrag
