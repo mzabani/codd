@@ -1,9 +1,10 @@
+{-# LANGUAGE CPP #-}
 module Codd.Representations.Types
     ( ObjectRep(..)
     , ObjName(..)
     , HasName(..)
     , DiffType(..)
-    , Json(..)
+    -- , Json(..)
     , DbRep(..)
     , SchemaRep(..)
     , TableRep(..)
@@ -28,18 +29,20 @@ import           Data.Aeson                     ( FromJSON
                                                 , FromJSONKey
                                                 , ToJSON(..)
                                                 , ToJSONKey
-                                                , Value(Array, Object, String)
+                                                , Value(..)
                                                 )
 import           Data.Aeson.Encoding            ( encodingToLazyByteString )
 import           Data.ByteString.Lazy           ( toStrict )
-import qualified Data.HashMap.Strict           as HM
 import           Data.Hashable                  ( Hashable )
 import qualified Data.Map                      as Map
 import           Data.Map.Strict                ( Map )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
+#if !MIN_VERSION_aeson(2,0,0)
+import qualified Data.HashMap.Strict           as HM
 import qualified Data.Vector                   as Vector
+#endif
 import           Database.PostgreSQL.Simple.FromField
                                                 ( FromField )
 import           Database.PostgreSQL.Simple.ToField
@@ -49,6 +52,18 @@ import           GHC.Generics                   ( Generic )
 data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
+
+#if MIN_VERSION_aeson(2,0,0)
+-- | Deterministic `ToJSON` instances, i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardles of hashable's initial seed.
+-- We should be able to remove this after we drop support for aeson-1.
+detEncodeJSON :: ToJSON a => a -> Text
+detEncodeJSON =
+    decodeUtf8
+        . toStrict
+        . encodingToLazyByteString
+        . toEncoding
+#else
 
 -- | Deterministic `ToJSON` instances, i.e. instances whose implementation of `toEncoding`
 -- produces the same result regardles of hashable's initial seed.
@@ -62,6 +77,7 @@ detEncodeJSON =
         . Json
         . toJSON
 
+
 newtype Json = Json Value
 instance ToJSON Json where
     toJSON (Json v) = v
@@ -69,6 +85,7 @@ instance ToJSON Json where
         Object m   -> toEncoding $ fmap Json $ Map.fromList $ HM.toList m
         Array  arr -> toEncoding $ Json <$> Vector.toList arr
         _          -> toEncoding val
+#endif
 
 data DbRep = DbRep Value (Map ObjName SchemaRep) (Map ObjName RoleRep)
     deriving stock (Show, Eq, Generic)

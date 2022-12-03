@@ -1,0 +1,13 @@
+resolver: lts-19.4
+
+packages:
+- .
+
+extra-deps:
+  - git: https://github.com/facebook/Haxl.git
+    commit: fd017a6ee307730f6621ff080bbbf38b0b92d5b7
+    # nix-sha256: sha256-3Z9wFjkfSkWq76hiZVVMfZDwPxKNp9mhPgCg0cjC3eI=
+
+flags:
+  hashable:
+    random-initial-seed: true

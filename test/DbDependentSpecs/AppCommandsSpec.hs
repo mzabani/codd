@@ -1,14 +1,10 @@
 module DbDependentSpecs.AppCommandsSpec where
 
 import           Codd.AppCommands.VerifySchema  ( verifySchema )
-import           Codd.AppCommands.WriteSchema
-                                                ( WriteSchemaOpts
-                                                    ( WriteToStdout
-                                                    )
+import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(WriteToStdout)
                                                 , writeSchema
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Representations                   ( DbRep(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -16,7 +12,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( execvoid_
                                                 , unsafeQuery1
                                                 )
-import           Codd.Representations.Types     ( Json(..) )
+import           Codd.Representations           ( DbRep(..) )
 import           Control.Monad.Logger           ( LoggingT
                                                 , runStdoutLoggingT
                                                 )
@@ -57,7 +53,7 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskReps   = Right $ DbRep Aeson.Null Map.empty Map.empty
+            { onDiskReps     = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
@@ -85,7 +81,7 @@ doesNotModifyExistingDb
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskReps   = Right $ DbRep Aeson.Null Map.empty Map.empty
+            { onDiskReps     = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"
@@ -120,8 +116,7 @@ spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Application Commands tests" $ do
-            it
-                    "verify-schema does not create Database when it does not exist"
+            it "verify-schema does not create Database when it does not exist"
                 $ doesNotCreateDB
                 $ \testSettings -> verifySchema testSettings False
 

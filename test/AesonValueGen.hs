@@ -1,8 +1,8 @@
+{-# LANGUAGE CPP #-}
 module AesonValueGen
     () where
 
-
-import           Codd.Representations.Types     ( Json(..) )
+#if !MIN_VERSION_aeson(2,0,0)
 import           Data.Aeson                     ( Array
                                                 , Object
                                                 , Value(..)
@@ -19,6 +19,7 @@ import           Data.Text                      ( Text
 import qualified Data.Vector                   as V
 import           Test.QuickCheck
 import           Test.QuickCheck.Arbitrary
+
 
 instance Arbitrary Value where
     arbitrary = sized arbValue
@@ -68,3 +69,5 @@ emptyObject = Object KM.empty
 -- | The empty array.
 emptyArray :: Value
 emptyArray = Array V.empty
+
+#endif

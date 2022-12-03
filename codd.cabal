@@ -80,7 +80,7 @@ library
   build-depends:
       aeson
     , attoparsec
-    , base >=4.7 && <5
+    , base
     , bytestring
     , containers
     , filepath
@@ -138,7 +138,7 @@ executable codd
   -- This makes sense, codd is single-threaded.
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
-      base >=4.7 && <5
+      base
     , codd
     , monad-logger
     , optparse-applicative
@@ -201,7 +201,7 @@ test-suite codd-test
   build-depends:
       aeson
     , attoparsec
-    , base >=4.7 && <5
+    , base
     , codd
     , containers
     , hashable

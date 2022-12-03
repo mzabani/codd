@@ -36,9 +36,10 @@
             let finalIohkPkgs = final.haskell-nix.haskellPackages;
             in {
               # This overlay adds our project to pkgs
-              coddProject = final.haskell-nix.project' {
+              coddProject = final.haskell-nix.stackProject' {
                 src = ./.;
-                compiler-nix-name = "ghc8107";
+                compiler-nix-name = "ghc902";
+                stackYaml = "stack-aeson-2.yaml";
 
                 modules = [{
                   # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
