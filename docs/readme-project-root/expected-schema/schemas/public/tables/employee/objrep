@@ -1,0 +1,1 @@
+{"accessmethod":"heap","amoptions":null,"compositetype":null,"forcerowsecurity":false,"kind":"r","owner":"postgres","partition":false,"persistence":"p","privileges":{"postgres":"postgres=arwdDxt/postgres"},"replident":"d","rowsecurity":false,"rowtype":"employee","shared":false}

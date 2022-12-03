@@ -12,7 +12,7 @@ $ cat create-animals-table.sql
 CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
 INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
 $ codd add create-animals-table.sql
-Migration applied and added to sql-migrations/all/2022-02-27-23-14-50-create-animals-table.sql
+Migration applied and added to sql-migrations/2022-02-27-23-14-50-create-animals-table.sql
 $ psql -c "SELECT popular_name FROM animals"
  popular_name
 --------------
@@ -32,7 +32,7 @@ $ psql -c "SELECT popular_name FROM animals"
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
 $ codd verify-schema
-[Error] DB and expected checksums do not match. Differences are (Left is Database, Right is expected): {"schemas/public/tables/animals/cols/popular_name":"different-checksums"}
+[Error] DB and expected schemas do not match. Differences are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar"}]}
 ````
 
 </td>
@@ -64,8 +64,8 @@ $ codd up
 
 ````shell
 $ git merge branch-with-conflicting-db-migration
-Auto-merging sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
-CONFLICT (content): Merge conflict in sql-migrations/db-checksum/schemas/public/tables/animals/cols/popular_name
+Auto-merging expected-schema/schemas/public/tables/animals/cols/popular_name
+CONFLICT (content): Merge conflict in expected-schema/schemas/public/tables/animals/cols/popular_name
 Automatic merge failed; fix conflicts and then commit the result.
 ````
 
