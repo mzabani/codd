@@ -184,14 +184,15 @@ testCoddSettings :: MonadIO m => m CoddSettings
 testCoddSettings = do
     connInfo <- testConnInfo
     pure CoddSettings
-        { migsConnString   = connInfo
-        , sqlMigrations    = []
-        , onDiskReps     = Left ""
-        , namespacesToCheck = IncludeSchemas ["public", "codd-extra-mapped-schema"]
+        { migsConnString    = connInfo
+        , sqlMigrations     = []
+        , onDiskReps        = Left ""
+        , namespacesToCheck = IncludeSchemas
+                                  ["public", "codd-extra-mapped-schema"]
         , extraRolesToCheck = ["codd-test-user", "extra-codd-test-user"] -- Important for SchemaVerificationSpec
-        , retryPolicy      = singleTryPolicy
-        , txnIsolationLvl  = DbDefault
-        , schemaAlgoOpts     = SchemaAlgo False False False
+        , retryPolicy       = singleTryPolicy
+        , txnIsolationLvl   = DbDefault
+        , schemaAlgoOpts    = SchemaAlgo False False False
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
