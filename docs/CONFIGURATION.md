@@ -25,14 +25,16 @@ CODD_SCHEMAS=public
 # Note that the role in CODD_CONNECTION is always checked regardless of this.
 CODD_EXTRA_ROLES=codd-user
 
-# Codd uses the default isolation level in READ WRITE mode, but you can override
-# that with the (optional) environment below.
+# Optional transaction isolation level for codd. By default, codd uses the
+# default isolation level in the DB, but always in READ WRITE mode so you can
+# set the default to be read only and still use codd.
 # Choose "db-default|serializable|repeatable read|read committed|read uncommitted"
 # or don't set it to get 'db-default'
 CODD_TXN_ISOLATION=db-default
 
+# Optional retry policy.
 # Migrations can fail due to temporary errors, so Codd retries up to 2 times by default
-# when migrations fail, but you can control that with this variable.
+# when migrations fail (to a total of 3 tries), but you can control that with this variable.
 # Its format is "max MAXRETRIES backoff (constant|exponential) TIME(s|ms)"
 CODD_RETRY_POLICY=max 2 backoff exponential 1.5s
 ````

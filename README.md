@@ -32,7 +32,7 @@ $ psql -c "SELECT popular_name FROM animals"
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
 $ codd verify-schema
-[Error] DB and expected schemas do not match. Differences are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar"}]}
+[Error] DB and expected schemas do not match. Differing objects and their current DB schemas are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar"}]}
 ````
 
 </td>
@@ -119,6 +119,7 @@ Invoking _codd_ this way will often require mounting volumes, specifying UIDs an
 Here's a super quick way to get a taste of _codd_ if you have postgres running. Let's first define three required environment variables:
 
 ````shell
+$ # codd understands URI or keyword value pairs, e.g. dbname=codd_experiments user=postgres host=localhost
 $ export CODD_CONNECTION=postgres://postgres@localhost/codd_experiments
 $ export CODD_MIGRATION_DIRS=sql-migrations
 $ export CODD_EXPECTED_SCHEMA_DIR=expected-schema

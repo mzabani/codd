@@ -40,6 +40,7 @@ import qualified Data.Text                     as Text
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           UnliftIO                       ( MonadIO(..) )
 import           UnliftIO.Environment           ( lookupEnv )
+import Data.Functor ((<&>))
 
 data CoddSettings = CoddSettings
     { migsConnString    :: ConnectInfo
@@ -166,7 +167,14 @@ getCoddSettings = do
     adminConnInfo     <- getAdminConnInfo
     sqlMigrationPaths <- map Text.unpack . Text.splitOn ":" <$> readEnv
         "CODD_MIGRATION_DIRS" -- No escaping colons in PATH (really?) so no escaping here either
-    onDiskRepsDir     <- Text.unpack <$> readEnv "CODD_EXPECTED_SCHEMA_DIR"
+    
+    -- Only temporarily accept the old env var name for this to smooth transition for current users
+    onDiskRepsDir :: String  <- ((,) <$> lookupEnv "CODD_EXPECTED_SCHEMA_DIR" <*> lookupEnv "CODD_CHECKSUM_DIR")
+                                <&> \case
+                                        (Nothing, Nothing) -> error "Could not find \"CODD_EXPECTED_SCHEMA_DIR\" environment variable"
+                                        (Just _, Just _) -> error "Found both \"CODD_EXPECTED_SCHEMA_DIR\" and \"CODD_CHECKSUM_DIR\" but can there only be one"
+                                        (Just d, Nothing) -> d
+                                        (Nothing, Just d) -> d
     namespacesToCheck <- parseEnv
         AllNonInternalSchemas
         ( fmap (IncludeSchemas . map SqlSchema)
