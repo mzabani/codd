@@ -54,6 +54,9 @@ jobs:
       # Note: this still seems not to work.. it doesn't push anything to cachix :(
       run: nix build --no-link . | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
 
+    - name: Build codd with aeson 1
+      run: nix build --no-link .#flakeAeson1.x86_64-linux.defaultPackage
+
     - name: Build codd's tests
       run: nix build --no-link .#codd:test:codd-test
 

@@ -9,6 +9,12 @@ if [[ $WITH_NIX ]]; then
     nix build ".#codd:test:codd-test" -o local/codd-test
 fi
 
+# Always build codd with aeson 1 with Nix to avoid ruining cached local build
+# artifacts.
+echo "Building codd with Aeson 1"
+nix build --no-link ".#flakeAeson1.x86_64-linux.defaultPackage"
+
+echo "Running tests with the Aeson 2 version of codd"
 # Tests which are not Postgres-version dependent first
 ./scripts/run-test.sh $WITH_NIX --skip "/DbDependentSpecs/"
 

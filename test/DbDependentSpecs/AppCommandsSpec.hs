@@ -1,16 +1,10 @@
 module DbDependentSpecs.AppCommandsSpec where
 
-import           Codd.AppCommands.VerifyChecksums
-                                                ( verifyChecksums )
-import           Codd.AppCommands.WriteChecksums
-                                                ( WriteChecksumsOpts
-                                                    ( WriteToStdout
-                                                    )
-                                                , writeChecksums
+import           Codd.AppCommands.VerifySchema  ( verifySchema )
+import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(WriteToStdout)
+                                                , writeSchema
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( DbHashes(..) )
-import           Codd.Hashing.Types             ( ObjHash(ObjHash) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -18,10 +12,12 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Codd.Query                     ( execvoid_
                                                 , unsafeQuery1
                                                 )
+import           Codd.Representations           ( DbRep(..) )
 import           Control.Monad.Logger           ( LoggingT
                                                 , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
+import qualified Data.Aeson                    as Aeson
 import           Data.List                      ( isInfixOf )
 import qualified Data.Map                      as Map
 import qualified Database.PostgreSQL.Simple    as DB
@@ -57,14 +53,14 @@ doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
 doesNotCreateDB act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskReps     = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
             }
     runStdoutLoggingT $ do
         -- libpq's fatal connection error is an IOException
-        verifyChecksums testSettings False
+        verifySchema testSettings False
             `shouldThrow` (\(e :: IOException) ->
                               "database \"non-existing-db-name\" does not exist"
                                   `isInfixOf` show e
@@ -85,7 +81,7 @@ doesNotModifyExistingDb
 doesNotModifyExistingDb act assert = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
-            { onDiskHashes   = Right $ DbHashes (ObjHash "") Map.empty Map.empty
+            { onDiskReps     = Right $ DbRep Aeson.Null Map.empty Map.empty
             , migsConnString = (migsConnString vanillaTestSettings)
                                    { DB.connectDatabase =
                                        "new_checksums_test_db"
@@ -120,19 +116,18 @@ spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Application Commands tests" $ do
-            it
-                    "verify-checksums does not create Database when it does not exist"
+            it "verify-schema does not create Database when it does not exist"
                 $ doesNotCreateDB
-                $ \testSettings -> verifyChecksums testSettings False
+                $ \testSettings -> verifySchema testSettings False
 
-            it "write-checksums does not create Database when it does not exist"
+            it "write-schema does not create Database when it does not exist"
                 $ doesNotCreateDB
-                $ \testSettings -> writeChecksums testSettings WriteToStdout
+                $ \testSettings -> writeSchema testSettings WriteToStdout
 
-            it "verify-checksums does not write to existing Database"
+            it "verify-schema does not write to existing Database"
                 $ doesNotModifyExistingDb
-                      (`verifyChecksums` False)
+                      (`verifySchema` False)
                       (-- Throws because expected hashes do not match
                        `shouldThrow` (\(_ :: ExitCode) -> True))
-            it "write-checksums does not write to existing Database"
-                $ doesNotModifyExistingDb (`writeChecksums` WriteToStdout) id
+            it "write-schema does not write to existing Database"
+                $ doesNotModifyExistingDb (`writeSchema` WriteToStdout) id

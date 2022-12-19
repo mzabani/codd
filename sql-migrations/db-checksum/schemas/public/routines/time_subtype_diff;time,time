@@ -1,1 +1,0 @@
-_sql_false_false_true_false_i_u_2_0_f_float8_{x,y}_x time without time zone, y time without time zone_{"public": "=X/codd_admin", "codd_admin": "codd_admin=X/codd_admin"}_SELECT EXTRACT(EPOCH FROM (x - y))_codd_admin

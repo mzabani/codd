@@ -1,1 +1,0 @@
-_codd_admin_btree_false_p_i_false_false_n_false_true_true_false_true_CREATE UNIQUE INDEX employee_pkey ON public.employee USING btree (employee_id)

@@ -91,7 +91,7 @@ CREATE DATABASE "${PGDATABASE}" TEMPLATE template0 OWNER ${PGUSER} ENCODING UTF8
 
 By using `no-txn` migrations or migrations with a custom connection string, you're taking great risk with the possibility of a migration failing when deploying and leaving the database in an intermediary state that is not compatible with the previously deployed application nor the to-be-deployed one. It is recommended that you avoid these at great costs and plan carefully when adding even one of them.  
 
-_Codd_ will always run each block of consecutive `in-txn` migrations with the same connection string in a single transaction. If there are `in-txn` migrations intertwined with `no-txn` migrations or migrations with custom connection strings, every block of consecutive `in-txn` and `same-connection-string` migrations runs in the same transaction, but other migrations run separately. Also, if even one `no-txn` migration or one migration with a custom connection string exists, _codd_ will apply and commit every pending migration and verify checksums only after that.  
+_Codd_ will always run each block of consecutive `in-txn` migrations with the same connection string in a single transaction. If there are `in-txn` migrations intertwined with `no-txn` migrations or migrations with custom connection strings, every block of consecutive `in-txn` and `same-connection-string` migrations runs in the same transaction, but other migrations run separately. Also, if even one `no-txn` migration or one migration with a custom connection string exists, _codd_ will apply and commit every pending migration and verify schemas only after that.  
 
 ## Unsupported SQL inside migrations
 

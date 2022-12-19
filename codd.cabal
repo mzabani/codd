@@ -24,20 +24,20 @@ library
       Codd.Analysis
       Codd.AppCommands
       Codd.AppCommands.AddMigration
-      Codd.AppCommands.VerifyChecksums
-      Codd.AppCommands.WriteChecksums
+      Codd.AppCommands.VerifySchema
+      Codd.AppCommands.WriteSchema
       Codd.Environment
-      Codd.Hashing
-      Codd.Hashing.Database
-      Codd.Hashing.Database.Model
-      Codd.Hashing.Database.Pg10
-      Codd.Hashing.Database.Pg11
-      Codd.Hashing.Database.Pg12
-      Codd.Hashing.Database.Pg13
-      Codd.Hashing.Database.Pg14
-      Codd.Hashing.Database.SqlGen
-      Codd.Hashing.Disk
-      Codd.Hashing.Types
+      Codd.Representations
+      Codd.Representations.Database
+      Codd.Representations.Database.Model
+      Codd.Representations.Database.Pg10
+      Codd.Representations.Database.Pg11
+      Codd.Representations.Database.Pg12
+      Codd.Representations.Database.Pg13
+      Codd.Representations.Database.Pg14
+      Codd.Representations.Database.SqlGen
+      Codd.Representations.Disk
+      Codd.Representations.Types
       Codd.Internal
       Codd.Internal.MultiQueryStatement
       Codd.Internal.Retry
@@ -58,6 +58,7 @@ library
       DeriveFunctor
       DeriveGeneric
       DerivingStrategies
+      DerivingVia
       LambdaCase
       FlexibleContexts
       FlexibleInstances
@@ -79,7 +80,7 @@ library
   build-depends:
       aeson
     , attoparsec
-    , base >=4.7 && <5
+    , base
     , bytestring
     , containers
     , filepath
@@ -97,6 +98,8 @@ library
     , transformers
     , unliftio
     , unliftio-core
+    , unordered-containers
+    , vector
   default-language: Haskell2010
 
 executable codd
@@ -113,6 +116,7 @@ executable codd
       DeriveFunctor
       DeriveGeneric
       DerivingStrategies
+      DerivingVia
       LambdaCase
       FlexibleContexts
       FlexibleInstances
@@ -134,7 +138,7 @@ executable codd
   -- This makes sense, codd is single-threaded.
   ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
   build-depends:
-      base >=4.7 && <5
+      base
     , codd
     , monad-logger
     , optparse-applicative
@@ -151,15 +155,16 @@ test-suite codd-test
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
-      DbDependentSpecs.HashingSpec
+      DbDependentSpecs.SchemaVerificationSpec
       DbDependentSpecs.InvariantsSpec
       DbUtils
       EnvironmentSpec
       LiftedExpectations
       ParsingSpec
       TypesGen
+      AesonValueGen
       Paths_codd
-      WritingReadingChecksumsSpec
+      WritingReadingRepresentationsSpec
   autogen-modules:
       Paths_codd
   hs-source-dirs:
@@ -194,9 +199,9 @@ test-suite codd-test
   -- build-tools:
   --     hspec-discover
   build-depends:
-      QuickCheck
+      aeson
     , attoparsec
-    , base >=4.7 && <5
+    , base
     , codd
     , containers
     , hashable
@@ -207,11 +212,15 @@ test-suite codd-test
     , mtl
     , network-uri
     , postgresql-simple
+    , QuickCheck
     , random
     , resourcet
+    , scientific
     , semialign
     , streaming
     , text
     , time
     , unliftio
+    , unordered-containers
+    , vector
   default-language: Haskell2010

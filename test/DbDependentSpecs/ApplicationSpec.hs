@@ -1,6 +1,6 @@
 module DbDependentSpecs.ApplicationSpec where
 
-import           Codd                           ( CheckHashes(..)
+import           Codd                           ( VerifySchemas(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
@@ -8,11 +8,6 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
-                                                )
-import           Codd.Hashing.Types             ( DbHashes(..)
-                                                , ObjHash(..)
-                                                )
 import           Codd.Internal                  ( baseApplyMigsBlock
                                                 , beginCommitTxnBracket
                                                 , collectAndApplyMigrations
@@ -26,6 +21,9 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , mapSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Representations           ( readRepresentationsFromDbWithSettings
+                                                )
+import           Codd.Representations.Types     ( DbRep(..) )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
@@ -41,6 +39,7 @@ import           Control.Monad.Logger           ( LogStr
                                                 )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
+import qualified Data.Aeson                    as Aeson
 import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
 import           Data.Text                      ( Text
@@ -282,12 +281,10 @@ spec = do
                                                                  -> "read uncommitted"
 
                       it
-                              "Strict checking and lax checking behaviour on mismatched checksums"
+                              "Strict checking and lax checking behaviour on mismatched schemas"
                           $ \emptyTestDbInfo -> do
-                                let
-                                    bogusDbHashes = DbHashes (ObjHash "")
-                                                             Map.empty
-                                                             Map.empty
+                                let bogusDbHashes =
+                                        DbRep Aeson.Null Map.empty Map.empty
                                 void @IO
                                     $ withConnection
                                           (migsConnString emptyTestDbInfo)
@@ -306,7 +303,7 @@ spec = do
                                           runStdoutLoggingT
                                                   (applyMigrations
                                                       (emptyTestDbInfo
-                                                          { onDiskHashes = Right
+                                                          { onDiskReps = Right
                                                               bogusDbHashes
                                                           }
                                                       )
@@ -333,7 +330,7 @@ spec = do
                                           runStdoutLoggingT
                                               (applyMigrations
                                                   (emptyTestDbInfo
-                                                      { onDiskHashes = Right
+                                                      { onDiskReps = Right
                                                           bogusDbHashes
                                                       }
                                                   )
@@ -369,8 +366,8 @@ spec = do
                                             )
                                         $ \emptyTestDbInfo -> do
                                               let
-                                                  bogusDbHashes = DbHashes
-                                                      (ObjHash "")
+                                                  bogusDbHashes = DbRep
+                                                      Aeson.Null
                                                       Map.empty
                                                       Map.empty
                                               void @IO
@@ -383,7 +380,7 @@ spec = do
                                                         runStdoutLoggingT
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
-                                                                        { onDiskHashes =
+                                                                        { onDiskReps =
                                                                             Right
                                                                                 bogusDbHashes
                                                                         }

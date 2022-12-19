@@ -4,8 +4,8 @@ module EnvironmentSpec
     ) where
 
 import           Codd.Environment               ( retryPolicyParser )
-import           Codd.Hashing.Types             ( ObjName(..) )
 import           Codd.Parsing                   ( connStringParser )
+import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 )

@@ -4,12 +4,12 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Hashing                   ( readHashesFromDatabaseWithSettings
-                                                )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , toMigrationTimestamp
+                                                )
+import           Codd.Representations           ( readRepresentationsFromDbWithSettings
                                                 )
 import           Control.Monad                  ( void
                                                 , when
@@ -159,12 +159,12 @@ spec = do
                 dbHashes1 <- runStdoutLoggingT $ withCoddDbAndDrop
                     [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
-                        $ readHashesFromDatabaseWithSettings dbInfo
+                        $ readRepresentationsFromDbWithSettings dbInfo
                     )
                 threadDelay (5 * 1000 * 1000)
                 dbHashes2 <- runStdoutLoggingT $ withCoddDbAndDrop
                     [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
-                        $ readHashesFromDatabaseWithSettings dbInfo
+                        $ readRepresentationsFromDbWithSettings dbInfo
                     )
                 dbHashes1 `shouldBe` dbHashes2
