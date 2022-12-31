@@ -202,7 +202,7 @@ instance EnvVars IO where
 instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
   getEnvVars = lift . getEnvVars
 
-{-# INLINE parseSqlPiecesStreaming #-} -- See Note [Inlining and specialization]
+-- {-# INLINE parseSqlPiecesStreaming #-} -- See Note [Inlining and specialization]
 -- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
 parseSqlPiecesStreaming
   :: forall m
@@ -800,7 +800,7 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
-{-# INLINE parseAndClassifyMigration #-} -- See Note [Inlining and specialization]
+-- {-# INLINE parseAndClassifyMigration #-} -- See Note [Inlining and specialization]
 -- | Parses only comments and white-space that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
@@ -929,7 +929,7 @@ parseAndClassifyMigration sqlStream = do
 piecesToText :: Foldable t => t SqlPiece -> Text
 piecesToText = foldr ((<>) . sqlPieceText) ""
 
-{-# INLINE parseSqlMigration #-} -- See Note [Inlining and specialization]
+-- {-# INLINE parseSqlMigration #-} -- See Note [Inlining and specialization]
 parseSqlMigration
   :: forall m s
    . (MonadThrow m, MigrationStream m s, EnvVars m)
