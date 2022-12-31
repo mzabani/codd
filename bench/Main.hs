@@ -23,14 +23,21 @@ import           Criterion.Measurement.Types    ( Benchmarkable(..)
                                                 , Measured(..)
                                                 , fromInt
                                                 )
+import           Data.Aeson                     ( FromJSON
+                                                , eitherDecodeFileStrict
+                                                )
 import           Data.Int                       ( Int64 )
-import           Data.Maybe                     ( fromMaybe )
+import           Data.Maybe                     ( fromMaybe
+                                                , isJust
+                                                )
 import           Data.Text                      ( Text )
 import qualified Data.Vector.Unboxed           as V
+import           GHC.Generics                   ( Generic )
 import           Statistics.Regression          ( olsRegress )
 import           Streaming                      ( Of )
 import           Streaming.Prelude              ( Stream )
 import qualified Streaming.Prelude             as Streaming
+import           System.Environment             ( lookupEnv )
 import qualified System.IO                     as IO
 import           Test.Hspec                     ( HasCallStack
                                                 , describe
@@ -39,9 +46,6 @@ import           Test.Hspec                     ( HasCallStack
                                                 , it
                                                 , runIO
                                                 )
-import GHC.Generics (Generic)
-import Data.Aeson (FromJSON, eitherDecodeFileStrict)
-import System.Environment (lookupEnv)
 
 manySelect1s :: Monad m => Int -> Stream (Of Text) m ()
 manySelect1s size = Streaming.replicate size "SELECT 1;"
@@ -147,12 +151,12 @@ fromGcInt =
 
 avg :: [Double] -> Double
 avg [] = error "Average of empty list"
-avg xs = sum xs / fromIntegral (length xs) -- No need to fret with the implementation, our lists are small
+avg xs = sum xs / fromIntegral (length xs) -- No need to fret with the implementation: our lists are small
 
-data CurrentPerf = CurrentPerf {
-    select1TimeAndMemory :: (Double, Double)
-    , copyTimeAndMemory :: (Double, Double)
-}
+data CurrentPerf = CurrentPerf
+    { select1TimeAndMemory :: (Double, Double)
+    , copyTimeAndMemory    :: (Double, Double)
+    }
     deriving stock Generic
     deriving anyclass FromJSON
 
@@ -164,8 +168,20 @@ main = do
     -- initializeTime must run first: https://hackage.haskell.org/package/criterion-measurement-0.2.0.0/docs/Criterion-Measurement.html#v:initializeTime
     initializeTime
 
-    expectedPerfPath :: FilePath <- fromMaybe (error "Please define the EXPECTED_BENCHMARK_FILE variable with the path to the json file with expected performance of benchmarks") <$> lookupEnv "EXPECTED_BENCHMARK_FILE"
-    CurrentPerf {..} <- either (error "Could not decode expected performance file") id <$> eitherDecodeFileStrict expectedPerfPath
+    -- This is very ad-hoc, but variance in GitHub actions is much greater than on my own machine,
+    -- and I don't want to increase variance on my machine as it's good for it to be tight.
+    -- So we check if we're in CI and increase our tolerance for divergent perf numbers.
+    isCI <- isJust <$> lookupEnv "CI"
+    let expectedPerfPath :: FilePath = if isCI
+            then "bench/expected-perf/ci.json"
+            else "bench/expected-perf/local.json"
+    putStrLn $ "Reading expected performance numbers from " ++ expectedPerfPath
+    CurrentPerf {..} <-
+        either (error "Could not decode expected performance file") id
+            <$> eitherDecodeFileStrict expectedPerfPath
+
+    let (diffWallTimeTolerance, diffMaxMemTolerance) =
+            if isCI then (0.9, 0.5) else (0.5, 0.5)
 
     hspec
         $ describe
@@ -203,9 +219,18 @@ main = do
                             rs
                             (fromGcInt . measPeakMbAllocated)
                   it "Must not be too different from expected performance" $ do
-                    let measures = map snd rs
-                    shouldBeF "Average wall time regression" 0.5 (avg (map measTime measures)) (fst select1TimeAndMemory)
-                    shouldBeF "Max memory usage regression" 0.5 (maximum (map (fromGcInt . measPeakMbAllocated) measures)) (snd select1TimeAndMemory)
+                      let measures = map snd rs
+                      shouldBeF "Average wall time regression"
+                                diffWallTimeTolerance
+                                (avg (map measTime measures))
+                                (fst select1TimeAndMemory)
+                      shouldBeF
+                          "Max memory usage regression"
+                          diffMaxMemTolerance
+                          (maximum
+                              (map (fromGcInt . measPeakMbAllocated) measures)
+                          )
+                          (snd select1TimeAndMemory)
 
               describe "Parsing COPY statement" $ do
                   rs :: [(Double, Measured)] <-
@@ -231,8 +256,17 @@ main = do
                       $ mustFormAHorizontalLine
                             rs
                             (fromGcInt . measPeakMbAllocated)
-                  
+
                   it "Must not be too different from expected performance" $ do
-                    let measures = map snd rs
-                    shouldBeF "Average wall time regression" 0.5 (avg (map measTime measures)) (fst copyTimeAndMemory)
-                    shouldBeF "Max memory usage regression" 0.5 (maximum (map (fromGcInt . measPeakMbAllocated) measures)) (snd copyTimeAndMemory)
+                      let measures = map snd rs
+                      shouldBeF "Average wall time regression"
+                                diffWallTimeTolerance
+                                (avg (map measTime measures))
+                                (fst copyTimeAndMemory)
+                      shouldBeF
+                          "Max memory usage regression"
+                          diffMaxMemTolerance
+                          (maximum
+                              (map (fromGcInt . measPeakMbAllocated) measures)
+                          )
+                          (snd copyTimeAndMemory)
