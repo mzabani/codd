@@ -68,6 +68,8 @@ jobs:
 
     - name: Run benchmarks
       run: nix run .#codd:bench:codd-bench
+      env:
+        EXPECTED_BENCHMARK_FILE: bench/expected-perf/ci.json
 
     - name: Build codd's library's haddocks
       run: nix build --no-link .#packages.x86_64-linux.codd:lib:codd.doc

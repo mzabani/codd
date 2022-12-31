@@ -177,7 +177,8 @@ benchmark codd-bench
       TypeFamilyDependencies
       ViewPatterns
   build-depends:
-    base
+    aeson
+    , base
     , codd
     , criterion-measurement >= 0.2.0.0
     , deepseq

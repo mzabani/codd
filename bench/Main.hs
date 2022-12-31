@@ -39,6 +39,9 @@ import           Test.Hspec                     ( HasCallStack
                                                 , it
                                                 , runIO
                                                 )
+import GHC.Generics (Generic)
+import Data.Aeson (FromJSON, eitherDecodeFileStrict)
+import System.Environment (lookupEnv)
 
 manySelect1s :: Monad m => Int -> Stream (Of Text) m ()
 manySelect1s size = Streaming.replicate size "SELECT 1;"
@@ -77,9 +80,9 @@ bench name f = do
         ++ name
         ++ ": Wall time="
         ++ secs measTime
-        ++ ", peak memory usage: "
+        ++ ", peak memory usage="
         ++ show measPeakMbAllocated
-        ++ "MB."
+        ++ " MB."
     pure msr
 
 shouldBeF :: HasCallStack => String -> Double -> Double -> Double -> IO ()
@@ -142,6 +145,17 @@ fromGcInt =
               )
         . fromInt
 
+avg :: [Double] -> Double
+avg [] = error "Average of empty list"
+avg xs = sum xs / fromIntegral (length xs) -- No need to fret with the implementation, our lists are small
+
+data CurrentPerf = CurrentPerf {
+    select1TimeAndMemory :: (Double, Double)
+    , copyTimeAndMemory :: (Double, Double)
+}
+    deriving stock Generic
+    deriving anyclass FromJSON
+
 main :: IO ()
 main = do
     IO.hSetBuffering IO.stdout IO.NoBuffering
@@ -149,6 +163,9 @@ main = do
 
     -- initializeTime must run first: https://hackage.haskell.org/package/criterion-measurement-0.2.0.0/docs/Criterion-Measurement.html#v:initializeTime
     initializeTime
+
+    expectedPerfPath :: FilePath <- fromMaybe (error "Please define the EXPECTED_BENCHMARK_FILE variable with the path to the json file with expected performance of benchmarks") <$> lookupEnv "EXPECTED_BENCHMARK_FILE"
+    CurrentPerf {..} <- either (error "Could not decode expected performance file") id <$> eitherDecodeFileStrict expectedPerfPath
 
     hspec
         $ describe
@@ -185,6 +202,10 @@ main = do
                       $ mustFormAHorizontalLine
                             rs
                             (fromGcInt . measPeakMbAllocated)
+                  it "Must not be too different from expected performance" $ do
+                    let measures = map snd rs
+                    shouldBeF "Average wall time regression" 0.5 (avg (map measTime measures)) (fst select1TimeAndMemory)
+                    shouldBeF "Max memory usage regression" 0.5 (maximum (map (fromGcInt . measPeakMbAllocated) measures)) (snd select1TimeAndMemory)
 
               describe "Parsing COPY statement" $ do
                   rs :: [(Double, Measured)] <-
@@ -210,3 +231,8 @@ main = do
                       $ mustFormAHorizontalLine
                             rs
                             (fromGcInt . measPeakMbAllocated)
+                  
+                  it "Must not be too different from expected performance" $ do
+                    let measures = map snd rs
+                    shouldBeF "Average wall time regression" 0.5 (avg (map measTime measures)) (fst copyTimeAndMemory)
+                    shouldBeF "Max memory usage regression" 0.5 (maximum (map (fromGcInt . measPeakMbAllocated) measures)) (snd copyTimeAndMemory)
