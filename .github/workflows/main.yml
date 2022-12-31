@@ -60,8 +60,14 @@ jobs:
     - name: Build codd's tests
       run: nix build --no-link .#codd:test:codd-test
 
+    - name: Build benchmarks
+      run: nix build --no-link .#codd:bench:codd-bench
+
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
+
+    - name: Run benchmarks
+      run: nix run .#codd:bench:codd-bench
 
     - name: Build codd's library's haddocks
       run: nix build --no-link .#packages.x86_64-linux.codd:lib:codd.doc

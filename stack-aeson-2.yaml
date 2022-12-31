@@ -8,6 +8,13 @@ extra-deps:
     commit: fd017a6ee307730f6621ff080bbbf38b0b92d5b7
     # nix-sha256: sha256-3Z9wFjkfSkWq76hiZVVMfZDwPxKNp9mhPgCg0cjC3eI=
 
+  # This version contains more useful GC measures
+  - git: https://github.com/haskell/criterion.git
+    commit: 4d6bd209bc72172c540610182f3f01b688e62e55
+    subdirs:
+      - criterion-measurement
+    # nix-sha256: sha256-I+3skzH526m+44VMyEligLA1G+90ZxDJ+FNhRCJSau4=
+
 flags:
   hashable:
     random-initial-seed: true
