@@ -298,6 +298,20 @@ instance Monad m => Monad (EnvVarsT m) where
     let EnvVarsT run2 = f v
     run2 r
 
+-- | Concatenates text inside consecutive `CopyFromStdinRow` pieces into a single `CopyFromStdinRow`. Keeps other
+-- pieces intact.
+groupCopyRows :: [SqlPiece] -> [SqlPiece]
+groupCopyRows = map concatCopy . List.groupBy (\a b -> case (a, b) of
+                                      (CopyFromStdinRow _, CopyFromStdinRow _) -> True
+                                      _ -> False)
+  where
+    concatCopy :: [SqlPiece] -> SqlPiece
+    concatCopy [] = error "Empty list!"
+    concatCopy [x] = x
+    concatCopy copyRows = CopyFromStdinRow $ Text.concat $ map (\case
+                                                        CopyFromStdinRow r -> r
+                                                        _ -> error "Not a Copy row!!") copyRows
+
 spec :: Spec
 spec = do
   describe "Parsing tests" $ do
@@ -336,7 +350,7 @@ spec = do
               $ unPureStream
               $ mkRandStream randomSeed
               $ Text.concat (map piecesToText origPieces)
-            parsedPieces `shouldBe` mconcat origPieces
+            groupCopyRows parsedPieces `shouldBe` groupCopyRows (mconcat origPieces)
       modifyMaxSuccess (const 10000)
         $ it
             "Statements concatenation matches original and statements end with semi-colon"

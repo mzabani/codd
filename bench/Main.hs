@@ -45,6 +45,7 @@ import           Test.Hspec                     ( HasCallStack
                                                 , hspec
                                                 , it
                                                 , runIO
+                                                , shouldBe
                                                 )
 
 manySelect1s :: Monad m => Int -> Stream (Of Text) m ()
@@ -169,7 +170,7 @@ main = do
     initializeTime
 
     -- This is very ad-hoc, but variance in GitHub actions is much greater than on my own machine,
-    -- and I don't want to increase variance on my machine as it's good for it to be tight.
+    -- and I don't want to increase variance tolerance on my machine as it's good for it to be tight.
     -- So we check if we're in CI and increase our tolerance for divergent perf numbers.
     isCI <- isJust <$> lookupEnv "CI"
     let expectedPerfPath :: FilePath = if isCI
@@ -270,3 +271,12 @@ main = do
                               (map (fromGcInt . measPeakMbAllocated) measures)
                           )
                           (snd copyTimeAndMemory)
+
+                  it "Number of SQL pieces must be low to avoid too many round-trips" $ do
+                    -- The body of the contents inside COPY can be very large, so we don't want
+                    -- small pieces coming out of the parser to avoid too many unnecessary round-trips.
+                    -- Any changes to the parser will be detected by this test, but those should never
+                    -- increase the number of parsed pieces too much.
+                    len :: Int <- parseMig (veryLargeCopy 500_000) >>= Streaming.length_
+                    putStrLn "Hello"
+                    len `shouldBe` 10
