@@ -23,9 +23,16 @@ module Codd.Parsing
   , parseMigrationTimestamp
   , parseSqlPiecesStreaming
   , toMigrationTimestamp
+
+  -- Exported for tests
+  , ParserState(..)
+  , copyFromStdinAfterStatementParser
+  , parseSqlPiecesStreaming'
   ) where
 
-import           Control.Applicative            ( (<|>), optional )
+import           Control.Applicative            ( (<|>)
+                                                , optional
+                                                )
 import           Control.Monad                  ( guard
                                                 , void
                                                 , when
@@ -56,6 +63,7 @@ import           Data.Attoparsec.Text           ( Parser
                                                 , takeWhile1
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
+import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
 import           Data.Kind                      ( Type )
 import           Data.List                      ( nub
@@ -64,7 +72,7 @@ import           Data.List                      ( nub
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( listToMaybe
-                                                , mapMaybe, catMaybes
+                                                , mapMaybe
                                                 )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
@@ -93,7 +101,6 @@ import           UnliftIO                       ( MonadIO
 import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
 import           UnliftIO.Resource              ( ReleaseKey )
-import Data.Bifunctor (first)
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -204,13 +211,23 @@ instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
   getEnvVars = lift . getEnvVars
 
 {-# INLINE parseSqlPiecesStreaming #-} -- See Note [Inlining and specialization]
--- | This should be a rough equivalent to `many parseSqlPiece` for Streams.
+-- | This should be a rough equivalent to `many sqlPieceParser` for Streams.
 parseSqlPiecesStreaming
   :: forall m
    . MonadThrow m
   => Stream (Of Text) m ()
   -> Stream (Of SqlPiece) m ()
-parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
+parseSqlPiecesStreaming = parseSqlPiecesStreaming' sqlPieceParser
+
+{-# INLINE parseSqlPiecesStreaming' #-} -- See Note [Inlining and specialization]
+-- | This should be a rough equivalent to `many parser` for Streams.
+parseSqlPiecesStreaming'
+  :: forall m
+   . MonadThrow m
+  => (ParserState -> Parser ([SqlPiece], ParserState))
+  -> Stream (Of Text) m ()
+  -> Stream (Of SqlPiece) m ()
+parseSqlPiecesStreaming' parser contents = Streaming.concat parseResultsStream
   -- NOTE: attoparsec's `parseWith` looks at first glance like it might help, but
   -- the parser supplied to it is fixed, and we need a state-sensitive parser for each
   -- chunk, because chunks might be incomplete SQL pieces.
@@ -248,17 +265,16 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
       Nothing -> handleParseResult
         parserState
         textPiece
-        (Just $ Parsec.parse (sqlPieceParser parserState) textPiece)
+        (Just $ Parsec.parse (parser parserState) textPiece)
       Just (Parsec.Fail _ _ errorMsg) ->
         throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
       Just (Parsec.Done unconsumedInput (sqlPieces, newParserState)) ->
         if textPiece == ""
-            -- Special case. After consuming the empty string "" - which is interpreted as 
+            -- Special case: after consuming the empty string "" - which is interpreted as 
             -- EOF -, it is possible unconsumed input remained from a previous partial parse.
-            -- It could even be e.g. some newlines at the end of the file after some last statement.
-            -- Our streaming parser needs to guarantee that all SQL is streamed back; nothing gets lost.
+            -- Notice that unconsumed input at the end is probably garbage, but we still want to
+            -- be defensive and include it (in case there's a problem in the parsers).
             -- So we can't forget to return that last unconsumed fragment in that case.
-            -- Oh, and we never want to return `OtherSqlPiece ""`.
           then pure
             ( [ sqlPiece | sqlPiece <- sqlPieces, sqlPiece /= OtherSqlPiece "" ]
             ++ [ OtherSqlPiece unconsumedInput | unconsumedInput /= "" ]
@@ -268,8 +284,7 @@ parseSqlPiecesStreaming contents = Streaming.concat parseResultsStream
           else first3 (sqlPieces ++) <$> handleParseResult
             newParserState
             unconsumedInput
-            (Just $ Parsec.parse (sqlPieceParser newParserState) unconsumedInput
-            )
+            (Just $ Parsec.parse (parser newParserState) unconsumedInput)
       Just (Parsec.Partial nextContinue) ->
         pure ([], Just nextContinue, parserState)
 
@@ -325,12 +340,12 @@ mapSqlPiece f = \case
   CopyFromStdinEnd       s -> CopyFromStdinEnd (f s)
 
 data ParserState = OutsideCopy | InsideCopy
-  deriving stock Show
+  deriving stock (Eq, Show)
 
 sqlPieceParser :: ParserState -> Parser ([SqlPiece], ParserState)
 sqlPieceParser parserState = case parserState of
   OutsideCopy -> first (: []) <$> outsideCopyParser
-  InsideCopy  -> copyFromStdinAfterStatementParser
+  InsideCopy  -> copyFromStdinAfterStatementParser 65536
  where
   outsideCopyParser =
     (, OutsideCopy)
@@ -435,51 +450,42 @@ copyFromStdinStatementParser = do
   pure $ CopyFromStdinStatement $ stmt <> seol
 
 -- | Parser to be used after "COPY FROM STDIN..." has been parsed with `copyFromStdinStatementParser`.
-copyFromStdinAfterStatementParser :: Parser ([SqlPiece], ParserState)
-copyFromStdinAfterStatementParser = do
-  (copyRows, copyEnd) <- takeLines 0 ""
-  let pieces = catMaybes [copyRows, copyEnd]
-  pure (pieces, case copyEnd of
-    Nothing -> InsideCopy
-    Just _ -> OutsideCopy)
-
- where
-  terminatorOnly = do
-    s    <- string "\\."
-    eol2 <- eol <|> ("" <$ endOfInput)
-    pure $ s <> eol2
-  takeLines size contents = if size >= 65536 then pure (Just $ CopyFromStdinRow contents, Nothing) else do
-      nextLine <- Left <$> terminatorOnly <|> Right <$> Parsec.takeTill (== '\n')
-      case nextLine of
-        -- Remember COPY without any data is very common in DB dumps
-        Left t -> pure (if contents == "" then Nothing else Just $ CopyFromStdinRow contents, Just $ CopyFromStdinEnd t)
-        Right l -> Parsec.string "\n" *> takeLines (size + 1 + Text.length l) (contents <> l <> "\n")
-  -- -- TODO: Test a simpler parser that concatenates lines and tests for the terminator.
-  -- -- This is too stateful and we don't need to be so performant when parsing.
-  -- contents <- Parsec.scan (0, 0)
-  --   (\(lenTotalParsed, lenTerminatorSoFar) c ->
-  --       if lenTotalParsed >= 65536 && lenTerminatorSoFar == 0 then Nothing
-  --       else ((+) 1,) <$>
-  --         case (lenTerminatorSoFar, c) of
-  --                                   (0, '\n') -> Just 1
-  --                                   (0, _) -> Just 0
-  --                                   (1, '\\') -> Just 2
-  --                                   (1, _) -> Just 0
-  --                                   (2, '.') -> Just 3
-  --                                   (2, _) -> Just 0
-  --                                   (3, '\n') -> Just 4
-  --                                   (3, _) -> Just 0
-  --                                   (4, _) -> Nothing
-  --                                   _ -> error "Impossible: terminator length greater than 4! Please file a bug report.")
-  -- isEnd :: Bool <- Parsec.atEnd
-  -- let fullTerminator = "\n\\.\n"
-  --     eofTerminator = "\n\\."
-  -- if fullTerminator `Text.isSuffixOf` contents then
-  --     pure (CopyFromStdinRow $ Text.stripSuffix fullTerminator contents, Just $ CopyFromStdinEnd fullTerminator)
-  --   else if isEnd && eofTerminator `Text.isSuffixOf` contents then
-  --     pure (CopyFromStdinRow $ Text.stripSuffix eofTerminator contents, Just $ CopyFromStdinEnd eofTerminator)
-  --   else
-  --     pure (CopyFromStdinRow contents, Nothing)
+copyFromStdinAfterStatementParser :: Int -> Parser ([SqlPiece], ParserState)
+copyFromStdinAfterStatementParser approxMaxChunkSize = do
+  when (approxMaxChunkSize <= 0)
+    $ error "approxMaxChunkSize must be strictly positive"
+  -- This stateful parser is tricky to get right but it's proven to be much faster than simpler
+  -- alternatives I've tried (e.g. taking lines and concatenating them was incredibly slow for some reason)
+  (contents, (_, _, terminatorLen)) <- Parsec.runScanner
+    (0 :: Int, 0 :: Int, 0 :: Int)
+    (\(lenTotalParsed, lenCurrentLine, lenTerminatorSoFar) c ->
+      if lenTotalParsed >= approxMaxChunkSize && lenCurrentLine == 0
+        then Nothing -- Only stop at the beginning of a new line
+        else if lenCurrentLine /= lenTerminatorSoFar && c == '\n'
+          then Just (1 + lenTotalParsed, 0, 0)
+          else if lenCurrentLine /= lenTerminatorSoFar
+            then Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0)
+            else case (lenTerminatorSoFar, c) of
+              (0, '\\') -> Just (1 + lenTotalParsed, 1 + lenCurrentLine, 1)
+              (1, '.' ) -> Just (1 + lenTotalParsed, 1 + lenCurrentLine, 2)
+              (2, '\n') -> Just (1 + lenTotalParsed, 1 + lenCurrentLine, 3) -- Last char in terminator, but `Just` because it needs to be in the parsed contents
+              (3, _   ) -> Nothing -- Terminator with len=3 means it's been parsed, so end here.
+              (_, '\n') -> Just (1 + lenTotalParsed, 0, 0)
+              _         -> Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0)
+    )
+  isEnd :: Bool <- Parsec.atEnd
+  let fullTerminator = "\\.\n"
+      eofTerminator  = "\\."
+      terminatorFound | terminatorLen == 3          = fullTerminator
+                      | isEnd && terminatorLen == 2 = eofTerminator
+                      | otherwise                   = ""
+      rows = Text.dropEnd terminatorLen contents
+  case (rows, terminatorFound) of
+    ("", "") -> pure ([], InsideCopy) -- This should be impossible
+    ("", _ ) -> pure ([CopyFromStdinEnd terminatorFound], OutsideCopy)
+    (_ , "") -> pure ([CopyFromStdinRow rows], InsideCopy)
+    (_ , _ ) -> pure
+      ([CopyFromStdinRow rows, CopyFromStdinEnd terminatorFound], OutsideCopy)
 
 -- | Parses 0 or more consecutive white-space or comments
 commentOrSpaceParser :: Bool -> Parser Text
@@ -812,10 +818,7 @@ coddEnvVarsCommentParser = do
     pure $ CoddCommentSuccess vars
   singleVarNameParser = Parsec.takeWhile1
     (\c ->
-      Char.isAsciiLower c
-        || Char.isAsciiUpper c
-        || c == '_'
-        || Char.isDigit c
+      Char.isAsciiLower c || Char.isAsciiUpper c || c == '_' || Char.isDigit c
     )
 
 isWhiteSpacePiece :: SqlPiece -> Bool

@@ -7,19 +7,23 @@ import           Codd.Internal                  ( BlockOfMigrations(..)
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars(..)
                                                 , ParsedSql(..)
+                                                , ParserState(..)
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
+                                                , copyFromStdinAfterStatementParser
                                                 , isCommentPiece
                                                 , isWhiteSpacePiece
                                                 , parseAndClassifyMigration
                                                 , parseSqlMigration
                                                 , parseSqlPiecesStreaming
+                                                , parseSqlPiecesStreaming'
                                                 , parsedSqlText
                                                 , piecesToText
                                                 , sqlPieceText
                                                 )
 import           Control.Monad                  ( (>=>)
+                                                , forM
                                                 , forM_
                                                 , when
                                                 )
@@ -30,6 +34,7 @@ import           Control.Monad.Reader           ( ReaderT(..)
                                                 )
 import           Control.Monad.Trans            ( MonadTrans )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
+import           Data.Attoparsec.Text           ( parseOnly )
 import qualified Data.Char                     as Char
 import           Data.Either                    ( isLeft )
 import qualified Data.List                     as List
@@ -49,6 +54,7 @@ import           DbUtils                        ( mkValidSql
                                                 , parseSqlMigrationIO
                                                 )
 import           EnvironmentSpec                ( ConnStringGen(..) )
+import           GHC.Natural                    ( Natural )
 import           Streaming                      ( Of
                                                 , Stream
                                                 )
@@ -251,6 +257,34 @@ instance Monad m => Arbitrary (RandomSql m) where
 instance Monad m => Arbitrary (SyntacticallyValidRandomSql m) where
   arbitrary = uncurry SyntacticallyValidRandomSql <$> genSql True
 
+data CopyBody m = CopyBody
+  { numLines   :: Int
+  , chunkSize  :: Int
+  , terminator :: Text
+  , rows       :: [Text]
+  }
+  deriving stock Show
+
+instance Arbitrary (CopyBody m) where
+  arbitrary = do
+    numLines   <- chooseInt (0, 99)
+    chunkSize  <- chooseInt (1, 10)
+    terminator <- elements ["\\.", "\\.\n", ""] -- We also accept no terminator (maybe that's overly relaxed compared to psql, but oh well)
+    rows       <- forM [1 .. numLines] $ \_ -> do
+      notEnding       <- elements ["\\", ".", "\\.", ".\\", ""] -- Any characters that look like a terminator and could confuse the parser
+      someCharsBefore <- arbitrary
+      someCharsAfter  <- arbitrary
+      before          <- Text.pack <$> if someCharsBefore
+        then listOf1 (arbitrary @Char `suchThat` (/=) '\n')
+        else pure ""
+      after <- Text.pack <$> if someCharsAfter
+        then listOf1 (arbitrary @Char `suchThat` (/=) '\n')
+        else pure ""
+      let row' = before <> notEnding <> after <> "\n"
+          row  = if row' == "\\.\n" then "x\\.\n" else row'
+      pure row
+    pure $ CopyBody { .. }
+
 shouldHaveWellParsedSql :: MonadIO m => SqlMigration m -> Text -> m ()
 mig `shouldHaveWellParsedSql` sql = case migrationSql mig of
   UnparsedSql _        -> liftIO $ expectationFailure "Got UnparsedSql"
@@ -301,16 +335,21 @@ instance Monad m => Monad (EnvVarsT m) where
 -- | Concatenates text inside consecutive `CopyFromStdinRow` pieces into a single `CopyFromStdinRow`. Keeps other
 -- pieces intact.
 groupCopyRows :: [SqlPiece] -> [SqlPiece]
-groupCopyRows = map concatCopy . List.groupBy (\a b -> case (a, b) of
-                                      (CopyFromStdinRow _, CopyFromStdinRow _) -> True
-                                      _ -> False)
-  where
-    concatCopy :: [SqlPiece] -> SqlPiece
-    concatCopy [] = error "Empty list!"
-    concatCopy [x] = x
-    concatCopy copyRows = CopyFromStdinRow $ Text.concat $ map (\case
-                                                        CopyFromStdinRow r -> r
-                                                        _ -> error "Not a Copy row!!") copyRows
+groupCopyRows = map concatCopy . List.groupBy
+  (\a b -> case (a, b) of
+    (CopyFromStdinRow _, CopyFromStdinRow _) -> True
+    _ -> False
+  )
+ where
+  concatCopy :: [SqlPiece] -> SqlPiece
+  concatCopy []       = error "Empty list!"
+  concatCopy [x]      = x
+  concatCopy copyRows = CopyFromStdinRow $ Text.concat $ map
+    (\case
+      CopyFromStdinRow r -> r
+      _                  -> error "Not a Copy row!!"
+    )
+    copyRows
 
 spec :: Spec
 spec = do
@@ -350,7 +389,8 @@ spec = do
               $ unPureStream
               $ mkRandStream randomSeed
               $ Text.concat (map piecesToText origPieces)
-            groupCopyRows parsedPieces `shouldBe` groupCopyRows (mconcat origPieces)
+            groupCopyRows parsedPieces
+              `shouldBe` groupCopyRows (mconcat origPieces)
       modifyMaxSuccess (const 10000)
         $ it
             "Statements concatenation matches original and statements end with semi-colon"
@@ -376,6 +416,24 @@ spec = do
                   t `shouldSatisfy` (\c -> Text.strip c == "")
                 CopyFromStdinEnd ll -> ll `shouldBe` "\\.\n"
                 _                   -> pure ()
+
+      modifyMaxSuccess (const 10000)
+        $ it "Parser of the body of COPY works for odd inputs"
+        $ property
+        $ \CopyBody {..} -> do
+        -- We want to stress-test this parser at its boundaries: lines ending close to chunkSize, terminators in the contents etc.
+            let rowsText = Text.concat rows
+                copyBody = Streaming.each rows <> Streaming.yield terminator
+            parsed <- Streaming.toList_ $ parseSqlPiecesStreaming'
+              (\_parserState -> copyFromStdinAfterStatementParser chunkSize)
+              copyBody
+
+            groupCopyRows parsed
+              `shouldBe` [ CopyFromStdinRow rowsText | numLines /= 0 ]
+              ++         [ CopyFromStdinEnd terminator | terminator /= "" ]
+            forM_ [ rows | CopyFromStdinRow rows <- parsed ]
+              $ \rows -> rows `shouldSatisfy` ("\n" `Text.isSuffixOf`)
+
 
     context "Valid SQL Migrations" $ do
       it "Plain Sql Migration, missing optional options"
