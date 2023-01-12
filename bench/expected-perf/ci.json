@@ -1,0 +1,10 @@
+{
+    "select1TimeAndMemory": [
+        1e-5,
+        2
+    ],
+    "copyTimeAndMemory": [
+        7e-6,
+        4
+    ]
+}

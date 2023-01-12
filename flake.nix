@@ -41,6 +41,9 @@
                   inherit compiler-nix-name stackYaml;
 
                   modules = [{
+                    # Set to true to be able to run `cabal --enable-profiling`
+                    enableLibraryProfiling = false;
+
                     # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
                     # See https://github.com/haskellari/postgresql-libpq/blob/master/Setup.hs#L65-L66
                     # packages.postgresql-libpq.components.library.build-tools =

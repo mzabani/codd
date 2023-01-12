@@ -7,3 +7,6 @@ dist-newstyle/
 
 # Nix build outputs
 results/
+
+# Result of cabal run -O2 --enable-profiling codd-bench
+codd-bench.prof
