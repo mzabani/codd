@@ -55,7 +55,7 @@
                     # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
                     # See https://github.com/haskellari/postgresql-libpq/blob/master/Setup.hs#L65-L66
                     packages.postgresql-libpq.components.library.build-tools =
-                      [ final.pkgsCross.musl64.postgresql ];
+                      [ final.postgresql ];
 
                     # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
                     # in codd.cabal
