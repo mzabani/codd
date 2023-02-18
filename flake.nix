@@ -176,11 +176,10 @@
         inherit pkgs;
 
         # Built with `nix build .#dockerImage.x86_64-linux`.
-        # Ideally this would be statically linked, and preferably
-        # with musl as libc for smaller size, but that's hard to do.  
         dockerImage = import ./nix/docker/codd-exe.nix {
           inherit pkgs;
-          codd-exe = flakeAeson2.packages."codd:exe:codd";
+          codd-exe =
+            flakeAeson2.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
       });
 }
