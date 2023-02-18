@@ -81,6 +81,25 @@
                         # "--ghc-option=-optl=-lpgcommon_shlib" # HMAC_Update and HMAC_Final are in this lib, but for some reason it's not picked up
                       ];
                     };
+
+                    packages.codd.components.tests.codd-test = {
+                      dontStrip = false;
+                      configureFlags = [
+                        # "--enable-static"
+                        # The order of -lssl and -lcrypto is important here
+                        # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                        # libssl.a and libcrypto.a, but without including both it will not be found!
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                        "--ghc-option=-optl=-lssl"
+                        "--ghc-option=-optl=-lcrypto"
+
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                        "--ghc-option=-optl=-lpq"
+                        "--ghc-option=-optl=-lpgcommon"
+                        "--ghc-option=-optl=-lpgport"
+                        # "--ghc-option=-optl=-lpgcommon_shlib" # HMAC_Update and HMAC_Final are in this lib, but for some reason it's not picked up
+                      ];
+                    };
                   }];
 
                   # This is used by `nix develop .` to open a shell for use with

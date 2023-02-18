@@ -6,7 +6,7 @@ set -e
 
 if [[ $WITH_NIX ]]; then
     echo Building test component with Nix..
-    nix build ".#codd:test:codd-test" -o local/codd-test
+    nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
 fi
 
 # Always build codd with aeson 1 with Nix to avoid ruining cached local build
