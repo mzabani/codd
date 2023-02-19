@@ -110,6 +110,7 @@
                     glibcLocales
                     cacert
                     postgres-service
+                    cabal2nix
                   ];
                   shell.shellHook = ''
                     source scripts/source-env.sh .env
