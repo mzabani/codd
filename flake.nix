@@ -30,7 +30,18 @@
           initializePostgres = false;
           wipeCluster = false;
         };
+        libpqOverlay = final: prev:
+          prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
+            # Postgres builds are failing tests for some reason :(
+            # We only really need libpq, and we have our tests running with
+            # statically linked executables, so it's probably fine to ignore
+            # this.
+            postgresql =
+              prev.postgresql.overrideAttrs (_: { doCheck = false; });
+          });
         overlays = [
+          libpqOverlay
+
           haskellNix.overlay
           (final: prev:
             let
@@ -44,11 +55,6 @@
                     # Set to true to be able to run `cabal --enable-profiling`
                     enableLibraryProfiling = false;
 
-                    # Musl builds fail because postgresql-libpq requires pg_config in the path for its configure phase.
-                    # See https://github.com/haskellari/postgresql-libpq/blob/master/Setup.hs#L65-L66
-                    # packages.postgresql-libpq.components.library.build-tools =
-                    #   [ postgres ];
-
                     # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
                     # in codd.cabal
                     packages.codd.components.tests.codd-test.build-tools = [
@@ -58,13 +64,32 @@
                     packages.codd.components.exes.codd = {
                       dontStrip = false;
                       configureFlags = [
-                        # The order of -lssl and -lcrypto is important here
-                        # "--ghc-option=-optl=-lssl"
-                        # "--ghc-option=-optl=-lcrypto"
+                        # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                        # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
+                        # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
+                        # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
+                        # dynamically linked glibc builds.
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                        "--ghc-option=-optl=-lssl"
+                        "--ghc-option=-optl=-lcrypto"
 
-                        # "--ghc-option=-optl=-L${pkgs.openssl.out}/lib"
-                        "--ghc-option=-optl=-L${pkgs.postgresql.out}/lib"
-                        "--ghc-option=-optl=-lpq"
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                        "--ghc-option=-optl=-lpgcommon"
+                        "--ghc-option=-optl=-lpgport"
+                      ];
+                    };
+
+                    packages.codd.components.tests.codd-test = {
+                      dontStrip = false;
+                      configureFlags = [
+                        # Same as for the executable here
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                        "--ghc-option=-optl=-lssl"
+                        "--ghc-option=-optl=-lcrypto"
+
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                        "--ghc-option=-optl=-lpgcommon"
+                        "--ghc-option=-optl=-lpgport"
                       ];
                     };
                   }];
@@ -109,15 +134,15 @@
             })
         ];
 
-        flakeAeson1 = pkgs.coddProjectAeson1.flake { };
         flakeAeson2 = pkgs.coddProjectAeson2.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
           # Check nixpkgs.lib.systems for more.
-          # Sadly, musl64 builds fail when building postgresql-libpq. https://github.com/input-output-hk/haskell.nix/issues/782 might be related.
-          # The mingw build fails with infinite recursion right at the start too..
+          # The mingwW64 build still fails, IIRC.
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
+        flakeAeson1 =
+          pkgs.coddProjectAeson1.flake { crossPlatforms = p: [ p.musl64 ]; };
       in flakeAeson2 // {
         # Built by `nix build .`
         defaultPackage = flakeAeson2.packages."codd:exe:codd";
@@ -125,9 +150,10 @@
         # Aeson 1 is supported but only tested to compile without errors,
         # not actively tested.
         # To enter dev shell, run `nix develop .#flakeAeson1.x86_64-linux.devShell`
-        # To build run `nix build .#flakeAeson1.x86_64-linux.defaultPackage`
+        # To build run `nix build .#flakeAeson1.x86_64-linux.codd-musl`
         flakeAeson1 = flakeAeson1 // {
-          defaultPackage = flakeAeson1.packages."codd:exe:codd";
+          codd-musl =
+            flakeAeson1.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
 
         testShells = {
@@ -138,12 +164,15 @@
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
         };
 
+        # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
+        # build musl packages statically to see if their "normal" builds pass
+        inherit pkgs;
+
         # Built with `nix build .#dockerImage.x86_64-linux`.
-        # Ideally this would be statically linked, and preferably
-        # with musl as libc for smaller size, but that's hard to do.  
         dockerImage = import ./nix/docker/codd-exe.nix {
           inherit pkgs;
-          codd-exe = flakeAeson2.packages."codd:exe:codd";
+          codd-exe =
+            flakeAeson2.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
       });
 }

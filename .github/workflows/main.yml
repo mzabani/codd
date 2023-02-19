@@ -51,29 +51,29 @@ jobs:
     # - name: Print nix.conf file
     #   run: cat ~/.config/nix/nix.conf
 
-    - name: Build codd
+    - name: Build statically linked codd
       env:
         CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       # Note: this still seems not to work.. it doesn't push anything to cachix :(
-      run: nix build --no-link . | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
+      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd" | ([[ ! "$CACHIX_AUTH_TOKEN" = "" ]] && cachix push mzabani || cat -)
 
-    - name: Build codd with aeson 1
-      run: nix build --no-link .#flakeAeson1.x86_64-linux.defaultPackage
+    - name: Build statically linked codd with aeson 1
+      run: nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
 
-    - name: Build codd's tests
-      run: nix build --no-link .#codd:test:codd-test
+    - name: Build statically linked codd's tests
+      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
 
-    - name: Build benchmarks
-      run: nix build --no-link .#codd:bench:codd-bench
+    - name: Build statically linked benchmarks
+      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
 
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
 
     - name: Run benchmarks
-      run: nix run .#codd:bench:codd-bench
+      run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
 
     - name: Build codd's library's haddocks
-      run: nix build --no-link .#packages.x86_64-linux.codd:lib:codd.doc
+      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
 
-    - name: Build codd docker image
+    - name: Build codd's docker image
       run: nix build --no-link .#dockerImage.x86_64-linux

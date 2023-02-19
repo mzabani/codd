@@ -52,6 +52,8 @@ extra-deps:
 flags:
   hashable:
     random-initial-seed: true
+  postgresql-libpq:
+    use-pkg-config: true
 
 # Extra package databases containing global packages
 # extra-package-dbs: []
