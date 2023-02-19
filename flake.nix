@@ -72,6 +72,7 @@
                         "--ghc-option=-optl=-lssl"
                         "--ghc-option=-optl=-lcrypto"
 
+                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                         "--ghc-option=-optl=-lpgcommon"
                         "--ghc-option=-optl=-lpgport"
                       ];
@@ -85,7 +86,6 @@
                         "--ghc-option=-optl=-lssl"
                         "--ghc-option=-optl=-lcrypto"
 
-                        # We need the following for tests, but not for the executable. I don't understand why.
                         "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                         "--ghc-option=-optl=-lpgcommon"
                         "--ghc-option=-optl=-lpgport"
