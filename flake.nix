@@ -67,7 +67,8 @@
                         # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
                         # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
                         # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
-                        # Also, the order of -lssl and -lcrypto is important here
+                        # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
+                        # dynamically linked glibc builds.
                         "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                         "--ghc-option=-optl=-lssl"
                         "--ghc-option=-optl=-lcrypto"

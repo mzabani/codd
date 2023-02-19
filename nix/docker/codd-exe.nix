@@ -1,8 +1,5 @@
 { pkgs, codd-exe }:
 let
-  useradd = "${pkgs.shadow}/bin/useradd";
-  groupadd = "${pkgs.shadow}/bin/groupadd";
-
   # Currently, there seems to be no way to map the host's UID and GID to bind-mounts,
   # so there's no way to modify files and folders while giving them the host's user and group
   # permissions..
