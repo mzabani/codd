@@ -1,29 +1,48 @@
-# IMPORTANT
-# 1. This file is used by the installer. It must not be moved or
-# have its interface changed without changes to "install-codd.sh"
-# 2. This file is the only file downloaded from github to install codd.
-# It cannot reference any other files in the repository.
-
+# This is a "vanilla" nixpkgs cabal2nix derivation.
+# The upside of having this is that it has a much smaller closure
+# than a haskell.nix provided one. The downside is that library versions
+# are likely not the same as the ones from Stackage LTS.
 let
-  # Fetch the latest haskell.nix and import its default.nix
-  haskellNix = import (builtins.fetchTarball {
-    url =
-      "https://github.com/input-output-hk/haskell.nix/archive/b2479523c0bafc9a6ce63cafefd38a110dd01331.tar.gz";
-    sha256 = "0i77m8348klzqh2hry7gmykmkk3ngdnabnfjja2mwpynazpgvvzh";
-  }) { };
-
-  # haskell.nix provides access to the nixpkgs pins which are used by our CI,
-  # hence you will be more likely to get cache hits when using these.
-  # But you can also just use your own, e.g. '<nixpkgs>'.
-  nixpkgsSrc = haskellNix.sources.nixpkgs-unstable;
-
-  # haskell.nix provides some arguments to be passed to nixpkgs, including some
-  # patches and also the haskell.nix functionality itself as an overlay.
-  nixpkgsArgs = haskellNix.nixpkgsArgs;
-  pkgs = import nixpkgsSrc nixpkgsArgs;
-in {
-  inherit nixpkgsSrc;
-  inherit nixpkgsArgs;
-  installShell = with pkgs;
-    mkShell { buildInputs = with pkgs; [ jq nix-prefetch-git ]; };
+  nixpkgs = import
+    (let lock = builtins.fromJSON (builtins.readFile ../flake.lock);
+    in fetchTarball {
+      url =
+        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs.locked.rev}.tar.gz";
+      sha256 = lock.nodes.nixpkgs.locked.narHash;
+    }) {
+      overlays = [
+        (final: prev:
+          prev // {
+            haskellPackages = prev.haskellPackages.override {
+              overrides = self: super: {
+                haxl = final.haskell.lib.markUnbroken prev.haskellPackages.haxl;
+                unliftio =
+                  prev.haskellPackages.callPackage ./haskell-deps/unliftio.nix
+                  { };
+              };
+            };
+          })
+      ];
+    };
+  pgService = import ./postgres-service.nix {
+    pkgs = nixpkgs;
+    postgres = nixpkgs.postgresql;
+    initializePostgres = true;
+    wipeCluster = true;
+  };
+  coddFull = nixpkgs.haskell.lib.dontHaddock
+    (nixpkgs.haskellPackages.callCabal2nixWithOptions "codd" ../. "" { });
+in rec {
+  inherit nixpkgs;
+  coddWithCheck = coddFull.overrideAttrs (self: {
+    preConfigure = self.preConfigure + ''
+      export PGDATA="./cabal2nix-codd-datadir"
+      export PGDATABASE="postgres"
+      export PGPORT="5434"
+      export PGHOST="127.0.0.1"
+      export PGUSER="postgres"
+      ${pgService}/bin/init-postgres
+    '';
+  });
+  codd = nixpkgs.haskell.lib.dontCheck coddFull;
 }
