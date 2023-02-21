@@ -71,7 +71,7 @@ jobs:
 
     - name: Install codd with nix-env and uninstall it
       run: |
-        nix-env ./nix/install-codd-nixpkgs.nix -iA codd
+        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
         codd --help
         nix-env --uninstall codd
 
