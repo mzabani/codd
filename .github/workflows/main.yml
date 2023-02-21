@@ -70,7 +70,7 @@ jobs:
       run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
 
     - name: Install codd with nix-env and uninstall it
-      run:
+      run: |
         nix-env ./nix/install-codd-nixpkgs.nix -iA codd
         codd --help
         nix-env --uninstall codd
