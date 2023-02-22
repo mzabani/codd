@@ -22,7 +22,7 @@ then
 fi
 
 rm -rf /tmp/codd-checkout-Y6fRwa_23x
-git clone --depth 1 https://github.com/mzabani/codd.git -o /tmp/codd-checkout-Y6fRwa_23x
+git clone --depth 1 https://github.com/mzabani/codd.git /tmp/codd-checkout-Y6fRwa_23x
 
 nix-env -f "/tmp/codd-checkout-Y6fRwa_23x/nix/install-codd-nixpkgs.nix" \
     --option trusted-substituters 'https://cache.nixos.org https://hydra.iohk.io https://mzabani.cachix.org' \
