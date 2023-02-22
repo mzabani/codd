@@ -66,6 +66,15 @@ jobs:
     - name: Build statically linked benchmarks
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
 
+    - name: Build executable used for installer
+      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+
+    - name: Install codd with nix-env and uninstall it
+      run: |
+        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+        codd --help
+        nix-env --uninstall codd
+
     - name: Run tests
       run: ./scripts/run-tests.sh --with-nix
 

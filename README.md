@@ -95,24 +95,19 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ## Installing Codd
 
-We currently provide two installation methods.
+If you are on x86_64-linux, the easiest thing is to download our self-contained statically linked executable from Github Releases. If you don't or can't use that, there are two other installation methods, described below.
 
 ### 1. Nix
 
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would. It is a bit more cumbersome to install than with docker but easier to use once installed.
 
 1. Install Nix if you don't have it yet by using your package manager or following instructions from https://nixos.org/download.html.
-2. Add a Nix cache with precompiled packages so you don't have to compile a ton of things. This step is optional but highly recommended, otherwise you may have to compile things for hours. Add these to your `/etc/nix/nix.conf` file (or `~/.config/nix/nix.conf` if you know what you're doing your user is in Nix's trust list). If you already have other substituters and trusted public keys, just append these new values to them instead of adding new lines.
-   ```
-   substituters = https://mzabani.cachix.org
-   trusted-public-keys = mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=
-   ```
-3. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. If things are building and taking too long, you may want to check you did step 2 correctly. After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd-exe-codd`.
+2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. If things are compiling and taking too long, you may want to check if you're a privileged Nix user (otherwise it means our Nix cache is not being used). After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd`.
 
 ### 2. Docker
 
 You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
-Invoking _codd_ this way will often require mounting volumes, specifying UIDs and is certainly more bureaucratic than installing with Nix.
+Invoking _codd_ this way will often require mounting volumes, specifying UIDs and thus is more bureaucratic than other installation methods.
 
 ## Get codd up and running in 15 minutes
 
