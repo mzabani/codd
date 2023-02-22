@@ -95,7 +95,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ## Installing Codd
 
-If you are on x86_64-linux, the easiest thing is to download our self-contained statically linked executable from Github Releases. If you don't or can't use that, there are two other installation methods, described below.
+If you are on x86_64-linux, the easiest thing is to download our self-contained statically linked executable from [Github Releases](https://github.com/mzabani/codd/releases). If you don't or can't use that, there are two other installation methods, described below.
 
 ### 1. Nix
 
