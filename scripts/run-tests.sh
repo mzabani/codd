@@ -32,7 +32,7 @@ else
 fi
 
 echo Running tests on Postgres 14
-nix develop ".#testShells.x86_64-linux.pg13" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
+nix develop ".#testShells.x86_64-linux.pg14" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
 
 echo Running tests on Postgres 13
 nix develop ".#testShells.x86_64-linux.pg13" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
