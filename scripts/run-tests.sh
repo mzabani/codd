@@ -24,12 +24,15 @@ echo "Running tests with the Aeson 2 version of codd"
 # not the IOHK one. We assume differences in the codebase regarding different
 # postgres versions aren't enough to make it worth testing every version here too.
 if [[ $WITH_NIX ]]; then
-    echo "Running all tests on Postgres 14 with nixpkgs's cabal2nix derivation of codd"
+    echo "Running all tests on Postgres 15 with nixpkgs's cabal2nix derivation of codd"
     nix-build ./nix/install-codd-nixpkgs.nix -A coddWithCheck
 else
-    echo "Running tests on Postgres 14 with IOHK's haskell.nix derivation of codd"
-    nix develop ".#testShells.x86_64-linux.pg14" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
+    echo "Running tests on Postgres 15 with IOHK's haskell.nix derivation of codd"
+    nix develop ".#testShells.x86_64-linux.pg15" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
 fi
+
+echo Running tests on Postgres 14
+nix develop ".#testShells.x86_64-linux.pg13" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
 
 echo Running tests on Postgres 13
 nix develop ".#testShells.x86_64-linux.pg13" $NIX_DEV_ARGS -c ./scripts/run-db-test.sh "$WITH_NIX"
