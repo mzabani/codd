@@ -80,8 +80,9 @@ Automatic merge failed; fix conflicts and then commit the result.
 <!-- vscode-markdown-toc -->
 - [What is Codd?](#what-is-codd)
   - [Installing Codd](#installing-codd)
-    - [1. Nix](#1-nix)
-    - [2. Docker](#2-docker)
+    - [1. Self-contained executable](#1-self-contained-executable)
+    - [2. Nix](#2-nix)
+    - [3. Docker](#3-docker)
   - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
   - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
   - [Safety considerations](#safety-considerations)
@@ -95,16 +96,18 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ## Installing Codd
 
+### 1. Self-contained executable
+
 If you are on x86_64-linux, the easiest thing is to download our self-contained statically linked executable from [Github Releases](https://github.com/mzabani/codd/releases). If you can't use that, there are two other installation methods, described below.
 
-### 1. Nix
+### 2. Nix
 
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would. It is a bit more cumbersome to install than with docker but easier to use once installed.
 
 1. Install Nix if you don't have it yet by using your package manager or following instructions from https://nixos.org/download.html.
 2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. If things are compiling and taking too long, you may want to check if you're a privileged Nix user (otherwise it means our Nix cache is not being used). After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd`.
 
-### 2. Docker
+### 3. Docker
 
 You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
 Invoking _codd_ this way will often require mounting volumes, specifying UIDs and thus is more bureaucratic than other installation methods.
@@ -184,8 +187,8 @@ We recommend following these instructions closely to catch as many possible issu
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies schemas, but [there are edge cases](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog).
-- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#Delayedeffectinpg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
+- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies schemas, but [there are edge cases](docs/DATABASE-EQUALITY.md#delayed-effect-in-pg_catalog).
+- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#delayed-effect-in-pg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions
 
