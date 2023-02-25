@@ -1,0 +1,1 @@
+{"accessmethod":"btree","amoptions":null,"compositetype":null,"definition":"CREATE UNIQUE INDEX pg_amop_oid_index ON pg_catalog.pg_amop USING btree (oid)","exclusion":false,"forcerowsecurity":false,"immediate":true,"kind":"i","owner":"postgres","partition":false,"persistence":"p","primary":true,"replident":"n","rowsecurity":false,"rowtype":null,"shared":false,"unique":true}

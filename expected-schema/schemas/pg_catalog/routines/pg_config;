@@ -1,0 +1,1 @@
+{"argmodes":["o","o"],"argnames":["name","setting"],"args":"OUT name text, OUT setting text","config":null,"definition_md5":null,"kind":"f","lang":"internal","leakproof":false,"nargs":0,"nargs_defaults":0,"owner":"postgres","parallel":"r","privileges":null,"return_type":"record","returns_set":true,"security_definer":false,"strict":true,"volatile":"s"}

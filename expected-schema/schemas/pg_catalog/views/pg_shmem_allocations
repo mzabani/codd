@@ -1,0 +1,1 @@
+{"accessmethod":null,"amoptions":null,"compositetype":null,"definition_md5":"516d1173e52a5f69fa4d6a3632b7317c","forcerowsecurity":false,"kind":"v","owner":"postgres","partition":false,"persistence":"p","privileges":null,"replident":"n","rowsecurity":false,"rowtype":"pg_shmem_allocations","shared":false}

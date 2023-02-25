@@ -1,0 +1,1 @@
+{"deferrable":false,"deferred":false,"definition":"UNIQUE (ev_class, rulename)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_rewrite_rel_rulename_index","type":"u","validated":true}

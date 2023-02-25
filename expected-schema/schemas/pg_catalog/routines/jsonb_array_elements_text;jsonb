@@ -1,0 +1,1 @@
+{"argmodes":["i","o"],"argnames":["from_json","value"],"args":"from_json jsonb, OUT value text","config":null,"definition_md5":null,"kind":"f","lang":"internal","leakproof":false,"nargs":1,"nargs_defaults":0,"owner":"postgres","parallel":"s","privileges":{"public":"=X/postgres"},"return_type":"text","returns_set":true,"security_definer":false,"strict":true,"volatile":"i"}

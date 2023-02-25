@@ -1,0 +1,1 @@
+{"deferrable":false,"deferred":false,"definition":"PRIMARY KEY (oid)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_am_oid_index","type":"p","validated":true}

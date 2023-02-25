@@ -1,0 +1,1 @@
+{"deferrable":false,"deferred":false,"definition":"UNIQUE (pnnspid, pnpubid)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_publication_namespace_pnnspid_pnpubid_index","type":"u","validated":true}
