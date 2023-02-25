@@ -31,7 +31,8 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                                hobj
   in  case hobj of
         HCollation ->
-                -- There is one new column for ICU locales in postgres 15's pg_collation table
           hq { repCols = repCols hq ++ [("iculocale", "colliculocale")] }
+        HIndex ->
+          hq { repCols = repCols hq ++ [("nullsnotdistinct", "indnullsnotdistinct")] }
         _ -> hq
 
