@@ -1,1 +1,0 @@
-{"argmodes":null,"argnames":null,"args":"path, path","config":null,"definition_md5":null,"kind":"f","lang":"internal","leakproof":false,"nargs":2,"nargs_defaults":0,"owner":"postgres","parallel":"s","privileges":{"public":[["X","postgres"]]},"return_type":"float8","returns_set":false,"security_definer":false,"strict":true,"volatile":"i"}

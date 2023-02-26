@@ -1,1 +1,0 @@
-{"deferrable":false,"deferred":false,"definition":"UNIQUE (umuser, umserver)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_user_mapping_user_server_index","type":"u","validated":true}

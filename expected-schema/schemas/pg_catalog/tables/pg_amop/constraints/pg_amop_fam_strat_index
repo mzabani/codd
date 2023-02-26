@@ -1,1 +1,0 @@
-{"deferrable":false,"deferred":false,"definition":"UNIQUE (amopfamily, amoplefttype, amoprighttype, amopstrategy)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_amop_fam_strat_index","type":"u","validated":true}

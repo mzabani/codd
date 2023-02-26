@@ -1,1 +1,0 @@
-{"deferrable":false,"deferred":false,"definition":"PRIMARY KEY (objoid, classoid, objsubid)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_description_o_c_o_index","type":"p","validated":true}

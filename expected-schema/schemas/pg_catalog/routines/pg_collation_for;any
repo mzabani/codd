@@ -1,1 +1,0 @@
-{"argmodes":null,"argnames":null,"args":"\"any\"","config":null,"definition_md5":null,"kind":"f","lang":"internal","leakproof":false,"nargs":1,"nargs_defaults":0,"owner":"postgres","parallel":"s","privileges":{"public":[["X","postgres"]]},"return_type":"text","returns_set":false,"security_definer":false,"strict":false,"volatile":"s"}

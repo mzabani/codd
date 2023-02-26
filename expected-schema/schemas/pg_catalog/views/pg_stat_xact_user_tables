@@ -1,1 +1,0 @@
-{"accessmethod":null,"amoptions":null,"compositetype":null,"definition_md5":"7da387b2482f21254435ec20562e43b5","forcerowsecurity":false,"kind":"v","owner":"postgres","partition":false,"persistence":"p","privileges":{"public":[["r","postgres"]]},"replident":"n","rowsecurity":false,"rowtype":"pg_stat_xact_user_tables","shared":false}

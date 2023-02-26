@@ -1,1 +1,0 @@
-{"argmodes":null,"argnames":["wait","wait_seconds"],"args":"wait boolean DEFAULT true, wait_seconds integer DEFAULT 60","config":null,"definition_md5":null,"kind":"f","lang":"internal","leakproof":false,"nargs":2,"nargs_defaults":2,"owner":"postgres","parallel":"s","privileges":null,"return_type":"bool","returns_set":false,"security_definer":false,"strict":true,"volatile":"v"}

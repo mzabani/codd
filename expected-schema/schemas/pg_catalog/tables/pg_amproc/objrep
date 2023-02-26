@@ -1,1 +1,0 @@
-{"accessmethod":"heap","amoptions":null,"compositetype":null,"forcerowsecurity":false,"kind":"r","owner":"postgres","partition":false,"persistence":"p","privileges":{"public":[["r","postgres"]]},"replident":"n","rowsecurity":false,"rowtype":"pg_amproc","shared":false}

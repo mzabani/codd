@@ -1,1 +1,0 @@
-{"deferrable":false,"deferred":false,"definition":"UNIQUE (dictname, dictnamespace)","fk_deltype":" ","fk_matchtype":" ","fk_ref_table":null,"fk_updtype":" ","inhcount":0,"local":true,"noinherit":true,"parent_constraint":null,"supporting_index":"pg_ts_dict_dictname_index","type":"u","validated":true}
