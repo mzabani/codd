@@ -9,7 +9,7 @@ import           Codd.Representations.Database.Model
 import           Codd.Representations.Database.Pg10
                                                 ( aclArrayTbl
                                                 , pronameExpr
-                                                , sortArrayExpr
+                                                , sortArrayExpr, CustomPrivileges (..)
                                                 )
 import qualified Codd.Representations.Database.Pg13
                                                as Pg13
@@ -19,7 +19,7 @@ import           Codd.Representations.Types     ( ObjName
 import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole
-                                                , strictRangeCtorOwnership
+                                                , strictRangeCtorPrivs
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 
@@ -63,22 +63,21 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                               , "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
                               )
                             , ("config"    , sortArrayExpr "proconfig")
-                            , ("privileges", "_codd_roles.permissions")
                             , ( "definition_md5"
                               , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
                               )
                             , ("kind", "prokind") -- From Pg11.hs
-                    -- I haven't tested if the same ownership issue that happens to
-                    -- range constructors happens to multirange constructors, but I'll be
-                    -- conservative and assume it does for now.
+                    -- Multiranges suffer the same sad fate of weird ownership in AWS RDS as regular ranges
                             ]
-                            ++ [ ( "owner"
-                                 , if strictRangeCtorOwnership schemaAlgoOpts
-                                     then "pg_roles.rolname"
-                                     else
-                                         "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
-                                 )
-                               ]
+                            ++ if strictRangeCtorPrivs schemaAlgoOpts then [ ( "owner", "pg_roles.rolname"
+                         ),
+                         ("privileges"      , "_codd_roles_with_grantors.permissions")
+                       ]
+                       else
+                        [
+                            ("owner", "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END")
+                            , ("privileges"      , "CASE WHEN pg_range.rngtypid IS NULL THEN _codd_roles_with_grantors.permissions ELSE _codd_roles_without_grantors.permissions END")
+                        ]
                 in
                     DbObjRepresentationQuery
                         { objNameCol    = pronameExpr "pg_proc"
@@ -93,10 +92,13 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                         \\n LEFT JOIN pg_catalog.pg_range ON pg_range.rngtypid=pg_depend.refobjid OR pg_range.rngmultitypid=pg_depend.refobjid\
                         \\n LEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang\
                         \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
-                        \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
-                        \\n LEFT JOIN LATERAL "
-                            <> aclArrayTbl allRoles "'f'" "proowner" "proacl"
-                            <> "_codd_roles ON TRUE"
+                        \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\n"
+                        <> "LEFT JOIN LATERAL "
+                        <> aclArrayTbl IncludeGrantor allRoles "'f'" "proowner" "proacl"
+                        <> "_codd_roles_with_grantors ON TRUE\
+                    \\n LEFT JOIN LATERAL "
+                        <> aclArrayTbl DoNotIncludeGrantor allRoles "'f'" "proowner" "proacl"
+                        <> "_codd_roles_without_grantors ON TRUE"
                         , nonIdentWhere = Nothing
                         , identWhere    = Just $ "TRUE" <> maybe
                             ""

@@ -1,1 +1,1 @@
-{"collation":null,"collation_nsp":null,"default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":10,"privileges":{"public":"=r/postgres"},"type":"bool"}
+{"collation":null,"collation_nsp":null,"default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":10,"privileges":{"public":[["r","postgres"]]},"type":"bool"}

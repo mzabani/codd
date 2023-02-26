@@ -1,5 +1,6 @@
 module Codd.Representations.Database.Pg10
-    ( aclArrayTbl
+    ( CustomPrivileges(..)
+    , aclArrayTbl
     , objRepQueryFor
     , pronameExpr
     , sortArrayExpr
@@ -21,32 +22,60 @@ import           Codd.Types                     ( SchemaAlgo(..)
 import           Data.Maybe                     ( isJust )
 import qualified Database.PostgreSQL.Simple    as DB
 
--- | Returns a one-row relation of type (aclsperrow :: JSONB) with one field/key
--- for every supplied role + the public role. One example result for a database could be:
---                                 aclsperrow                                                                                    
--- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
---  {"public": "=Tc/codd_admin", "codd-user": "\"codd-user\"=c/codd_admin", "codd_admin": "codd_admin=CTc/codd_admin", "codd_low_privilege_user": "codd_low_privilege_user=c/codd_admin"}
+data CustomPrivileges = IncludeGrantor | DoNotIncludeGrantor
+
+-- | Returns a one-row relation of type (permissions :: JSONB) with one field/key
+-- for every supplied role + the public role, and as values arrays of privileges per grantor. One example result for a database could be:
+--                                                                 permissions                                                                 
+-- --------------------------------------------------------------------------------------------------------------------------------------------
+--  {"public": [["r", "codd-user"]], "codd-user": [["daxr*tDw", "codd_admin"]], "codd_admin": [["r", "codd-user"], ["daxrtDw", "codd_admin"]]}
 -- (1 row)
 --
 -- This format makes it easier for consumers of this function to extract privileges
--- from a specific role or to use privileges from all roles.
-aclArrayTbl :: [SqlRole] -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
-aclArrayTbl allRoles aclKind objOwnerOidIdentifier aclArrayIdentifier =
+-- from a specific role or to use privileges from all roles. Naturally, when ignoring
+-- grantors the results are slightly different (the role names of grantors will be empty strings).
+aclArrayTbl :: CustomPrivileges -> [SqlRole] -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
+aclArrayTbl customPrivs allRoles aclKind objOwnerOidIdentifier aclArrayIdentifier =
     -- A null array of ACLs actually represents default permissions. See https://github.com/mzabani/codd/issues/117
-    "(SELECT jsonb_object_agg(rolname, acltext) AS permissions FROM (WITH privs(acl) AS (SELECT unnest(coalesce("
+    "(SELECT jsonb_object_agg(rolname, privsPerGrantor) AS permissions FROM (WITH privs(acl) AS (SELECT unnest(coalesce("
         <>      aclArrayIdentifier
         <>      ", acldefault("
         <>      aclKind
         <>      ", "
         <>      objOwnerOidIdentifier
         <>      "))))"
-        <> ", privsGrantee (acltext, granteeOid) AS (select acl::text, (aclexplode(ARRAY[acl])).grantee from privs) "
-        <> "  SELECT DISTINCT ON (rolname) coalesce(rolname, 'public') as rolname, acltext "
-        <> "        FROM privsGrantee LEFT JOIN pg_roles ON pg_roles.oid=granteeOid "
-        <>      "        WHERE granteeOid=0 OR "
-        <>      "rolname"
-        `sqlIn` allRoles
-        <>      "        ORDER BY rolname NULLS FIRST) subq)"
+        <> ", intermediatePrivs (acl, aclRow) AS (SELECT acl, aclexplode(ARRAY[acl]) FROM privs)"
+        -- It is possible for the same grantee to have privileges granted by different grantors.
+        -- e.g. codd_admin in the table below:
+        
+        -- codd-experiments=*> \dp employee
+        --                                 Access privileges
+        --  Schema |   Name   | Type  |        Access privileges        | Column privileges | Policies 
+        -- --------+----------+-------+---------------------------------+-------------------+----------
+        --  public | employee | table | codd_admin=arwdDxt/codd_admin  +|                   | 
+        --         |          |       | "codd-user"=ar*wdDxt/codd_admin+|                   | 
+        --         |          |       | codd_admin=r/"codd-user"        |                   | 
+        -- (1 row)
+        
+        -- Rebuilding acls with `makeaclitem` and oid `0` for grantee and grantor, then string-aggregating with some simple
+        -- text substitution is very laborious. But it is the only way I found to string-extract the letter representations
+        -- of privileges while being able to ignore the grantor if desired.
+        -- Sadly `aclinsert` throws a "aclinsert is no longer supported" error, and `makeaclitem` doesn't take in multiple privileges
+        -- yet (it will after https://commitfest.postgresql.org/38/3653/ makes it to new releases, though, but old versions of postgres
+        -- still won't support it).
+        <> ", privsGrant (privLetters, granteeOid, grantorOid) AS (SELECT STRING_AGG(TRIM(BOTH FROM makeaclitem(0, 0, (aclRow).privilege_type, (aclRow).is_grantable)::text, '=/0'), '' ORDER BY (aclRow).privilege_type), (aclRow).grantee, (aclRow).grantor\n\
+                                                                \FROM intermediatePrivs\n\
+                                                                \GROUP BY (aclRow).grantee, (aclRow).grantor)"
+        <> "SELECT COALESCE(grantee.rolname, 'public') AS rolname, ARRAY_AGG(ARRAY[privLetters, " <> (case customPrivs of
+                                                                                                        IncludeGrantor -> "grantor.rolname"
+                                                                                                        DoNotIncludeGrantor -> "''") <> "] ORDER BY grantor.rolname) AS privsPerGrantor\n\
+                        \FROM privsGrant\n\
+                        \LEFT JOIN pg_roles grantee ON grantee.oid=granteeOid\n\
+                        \LEFT JOIN pg_roles grantor ON grantor.oid=grantorOid"
+        <>      "       WHERE granteeOid=0 OR "
+        <>      "grantee.rolname" `sqlIn` allRoles
+        <>      "       GROUP BY grantee.rolname\n\
+                        \ORDER BY grantee.rolname NULLS FIRST) subq)"
 
 oidArrayExpr :: QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag -> QueryFrag
 oidArrayExpr oidArrayCol tblToJoin oidColInJoinedTbl aggExpr =
@@ -147,7 +176,7 @@ pgClassRepQuery mPrivRolesAndKind schemaName = DbObjRepresentationQuery
                Nothing -> ""
                Just (allRoles, privilegesKindChar) ->
                    "\nLEFT JOIN LATERAL "
-                       <> aclArrayTbl allRoles
+                       <> aclArrayTbl IncludeGrantor allRoles
                                       privilegesKindChar
                                       "pg_class.relowner"
                                       "pg_class.relacl"
@@ -208,7 +237,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                 , joins = "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
                           <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
                           <> "\n LEFT JOIN LATERAL "
-                          <> aclArrayTbl [] "'d'" "datdba" "datacl"
+                          <> aclArrayTbl IncludeGrantor [] "'d'" "datdba" "datacl"
                           <> " _codd_privs ON TRUE "
                 , nonIdentWhere =
                     Just
@@ -226,7 +255,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
         , joins         =
             "JOIN pg_catalog.pg_roles AS nsp_owner ON nsp_owner.oid=pg_namespace.nspowner"
             <> "\n LEFT JOIN LATERAL "
-            <> aclArrayTbl allRoles "'n'" "pg_namespace.nspowner" "nspacl"
+            <> aclArrayTbl IncludeGrantor allRoles "'n'" "pg_namespace.nspowner" "nspacl"
             <> "_codd_roles ON TRUE"
         , nonIdentWhere = Just $ case schemaSel of
             IncludeSchemas schemas -> "nspname" `sqlIn` schemas
@@ -265,7 +294,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
          \\n LEFT JOIN pg_catalog.pg_auth_members ON pg_auth_members.member=pg_roles.oid \
          \\n LEFT JOIN pg_catalog.pg_roles other_role ON other_role.oid=pg_auth_members.roleid \
          \\n LEFT JOIN LATERAL "
-                    <> aclArrayTbl allRoles "'d'" "datdba" "datacl"
+                    <> aclArrayTbl IncludeGrantor allRoles "'d'" "datdba" "datacl"
                     <> " _codd_roles ON TRUE"
                 , nonIdentWhere = Just $ "pg_roles.rolname" `sqlIn` allRoles
                 , identWhere    = Nothing
@@ -367,7 +396,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                 -- , "proargdefaults" -- pg_node_tree type (avoid)
                     , ("args", "pg_catalog.pg_get_function_arguments(pg_proc.oid)")
                     , ("config"          , sortArrayExpr "proconfig") -- Not sure what this is, but let's be conservative and sort it meanwhile
-                    , ("privileges"      , "_codd_roles.permissions")
+                    
                 -- The source of the function is important, but "prosrc" is _not_ the source if the function
                 -- is compiled, so we ignore this column in those cases.
                 -- Note that this means that functions with different implementations could be considered equal,
@@ -376,16 +405,18 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                       , "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
                       )
                 -- Only include the owner of the function if this
-                -- is not a range type constructor or if strict-range-ctor-ownership
-                -- is enabled. Read why in DATABASE-EQUALITY.md
+                -- is not a range type constructor or if strict-range-ctor-privs
+                -- is enabled. The same applies to grantors of privileges. Read why in DATABASE-EQUALITY.md
                     ]
-                    ++ [ ( "owner"
-                         , if strictRangeCtorOwnership schemaAlgoOpts
-                             then "pg_roles.rolname"
-                             else
-                                 "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END"
-                         )
+                    ++ if strictRangeCtorPrivs schemaAlgoOpts then [ ( "owner", "pg_roles.rolname"
+                         ),
+                         ("privileges"      , "_codd_roles_with_grantors.permissions")
                        ]
+                       else
+                        [
+                            ("owner", "CASE WHEN pg_range.rngtypid IS NULL THEN pg_roles.rolname END")
+                            , ("privileges"      , "CASE WHEN pg_range.rngtypid IS NULL THEN _codd_roles_with_grantors.permissions ELSE _codd_roles_without_grantors.permissions END")
+                        ]
         in
             DbObjRepresentationQuery
                 { objNameCol    = pronameExpr "pg_proc"
@@ -398,10 +429,16 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                  \\n LEFT JOIN pg_catalog.pg_range ON pg_range.rngtypid=pg_depend.refobjid\
                  \\n LEFT JOIN pg_catalog.pg_language ON pg_language.oid=prolang\
                  \\n LEFT JOIN pg_catalog.pg_type pg_type_rettype ON pg_type_rettype.oid=prorettype\
-                 \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\
-                 \\n LEFT JOIN LATERAL "
-                    <> aclArrayTbl allRoles "'f'" "proowner" "proacl"
-                    <> "_codd_roles ON TRUE"
+                 \\n LEFT JOIN pg_catalog.pg_type pg_type_argtypes ON pg_type_argtypes.oid=ANY(proargtypes)\n"
+                 -- We join to privileges both with and without grantors, so we can decide at runtime
+                 -- which one to use. It would be nice if we could json-map over the results _with_ grantors
+                -- to remove them if necessary, but that's beyond what I know to do with json functions in postgres
+                 <> "LEFT JOIN LATERAL "
+                    <> aclArrayTbl IncludeGrantor allRoles "'f'" "proowner" "proacl"
+                    <> "_codd_roles_with_grantors ON TRUE\
+                \\n LEFT JOIN LATERAL "
+                    <> aclArrayTbl DoNotIncludeGrantor allRoles "'f'" "proowner" "proacl"
+                    <> "_codd_roles_without_grantors ON TRUE"
                 , nonIdentWhere = Nothing
                 , identWhere    = Just $ "TRUE" <> maybe
                                       ""
@@ -444,7 +481,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
             <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"
             <> "\n LEFT JOIN LATERAL "
-            <> aclArrayTbl allRoles "'c'" "pg_class.relowner" "attacl"
+            <> aclArrayTbl IncludeGrantor allRoles "'c'" "pg_class.relowner" "attacl"
             <> "_codd_roles ON TRUE"
         , nonIdentWhere =
             Just
@@ -668,7 +705,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                     <>
 -- We can't group by typacl because the planner errors with 'Some of the datatypes only support hashing, while others only support sorting.'
                        "\nLEFT JOIN LATERAL "
-                    <> aclArrayTbl allRoles
+                    <> aclArrayTbl IncludeGrantor allRoles
                                    "'T'"
                                    "pg_type.typowner"
                                    "pg_type.typacl"
