@@ -57,10 +57,10 @@ In order to remain useful in a world of Cloud databases, docker images and distr
 So _codd_ currently provides 3 settings you can enable that will make your algorithm **more strict** in some cases or **more lax** in others. They're customizable through the `CODD_SCHEMA_ALGO` environment variable, which is a space separated list containg any of these values:
 
 - **strict-collations**: _codd_ will include even the _libc_ and _icu_ native libraries' versions postgres was compiled with in its representations, which it does not do by default.
-- **strict-range-ctor-ownership**: _codd_ will include ownership of constructors of custom range types in its representations. Different installations of postgres seem to have different opinions on who the owner of such functions is, so _codd_ does not set this by default.
+- **strict-range-ctor-privs**: _codd_ will include ownership of constructor functions of custom range types in its representations and grantors of their privileges. Different installations of postgres seem to have different opinions on who the owner of such functions is, so _codd_ does not set this by default.
 - **ignore-column-order**: By default _codd_ includes column order in its representations. This means possibly _a lot_ of files touched when columns are removed from tables with lots of columns. For shops with enough discipline to not rely on column order, this more lax setting can be helpful.
 
-So if you want _codd_ in the strictest possible setting, for example, you can set `CODD_SCHEMA_ALGO=strict-collations strict-range-ctor-ownership`.
+So if you want _codd_ in the strictest possible setting, for example, you can set `CODD_SCHEMA_ALGO=strict-collations strict-range-ctor-privs`.
 
 These first two settings, along other interesting details, are described in more detail in the sections that follow.
 
@@ -141,9 +141,9 @@ When range types are created, postgres automatically creates two homonymous func
     (1 row)
 ````
 
-For some unknown reason - and I couldn't find this documented anywhere - it seems possible that the _owner_ of these constructors varies from one server to another. On my machine I get `postgres` - my local superuser - as the owner of these functions but on AWS RDS I get the user who created the range type, which is what I would've expected locally as well.
+For some unknown reason - and I couldn't find this documented anywhere - the _owner_ of these constructor functions is not the role their types were created with - on my machine I get `postgres` (my local superuser) as the owner of these functions -, and on AWS RDS I get `rdsadmin`, the superuser there.
 
-So by default _codd_ does not verify ownership of range and multirange constructors (but does check owners of any other functions). You can make _codd_ check owners in every case by adding `strict-range-ctor-ownership` to the `CODD_SCHEMA_ALGO` environment variable.
+So by default _codd_ does not verify ownership of range and multirange constructors (but does check owners of any other functions). Grantors of privileges for such constructor functions are also ignored because they suffer from the same issue. You can still make _codd_ check these in every case by adding `strict-range-ctor-privs` to the `CODD_SCHEMA_ALGO` environment variable.
 
 ## Interesting stuff
 

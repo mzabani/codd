@@ -3,27 +3,14 @@
 # than a haskell.nix provided one. The downside is that library versions
 # are likely not the same as the ones from Stackage LTS.
 let
+  postgres15Overlay = import ./postgres15Overlay.nix;
   nixpkgs = import
     (let lock = builtins.fromJSON (builtins.readFile ../flake.lock);
     in fetchTarball {
       url =
-        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs.locked.rev}.tar.gz";
-      sha256 = lock.nodes.nixpkgs.locked.narHash;
-    }) {
-      overlays = [
-        (final: prev:
-          prev // {
-            haskellPackages = prev.haskellPackages.override {
-              overrides = self: super: {
-                haxl = final.haskell.lib.markUnbroken prev.haskellPackages.haxl;
-                unliftio =
-                  prev.haskellPackages.callPackage ./haskell-deps/unliftio.nix
-                  { };
-              };
-            };
-          })
-      ];
-    };
+        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-unstable.locked.rev}.tar.gz";
+      sha256 = lock.nodes.nixpkgs-unstable.locked.narHash;
+    }) { overlays = [ postgres15Overlay ]; };
   pgService = import ./postgres-service.nix {
     pkgs = nixpkgs;
     postgres = nixpkgs.postgresql;

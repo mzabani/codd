@@ -1,1 +1,1 @@
-{"owner":"codd_admin","privileges":{"codd_admin":"codd_admin=UC/codd_admin"}}
+{"owner":"codd_admin","privileges":{"codd_admin":[["CU","codd_admin"]]}}

@@ -1,7 +1,9 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/c2f14344f119f68c10be2ea84fd372d8d8d16cd7";
+    "github:input-output-hk/haskell.nix/0d3dea73be92c98dc099739da8914c40e0fb9deb";
+  # When switching away from nixpkgs-unstable, make sure to change
+  # install-codd-nixpkgs.nix accordingly!
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
@@ -30,6 +32,7 @@
           initializePostgres = false;
           wipeCluster = false;
         };
+        postgres15Overlay = import ./nix/postgres15Overlay.nix;
         libpqOverlay = final: prev:
           prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
             # Postgres builds are failing tests for some reason :(
@@ -40,6 +43,7 @@
               prev.postgresql.overrideAttrs (_: { doCheck = false; });
           });
         overlays = [
+          postgres15Overlay
           libpqOverlay
 
           haskellNix.overlay
@@ -162,6 +166,7 @@
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
+          pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
         };
 
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.

@@ -1076,9 +1076,9 @@ spec = do
       -- change, but I don't know how to do that sanely.
       -- So we just test the code paths and make sure hashes differ.
           let strictCollDbInfo = emptyTestDbInfo
-                { schemaAlgoOpts = SchemaAlgo { strictCollations         = True
-                                              , strictRangeCtorOwnership = False
-                                              , ignoreColumnOrder        = False
+                { schemaAlgoOpts = SchemaAlgo { strictCollations     = True
+                                              , strictRangeCtorPrivs = False
+                                              , ignoreColumnOrder    = False
                                               }
                 }
           createCollMig <-
@@ -1109,9 +1109,9 @@ spec = do
       $ it "Strict range constructor ownership"
       $ \emptyTestDbInfo -> do
           let strictRangeDbInfo = emptyTestDbInfo
-                { schemaAlgoOpts = SchemaAlgo { strictCollations         = False
-                                              , strictRangeCtorOwnership = True
-                                              , ignoreColumnOrder        = False
+                { schemaAlgoOpts = SchemaAlgo { strictCollations     = False
+                                              , strictRangeCtorPrivs = True
+                                              , ignoreColumnOrder    = False
                                               }
                 }
           createMig <-
@@ -1185,9 +1185,9 @@ spec = do
                 )
             <*> pure (getIncreasingTimestamp 0)
           let ignColOrderDbInfo = emptyTestDbInfo
-                { schemaAlgoOpts = SchemaAlgo { strictCollations         = False
-                                              , strictRangeCtorOwnership = False
-                                              , ignoreColumnOrder        = True
+                { schemaAlgoOpts = SchemaAlgo { strictCollations     = False
+                                              , strictRangeCtorPrivs = False
+                                              , ignoreColumnOrder    = True
                                               }
                 }
           initialHashes <- runStdoutLoggingT $ applyMigrationsNoCheck

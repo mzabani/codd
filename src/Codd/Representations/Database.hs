@@ -21,6 +21,8 @@ import qualified Codd.Representations.Database.Pg13
                                                as Pg13
 import qualified Codd.Representations.Database.Pg14
                                                as Pg14
+import qualified Codd.Representations.Database.Pg15
+                                               as Pg15
 import           Codd.Representations.Database.SqlGen
                                                 ( interspBy
                                                 , parens
@@ -294,6 +296,11 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                                    namespacesToCheck
                                    rolesToCheck
                                    schemaAlgoOpts
+      15 -> readSchemaFromDatabase Pg15.objRepQueryFor
+                                   conn
+                                   namespacesToCheck
+                                   rolesToCheck
+                                   schemaAlgoOpts
       v
         | v < 10 -> error
         $  "Unsupported PostgreSQL version "
@@ -303,7 +310,7 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
             $ "Not all features of PostgreSQL version "
             <> Text.pack (show majorVersion)
             <> " may be supported by codd. Please file an issue for us to support this newer version properly."
-          readSchemaFromDatabase Pg14.objRepQueryFor
+          readSchemaFromDatabase Pg15.objRepQueryFor
                                  conn
                                  namespacesToCheck
                                  rolesToCheck
