@@ -77,7 +77,8 @@ library
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
   build-depends:
       aeson
     , attoparsec
@@ -137,7 +138,8 @@ executable codd
       ViewPatterns
   -- Disabling the parallel GC seems to make codd perform better in some heavier workloads I've tested.
   -- This makes sense, codd is single-threaded.
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
   build-depends:
       base
     , codd
@@ -152,7 +154,8 @@ benchmark codd-bench
   type: exitcode-stdio-1.0
   main-is: Main.hs
   hs-source-dirs: bench
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -with-rtsopts=-T -Wall -Wpartial-fields -Werror
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -with-rtsopts=-T -Wall -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
   default-extensions:
       BangPatterns
       DeriveAnyClass
@@ -237,7 +240,8 @@ test-suite codd-test
       TypeApplications
       TypeFamilyDependencies
       ViewPatterns
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wunused-packages
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wunused-packages -optP-Wno-nonportable-include-path
   -- Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
   -- do not include hspec-discover in system-build-tools. We hack around the issue
   -- in flake.nix so both cabal and nix build work.
