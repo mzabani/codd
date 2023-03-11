@@ -107,13 +107,14 @@
                   };
                   # Non-Haskell shell tools go here
                   shell.buildInputs = with pkgs; [
+                    cacert
                     ghcid
+                    glibcLocales
                     haskellPackages.brittany # Brittany from the LTS is older than this
                     # finalIohkPkgs.brittany.components.exes.brittany
                     postgresql
-                    glibcLocales
-                    cacert
                     postgres-service
+                    run
                   ];
                   shell.shellHook = ''
                     source scripts/source-env.sh .env

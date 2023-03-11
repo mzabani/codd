@@ -76,7 +76,7 @@ jobs:
         nix-env --uninstall codd
 
     - name: Run tests
-      run: ./scripts/run-tests.sh --with-nix
+      run: nix develop -c run ci-tests
 
     - name: Run benchmarks
       run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"

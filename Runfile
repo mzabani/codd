@@ -1,0 +1,92 @@
+.SHELL = bash
+
+##
+# Runs all tests that CI runs, exactly like CI runs them.
+ci-tests:
+    set -eo pipefail
+
+    echo "Building codd with Aeson 1"
+    nix build --no-link ".#flakeAeson1.x86_64-linux.codd-musl"
+
+    echo "Running tests that don't depend on a database"
+    run test-no-db --nix
+
+    # Postgres-version dependent tests for each possible version next
+    # We test the last version with the vanilla nixpkgs-built derivation,
+    # not the IOHK one. We assume differences in the codebase regarding different
+    # postgres versions aren't enough to make it worth testing every version here too.
+    echo "Running all tests on Postgres 15 with nixpkgs's cabal2nix derivation of codd"
+    nix-build ./nix/install-codd-nixpkgs.nix -A coddWithCheck
+
+    run test-with-db --nix --pg 14
+    run test-with-db --nix --pg 13
+    run test-with-db --nix --pg 12
+    run test-with-db --nix --pg 11
+    run test-with-db --nix --pg 10
+
+## 
+# Runs a test without starting a postgresql DB for it. If no extra arguments are passed, special cases to running
+# all tests that don't require a database.
+# OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+# OPTION NONIXBUILD --nonixbuild Assume the test executable has already been build with Nix. Option used mostly internally.
+test-no-db:
+    set -eo pipefail
+    if [ -n "$NIX" ]; then
+
+        # This Run command is used insire pure Nix shells where `nix` is not available. That's why
+        # this option is useful.
+        if [ -z "$NONIXBUILD" ]; then
+            nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
+        fi
+
+        if [ -n "$1" ]; then
+            ./local/codd-test/bin/codd-test "$@"
+        else
+            ./local/codd-test/bin/codd-test --skip "/DbDependentSpecs/"
+        fi
+    else
+        if [ -n "$1" ]; then
+            cabal run -O0 codd-test -- "$@"
+        else
+            cabal run -O0 codd-test -- --skip "/DbDependentSpecs/"
+        fi
+    fi
+
+## 
+# Runs a test in an environment where there is a postgresql DB listening. If no extra arguments are passed, special cases to running
+# all tests that _do_ require a database.
+# OPTION PG --pg <pg> The version of the postgresql instance to start or 'all'. Defaults to 15 if unspecified.
+# OPTION NIX --nix Use a Nix-built test executable in a pure Nix shell instead of compiling with cabal in the user's shell.
+test-with-db:
+    set -eo pipefail
+    [ -z "$PG" ] && PG=(15)
+    [ "${PG[0]}" = "all" ] && PG=(10 11 12 13 14 15)
+
+    # Build the test executable only once with Nix
+    if [ -n "$NIX" ]; then
+        nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
+    fi
+    
+    for pg in "${PG[@]}"; do
+        echo "Running tests on Postgres $pg"
+        if [ -n "$NIX" ]; then
+            nix develop ".#testShells.x86_64-linux.pg${pg}" -i -c run test-with-db-internal --nix -- "$@"
+        else
+            nix develop ".#testShells.x86_64-linux.pg${pg}" -c run test-with-db-internal -- "$@"
+        fi
+    done
+
+##
+# Do not use this. Use the `test-with-db` command instead.
+# OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+test-with-db-internal:
+    set -eo pipefail
+    trap "echo Stopping postgres && pg_ctl stop" EXIT
+    NIXA=()
+    [ -n "$NIX" ] && NIXA=("--nix")
+
+    if [ -z "$1" ]; then
+        run test-no-db "${NIXA[@]}" --nonixbuild -- --match "/DbDependentSpecs/"
+    else
+        run test-no-db "${NIXA[@]}" --nonixbuild -- "$@"
+    fi
