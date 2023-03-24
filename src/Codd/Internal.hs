@@ -22,7 +22,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
-                                                , unsafeQuery1
+                                                , unsafeQuery1, beginCommitTxnBracket
                                                 )
 import           Codd.Types                     ( RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
@@ -57,14 +57,13 @@ import qualified Database.PostgreSQL.Simple    as DB
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>), takeFileName )
 import           UnliftIO                       ( MonadUnliftIO
-                                                , toIO, hClose
+                                                , hClose
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
 import           UnliftIO.Exception             ( IOException
                                                 , bracket
                                                 , handleJust
-                                                , onException
                                                 , throwIO
                                                 , tryJust, catchJust
                                                 )
@@ -122,30 +121,6 @@ isServerNotAvailableError e =
 -- | Returns true for errors such as "permission denied for database xxx"
 isPermissionDeniedError :: DB.SqlError -> Bool
 isPermissionDeniedError e = DB.sqlState e == "42501"
-
--- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
--- the desired isolation level.
-beginStatement :: TxnIsolationLvl -> DB.Query
-beginStatement = \case
-    DbDefault       -> "BEGIN READ WRITE"
-    Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
-    RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
-    ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
-    ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
-
-beginCommitTxnBracket
-    :: (MonadUnliftIO m, MonadIO m)
-    => TxnIsolationLvl
-    -> DB.Connection
-    -> m a
-    -> m a
-beginCommitTxnBracket isolLvl conn f = do
-    iof <- toIO f
-    liftIO $ do
-        execvoid_ conn $ beginStatement isolLvl
-        v <- iof `onException` DB.rollback conn
-        DB.commit conn
-        pure v
 
 data BootstrapCheck = BootstrapCheck {
     defaultConnAccessible :: Bool
@@ -314,7 +289,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             parseMigrationFiles migsAlreadyApplied sqlMigrations
 
 
-    
+
 
 -- | Opens a UTF-8 file allowing it to be read in streaming fashion.
 -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
@@ -424,12 +399,13 @@ data ApplyMigsResult m a = ApplyMigsResult
 
 data CoddStateTransition = NoTransition | DefaultConnectionMadeAvailable
 
--- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations with "txnBracket".
+-- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations each within their own
+-- separate transactions.
 -- Behaviour here unfortunately is _really_ complex right now. Important notes:
 -- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
 --   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
---   Otherwise - and including if there are no migrations - it runs after all migrations, not in an explicit transaction and
---   in the supplied connection - not necessarily in the same as the last migration's.
+--   Otherwise - and including if there are no migrations - it runs after all migrations, in an explicit transaction of
+--   its own and in the default connection - not necessarily in the same as the last migration's.
 baseApplyMigsBlock
     :: forall m a
      . (MonadUnliftIO m, MonadIO m, MonadLogger m)
@@ -453,7 +429,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         -- and make sure to test the third code path very well.
         case blocksOfMigs of
             [] ->
-                withConnection defaultConnInfo connectTimeout $ fmap (ApplyMigsResult []) . actionAfter blocksOfMigs
+                withConnection defaultConnInfo connectTimeout $ \defaultConn -> beginCommitTxnBracket isolLvl defaultConn (ApplyMigsResult [] <$> actionAfter blocksOfMigs defaultConn)
             [block] | blockInTxn block && fromMaybe defaultConnInfo (blockCustomConnInfo block) == defaultConnInfo ->
                     -- Our very "special" and most common case case:
                     -- all migs being in-txn in the default connection-string
@@ -516,8 +492,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                    unless (coddSchemaExists finalBootCheck) $ do
                      logInfoN "Creating codd_schema..."
                      createCoddSchema isolLvl defaultConn
-                   lift $ registerPendingMigrations defaultConn appliedMigs
-                   actAfterResult <- lift (actionAfter blocksOfMigs defaultConn)
+                   beginCommitTxnBracket isolLvl defaultConn $ lift $ registerPendingMigrations defaultConn appliedMigs
+                   actAfterResult <- beginCommitTxnBracket isolLvl defaultConn $ lift (actionAfter blocksOfMigs defaultConn)
 
                    pure $ ApplyMigsResult (map (\(am, t, _) -> (am, t)) appliedMigs) actAfterResult
 
@@ -571,7 +547,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
             else
                 ApplyMigsResult
                 <$> runMigs conn retryPol (allMigs migBlock) runAfterMig
-                <*> act conn
+                <*> beginCommitTxnBracket isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to
 -- strict-check schemas, logging differences, success and throwing

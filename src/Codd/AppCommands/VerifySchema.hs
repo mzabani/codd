@@ -5,9 +5,9 @@ module Codd.AppCommands.VerifySchema
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Representations           ( logSchemasComparison
-                                                , readRepresentationsFromDbWithSettings
                                                 , readRepsFromDisk
                                                 )
+import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )
 import           Codd.Representations.Types     ( DbRep )
 import           Control.Monad                  ( when )
 import           Control.Monad.Logger           ( MonadLoggerIO
@@ -45,7 +45,7 @@ verifySchema dbInfoWithAllMigs@CoddSettings { onDiskReps, migsConnString } fromS
     dbSchema <- withConnection
       migsConnString
       (secondsToDiffTime 5)
-      (readRepresentationsFromDbWithSettings dbInfoDontApplyAnything)
+      (readRepsFromDbWithNewTxn dbInfoDontApplyAnything)
     when (dbSchema /= expectedSchemas) $ do
       logSchemasComparison dbSchema expectedSchemas
       liftIO $ exitWith (ExitFailure 1)

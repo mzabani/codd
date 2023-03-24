@@ -9,6 +9,7 @@ import qualified Codd.Internal                 as Codd
 import           Codd.Logging                   ( runErrorsOnlyLogger )
 import qualified Codd.Representations          as Codd
 import           Codd.Representations           ( detEncodeJSON )
+import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )
 import           Control.Monad.IO.Unlift        ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
@@ -22,10 +23,9 @@ writeSchema
   :: (MonadUnliftIO m, MonadIO m) => CoddSettings -> WriteSchemaOpts -> m ()
 writeSchema dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToDisk mdest -> runStdoutLoggingT $ do
-    dbSchema <- Codd.withConnection
-      migsConnString
-      (secondsToDiffTime 5)
-      (Codd.readRepresentationsFromDbWithSettings dbInfo)
+    dbSchema <- Codd.withConnection migsConnString
+                                    (secondsToDiffTime 5)
+                                    (readRepsFromDbWithNewTxn dbInfo)
     let
       dirToSave = case mdest of
         Just d  -> d
@@ -37,9 +37,9 @@ writeSchema dbInfo@CoddSettings { migsConnString } opts = case opts of
 
     Codd.persistRepsToDisk dbSchema dirToSave
   WriteToStdout -> runErrorsOnlyLogger $ do
-    dbSchema <- Codd.withConnection
-      migsConnString
-      (secondsToDiffTime 5)
-      (Codd.readRepresentationsFromDbWithSettings dbInfo)
+    dbSchema <- Codd.withConnection migsConnString
+                                    (secondsToDiffTime 5)
+                                    (readRepsFromDbWithNewTxn dbInfo)
 
     liftIO $ Text.putStr $ detEncodeJSON dbSchema
+
