@@ -2,10 +2,13 @@ module Codd.Representations.Database
   ( queryServerMajorVersion
   , readSchemaFromDatabase
   , readRepresentationsFromDbWithSettings
+  , readRepsFromDbWithNewTxn
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Query                     ( beginCommitTxnBracket
+                                                , unsafeQuery1
+                                                )
 import           Codd.Representations.Database.Model
                                                 ( DbObjRepresentationQuery(..)
                                                 , QueryFrag(..)
@@ -32,7 +35,10 @@ import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole(..)
                                                 )
-import           Control.Monad                  ( forM_ )
+
+import           Control.Monad                  ( forM_
+                                                , void
+                                                )
 import           Control.Monad.Logger           ( MonadLogger
                                                 , logWarnN
                                                 )
@@ -259,6 +265,20 @@ queryServerMajorVersion conn = do
     Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
     Right (numVersion :: Int) -> pure $ numVersion `div` 10000
 
+-- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Must not
+-- be called if already inside a transaction.
+-- Work to make such a requirement a class constraint will come in the future.
+readRepsFromDbWithNewTxn
+  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
+  => CoddSettings
+  -> DB.Connection
+  -> m DbRep
+readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
+  beginCommitTxnBracket txnIsolationLvl conn
+    $ readRepresentationsFromDbWithSettings sett conn
+
+-- | This function _must_ be called inside a transaction to behave correctly.
+-- Work to make such a requirement a class constraint will come in the future.
 readRepresentationsFromDbWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
   => CoddSettings
@@ -316,6 +336,8 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                                  rolesToCheck
                                  schemaAlgoOpts
 
+-- | This function _must_ be called inside a transaction to behave correctly.
+-- Work to make such a requirement a class constraint will come in the future.
 readSchemaFromDatabase
   :: (MonadUnliftIO m, MonadIO m, HasCallStack)
   => PgVersionHasher
@@ -326,20 +348,46 @@ readSchemaFromDatabase
   -> m DbRep
 readSchemaFromDatabase pgVer conn schemaSel allRoles schemaAlgoOpts = do
   let stateStore = stateSet UserState{} stateEmpty
-  env0 <- liftIO
-    $ initEnv stateStore (pgVer, conn, schemaSel, allRoles, schemaAlgoOpts)
-  liftIO $ runHaxl env0 $ do
-    allDbSettings <- dataFetch $ GetRepsReq HDatabaseSettings Nothing Nothing
-    roles         <- dataFetch $ GetRepsReq HRole Nothing Nothing
-    schemas       <- dataFetch $ GetRepsReq HSchema Nothing Nothing
-    let
-      dbSettings = case allDbSettings of
-        [(_, h)] -> h
-        _ ->
-          error
-            "More than one database returned from pg_database. Please file a bug."
-    DbRep dbSettings <$> getNamespacesReps schemas <*> pure
-      (listToMap $ map (uncurry RoleRep) roles)
+  liftIO $ do
+    env0 <- initEnv stateStore
+                    (pgVer, conn, schemaSel, allRoles, schemaAlgoOpts)
+    -- We want full schemas to appear in the expression that defines objects,
+    -- from constraints to default column values and everything else.
+    -- The pg_get_expr and pg_get_constraintdef functions (and likely others) will take the current
+    -- value of `search_path` into account when showing pretty expressions, but
+    -- we want them to have fully qualified schema names and be independent of the user's
+    -- `search_path` setting.
+    -- We also want to undo the effects of setting search_path before returning (unless this function
+    -- throws an exception).
+    withEmptySearchPath $ runHaxl env0 $ do
+      allDbSettings <- dataFetch $ GetRepsReq HDatabaseSettings Nothing Nothing
+      roles         <- dataFetch $ GetRepsReq HRole Nothing Nothing
+      schemas       <- dataFetch $ GetRepsReq HSchema Nothing Nothing
+      let
+        dbSettings = case allDbSettings of
+          [(_, h)] -> h
+          _ ->
+            error
+              "More than one database returned from pg_database. Please file a bug."
+      DbRep dbSettings <$> getNamespacesReps schemas <*> pure
+        (listToMap $ map (uncurry RoleRep) roles)
+
+ where
+  withEmptySearchPath f = do
+    [currentSearchPath :: DB.Only Text] <- DB.query_
+      conn
+      "SELECT current_setting('search_path', false)"
+    void $ DB.query @(DB.Only Text) @(DB.Only Text)
+      conn
+      "SELECT set_config('search_path', ?, true)"
+      (DB.Only "")
+    res <- f
+    -- Undo search_path change
+    void $ DB.query @(DB.Only Text) @(DB.Only Text)
+      conn
+      "SELECT set_config('search_path', ?, true)"
+      currentSearchPath
+    pure res
 
 getNamespacesReps :: [(ObjName, Value)] -> Haxl (Map ObjName SchemaRep)
 getNamespacesReps schemas =
