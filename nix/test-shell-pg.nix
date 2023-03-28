@@ -7,7 +7,7 @@ let
     wipeCluster = true;
   };
 in pkgs.mkShell {
-  buildInputs = [ postgres postgres-service pkgs.glibcLocales ];
+  buildInputs = [ postgres postgres-service pkgs.glibcLocales pkgs.run ];
   description = "Test shell with postgres available and initializing";
   shellHook = ''
     set -e

@@ -107,13 +107,14 @@
                   };
                   # Non-Haskell shell tools go here
                   shell.buildInputs = with pkgs; [
+                    cacert
                     ghcid
+                    glibcLocales
                     haskellPackages.brittany # Brittany from the LTS is older than this
                     # finalIohkPkgs.brittany.components.exes.brittany
                     postgresql
-                    glibcLocales
-                    cacert
                     postgres-service
+                    run
                   ];
                   shell.shellHook = ''
                     source scripts/source-env.sh .env
@@ -168,6 +169,8 @@
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
         };
+
+        shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run ]; };
 
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
         # build musl packages statically to see if their "normal" builds pass
