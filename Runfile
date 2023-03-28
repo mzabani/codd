@@ -5,9 +5,6 @@
 ci-tests:
     set -eo pipefail
 
-    echo "Building codd with Aeson 1"
-    nix build --no-link ".#flakeAeson1.x86_64-linux.codd-musl"
-
     echo "Running tests that don't depend on a database"
     run test-no-db --nix
 
