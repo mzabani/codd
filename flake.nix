@@ -170,6 +170,8 @@
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
         };
 
+        shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run ]; };
+
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
         # build musl packages statically to see if their "normal" builds pass
         inherit pkgs;
