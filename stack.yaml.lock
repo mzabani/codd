@@ -5,19 +5,26 @@
 
 packages:
 - completed:
-    name: haxl
-    version: 2.3.0.0
-    git: https://github.com/facebook/Haxl
+    hackage: hashable-1.4.0.0@sha256:a6578a6d22592540078e4afaa38b5a138737ae11a8c1085df19d0ac527422d28,4787
     pantry-tree:
-      size: 4308
-      sha256: 798875270f7ae8edd80c304ae543b5c463dae4a59b317c02ff703d8ec0753323
-    commit: f3736effe1de37e0f82e7a12022992ee54f8ff20
+      sha256: 2b59fe86f7343c0959a4ffc33fc68004576c807966da55072fa223313efb3926
+      size: 1248
   original:
-    git: https://github.com/facebook/Haxl
-    commit: f3736effe1de37e0f82e7a12022992ee54f8ff20
+    hackage: hashable-1.4.0.0
+- completed:
+    commit: fd017a6ee307730f6621ff080bbbf38b0b92d5b7
+    git: https://github.com/facebook/Haxl.git
+    name: haxl
+    pantry-tree:
+      sha256: ff6659146aba3db7f1c638907a8e7c4101da9753263a1da3b40d88b47f486e98
+      size: 4432
+    version: 2.4.0.0
+  original:
+    commit: fd017a6ee307730f6621ff080bbbf38b0b92d5b7
+    git: https://github.com/facebook/Haxl.git
 snapshots:
 - completed:
-    size: 563103
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/4.yaml
-    sha256: f11e2153044f5f71ea7b1c9398f4721f517c9bd37642ed769647b896564021f3
-  original: lts-17.4
+    sha256: 428ec8d5ce932190d3cbe266b9eb3c175cd81e984babf876b64019e2cbe4ea68
+    size: 590100
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/28.yaml
+  original: lts-18.28
