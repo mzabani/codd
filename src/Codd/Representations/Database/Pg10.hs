@@ -680,8 +680,10 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             ++ [ ( "composite_type_attrs"
                  , "ARRAY_TO_STRING(\
               \\n ARRAY_AGG(\
-                \\n pg_attribute.attname || ';' || attribute_type.typname\
-                \   || COALESCE(attribute_coll.collname, '') || ';' || COALESCE(attribute_coll_nsp.nspname, '') ORDER BY pg_attribute.attnum\
+                \\n pg_attribute.attname\
+                \\n || ';' || attribute_type.typname\
+                \\n || ';' || COALESCE(attribute_coll.collname, '')\
+                \\n || ';' || COALESCE(attribute_coll_nsp.nspname, '') ORDER BY pg_attribute.attnum\
               \\n ), ';')"
                  )
                , ( "enum_labels"
