@@ -34,7 +34,9 @@ import           Codd.Representations           ( DbRep(..)
                                                 , readRepresentationsFromDbWithSettings
                                                 , schemaDifferences
                                                 )
-import           Codd.Representations.Database  ( queryServerMajorVersion )
+import           Codd.Representations.Database  ( queryServerMajorVersion
+                                                , readRepsFromDbWithNewTxn
+                                                )
 import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
@@ -1261,7 +1263,7 @@ spec = do
     describe "Schema verification tests" $ do
       modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
         $ aroundFreshDatabase
-        $ it "Schemaming schema changes"
+        $ it "Accurate and reversible representation changes"
         $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
             let -- emptyDbInfo = emptyDbInfo2 { hashedSchemas = False }
                 -- Use the above definition of emptyDbInfo if it helps debugging
@@ -1270,7 +1272,7 @@ spec = do
                 getHashes sett = runStdoutLoggingT $ withConnection
                   connInfo
                   testConnTimeout
-                  (readRepresentationsFromDbWithSettings sett)
+                  (readRepsFromDbWithNewTxn sett)
             pgVersion <- withConnection connInfo
                                         testConnTimeout
                                         queryServerMajorVersion
