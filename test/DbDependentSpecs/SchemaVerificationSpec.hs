@@ -1072,6 +1072,51 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     aroundFreshDatabase
+      $ it "User search_path does not affect representations"
+      $ \emptyTestDbInfo -> do
+          createStuffMig <-
+            AddedSqlMigration
+            <$> (   either (error "Could not parse SQL migration") id
+                <$> parseSqlMigrationIO
+                      "1900-01-01-00-00-00-create-stuff.sql"
+                      ( PureStream
+                      $ Streaming.yield
+                          "-- Columns with default values are SQL expressions that should reference the schema's name.\
+                        \\n--  And SQL expressions are what we need for this test, since they change when the search_path changes.\
+                        \\nCREATE SCHEMA nsp1; CREATE SCHEMA nsp2; CREATE TABLE nsp1.tbl1 (col1 SERIAL PRIMARY KEY); CREATE TABLE nsp2.tbl2 (col2 SERIAL PRIMARY KEY);"
+                      )
+                )
+            <*> pure (getIncreasingTimestamp 0)
+          let setSearchPath conn sp =
+                liftIO $ void $ DB.query @(DB.Only Text) @(DB.Only Text)
+                  conn
+                  "SELECT set_config('search_path', ?, false)"
+                  (DB.Only sp)
+          (reps1, reps2, reps3, reps4) <-
+            runStdoutLoggingT $ applyMigrationsNoCheck
+              emptyTestDbInfo
+              (Just [hoistAddedSqlMigration lift createStuffMig])
+              testConnTimeout
+              (\conn -> do
+                setSearchPath conn "nsp1"
+                reps1 <- readRepresentationsFromDbWithSettings emptyTestDbInfo
+                                                               conn
+                setSearchPath conn "nsp2"
+                reps2 <- readRepresentationsFromDbWithSettings emptyTestDbInfo
+                                                               conn
+                setSearchPath conn "nsp1, nsp2"
+                reps3 <- readRepresentationsFromDbWithSettings emptyTestDbInfo
+                                                               conn
+                setSearchPath conn "public"
+                reps4 <- readRepresentationsFromDbWithSettings emptyTestDbInfo
+                                                               conn
+                pure (reps1, reps2, reps3, reps4)
+              )
+          reps1 `shouldBe` reps2
+          reps2 `shouldBe` reps3
+          reps3 `shouldBe` reps4
+
+    aroundFreshDatabase
       $ it "Strict and Lax collation representations differ"
       $ \emptyTestDbInfo -> do
       -- It'd be nice to test that different libc/libicu versions make hashes
@@ -1267,12 +1312,15 @@ spec = do
         $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
             let -- emptyDbInfo = emptyDbInfo2 { hashedSchemas = False }
                 -- Use the above definition of emptyDbInfo if it helps debugging
-                emptyDbInfo = emptyDbInfo2
-                connInfo    = migsConnString emptyDbInfo
-                getHashes sett = runStdoutLoggingT $ withConnection
-                  connInfo
-                  testConnTimeout
-                  (readRepsFromDbWithNewTxn sett)
+              emptyDbInfo = emptyDbInfo2
+                { namespacesToCheck = IncludeSchemas
+                                        ["public", "codd-extra-mapped-schema"]
+                }
+              connInfo = migsConnString emptyDbInfo
+              getHashes sett = runStdoutLoggingT $ withConnection
+                connInfo
+                testConnTimeout
+                (readRepsFromDbWithNewTxn sett)
             pgVersion <- withConnection connInfo
                                         testConnTimeout
                                         queryServerMajorVersion
