@@ -127,25 +127,6 @@ constraintnameExpr :: QueryFrag -> QueryFrag -> QueryFrag
 constraintnameExpr conTbl pgDomainTypeTbl =
   conTbl <> ".conname || COALESCE(';' || " <> pgDomainTypeTbl <> ".typname, '')"
 
--- | Given aliases for in-context "pg_type" and the associated typelem's "pg_type_elem" tables,
--- returns an expression that evaluates to "basetype[]" instead of "_basetype" if this is
--- an array type or just the type's name otherwise.
-typeNameExpr :: QueryFrag -> QueryFrag -> QueryFrag
-typeNameExpr pgTypeTbl pgTypeElemTbl =
-  "CASE WHEN "
-    <> pgTypeTbl
-    <> ".typelem <> 0 AND "
-    <> pgTypeTbl
-    <> ".typlen = -1 AND "
-    <> pgTypeTbl
-    <> ".typname LIKE '\\_%' AND "
-    <> pgTypeElemTbl
-    <> ".typname IS NOT NULL THEN "
-    <> pgTypeElemTbl
-    <> ".typname || '[]' ELSE "
-    <> pgTypeTbl
-    <> ".typname END"
-
 pgClassRepQuery
   :: Maybe ([SqlRole], QueryFrag)
             -- ^ If privileges are to be verified, the roles and privileges kind character for the object.
@@ -653,7 +634,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           , ("delim"                   , "pg_type.typdelim")
           , ("notnull"                 , "pg_type.typnotnull")
           , ("comp_type_table"         , "pg_class_rel.relname")
-          , ("element_type"            , "pg_type_elem.typname")
+          , ("element_type"            , "array_element_type.typname")
           , ("domain_basetype"         , "pg_type_base.typname")
           , ("domain_typmod"           , "pg_type.typtypmod")
           , ("ndims"                   , "pg_type.typndims")
@@ -674,7 +655,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           ]
     in
       DbObjRepresentationQuery
-        { objNameCol    = typeNameExpr "pg_type" "pg_type_elem"
+        { objNameCol    = "pg_type.typname"
         , repCols       =
           ckCols
             ++ [ ( "composite_type_attrs"
@@ -698,9 +679,8 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           "LEFT JOIN pg_catalog.pg_namespace ON typnamespace=pg_namespace.oid\
 \\nLEFT JOIN pg_catalog.pg_roles pg_type_owner ON pg_type_owner.oid=typowner\
 \\nLEFT JOIN pg_catalog.pg_class pg_class_rel ON pg_class_rel.oid=pg_type.typrelid\
-\\nLEFT JOIN pg_catalog.pg_type pg_type_elem ON pg_type_elem.oid=pg_type.typelem\
+\\nLEFT JOIN pg_catalog.pg_type array_element_type ON array_element_type.oid=pg_type.typelem\
 \\nLEFT JOIN pg_catalog.pg_type pg_type_base ON pg_type_base.oid=pg_type.typbasetype\
-\\nLEFT JOIN pg_catalog.pg_class pg_class_elem ON pg_class_elem.oid=pg_type_elem.typrelid\
 \\nLEFT JOIN pg_catalog.pg_collation ON pg_collation.oid=pg_type.typcollation\
 \\nLEFT JOIN pg_catalog.pg_namespace pg_namespace_coll ON pg_namespace_coll.oid=collnamespace"
           <>
@@ -746,11 +726,13 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- 1 - We hope/assume which array types get automatically created follows the same criteria
             --     for different PG versions. Reading the docs from versions 10 to 14 this seems to be true,
             --     look for "Whenever a user-defined type is created" in https://www.postgresql.org/docs/10/sql-createtype.html.
-            --     This means we can disregard array types completely.
+            --     It also seems privileges can't be granted to array types, so this means we can disregard array types completely.
             -- 2 - Types generated per tables, views and other relations are redundant so we don't include
             --     either those or their array types. They can't be removed because views and tables depend on them,
             --     so that keeps us safe.
-            "pg_type.typisdefined AND pg_type_elem.oid IS NULL AND (pg_class_rel.relkind IS NULL OR pg_class_rel.relkind = 'c')"
+            --     TODO: actually, it seems possible to grant privileges to table types. This _could_ mean we should include them in 
+            --     the expected schema, at least when their types differ from the default.
+            "pg_type.typisdefined AND array_element_type.oid IS NULL AND (pg_class_rel.relkind IS NULL OR pg_class_rel.relkind = 'c')"
         , identWhere    = Just $ QueryFrag "pg_namespace.nspname = ?"
                                            (DB.Only schemaName)
         , groupByCols   =
