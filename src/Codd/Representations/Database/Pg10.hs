@@ -700,7 +700,6 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
 \\nLEFT JOIN pg_catalog.pg_class pg_class_rel ON pg_class_rel.oid=pg_type.typrelid\
 \\nLEFT JOIN pg_catalog.pg_type pg_type_elem ON pg_type_elem.oid=pg_type.typelem\
 \\nLEFT JOIN pg_catalog.pg_type pg_type_base ON pg_type_base.oid=pg_type.typbasetype\
-\\nLEFT JOIN pg_catalog.pg_class pg_class_elem ON pg_class_elem.oid=pg_type_elem.typrelid\
 \\nLEFT JOIN pg_catalog.pg_collation ON pg_collation.oid=pg_type.typcollation\
 \\nLEFT JOIN pg_catalog.pg_namespace pg_namespace_coll ON pg_namespace_coll.oid=collnamespace"
           <>
