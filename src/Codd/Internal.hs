@@ -18,11 +18,11 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , FileStream(..)
                                                 , ParsedSql (..)
                                                 , SqlMigration(..)
-                                                , parseAddedSqlMigration
+                                                , parseAddedSqlMigration, hoistAddedSqlMigration
                                                 )
 import           Codd.Query                     ( execvoid_
                                                 , query
-                                                , unsafeQuery1, beginCommitTxnBracket
+                                                , unsafeQuery1, beginCommitTxnBracket, InTxnT (..), hoistInTxn
                                                 )
 import           Codd.Types                     ( RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
@@ -74,6 +74,7 @@ import UnliftIO.Resource (runResourceT, ResourceT, allocate, ReleaseKey, release
 import UnliftIO.MVar (newMVar, readMVar, modifyMVar)
 import UnliftIO.IO (openFile, IOMode (ReadMode))
 import Control.Monad.Trans.Resource (MonadThrow)
+import qualified Data.Bifunctor
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -167,7 +168,7 @@ data PendingMigrations m = PendingMigrations {
 
 collectAndApplyMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, MonadThrow m, EnvVars m)
-    => ([BlockOfMigrations m] -> DB.Connection -> m a)
+    => ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
     -> CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
@@ -190,7 +191,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
 
 applyCollectedMigrations
     :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
-    => ([BlockOfMigrations m] -> DB.Connection -> m a)
+    => ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
     -> CoddSettings
     -> PendingMigrations m
     -> DiffTime
@@ -396,6 +397,19 @@ data ApplyMigsResult m a = ApplyMigsResult
     { migsAppliedAt     :: [(AddedSqlMigration m, UTCTime)]
     , actionAfterResult :: a
     }
+unhoistApplyMigsResultInTxn :: ApplyMigsResult (InTxnT m) a -> ApplyMigsResult m a
+unhoistApplyMigsResultInTxn ApplyMigsResult{..} =
+    let
+        -- TODO: using `unTxnT` allows an InTxn action to run in a non-InTxn monad, which is like
+        -- breaking the sandbox. Find a better way of doing this.
+        -- One thing we could do is change `ApplyMigsResult` to _not_ contain SQL Streams. They should
+        -- have been consumed after applied, so it's a bad smell that they are there, at all.
+        hoistedMigsAppliedAt = migsAppliedAt <&> Data.Bifunctor.first (hoistAddedSqlMigration unTxnT)
+    in
+    ApplyMigsResult
+        { migsAppliedAt = hoistedMigsAppliedAt,
+            actionAfterResult
+        }
 
 data CoddStateTransition = NoTransition | DefaultConnectionMadeAvailable
 
@@ -412,7 +426,7 @@ baseApplyMigsBlock
     => DB.ConnectInfo
     -> DiffTime
     -> RetryPolicy
-    -> ([BlockOfMigrations m] -> DB.Connection -> m a)
+    -> ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
     -> TxnIsolationLvl
     -> BootstrapCheck
     -> [BlockOfMigrations m]
@@ -513,7 +527,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         if inTxn then registerRanMigration defaultConn
             else \fp time -> beginCommitTxnBracket isolLvl defaultConn $ registerRanMigration defaultConn fp time
 
-    runMigs :: DB.Connection -> RetryPolicy -> NonEmpty (AddedSqlMigration m) -> (FilePath -> DB.UTCTimestamp -> m UTCTime) -> m [(AddedSqlMigration m, UTCTime)]
+    runMigs :: DB.Connection -> RetryPolicy -> NonEmpty (AddedSqlMigration n) -> (FilePath -> DB.UTCTimestamp -> n UTCTime) -> n [(AddedSqlMigration n, UTCTime)]
     runMigs conn withRetryPolicy migs runAfterMig = fmap NE.toList $ forM migs $ \asqlmig ->
         (asqlmig,)
             <$> applySingleMigration conn
@@ -521,7 +535,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                      runAfterMig
                                      asqlmig
     runBlock
-        :: (DB.Connection -> m b)
+        :: (DB.Connection -> InTxnT m b)
         -> DB.Connection
         -> BlockOfMigrations m
         -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
@@ -540,10 +554,10 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                 logInfoN "BEGINning transaction"
                                 beginCommitTxnBracket isolLvl conn
                                     $   ApplyMigsResult
-                                    <$> runMigs conn singleTryPolicy (allMigs blockFinal) runAfterMig -- We retry entire transactions, not individual statements
+                                    <$> runMigs @(InTxnT m) conn singleTryPolicy (allMigs (hoistBlockOfMigrationsInTxn blockFinal)) (\a b -> InTxnT $ runAfterMig a b) -- We retry entire transactions, not individual statements
                                     <*> act conn
                 logInfoN "COMMITed transaction"
-                pure res
+                pure $ unhoistApplyMigsResultInTxn res
             else
                 ApplyMigsResult
                 <$> runMigs conn retryPol (allMigs migBlock) runAfterMig
@@ -579,10 +593,18 @@ laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
     logSchemasComparison cksums expectedReps
     pure cksums
 
+-- | A collection of consecutive migrations that has the same (in-txn, db-connection)
+-- attributes.
 data BlockOfMigrations m = BlockOfMigrations {
     allMigs :: NonEmpty (AddedSqlMigration m)
     , reReadBlock :: m (BlockOfMigrations m)
 }
+hoistBlockOfMigrationsInTxn :: forall m. BlockOfMigrations m -> BlockOfMigrations (InTxnT m)
+hoistBlockOfMigrationsInTxn (BlockOfMigrations {..}) =
+    let hoistedAllMigs = hoistInTxn <$> allMigs
+        hoistedReReadBlock = InTxnT $ reReadBlock <&> hoistBlockOfMigrationsInTxn
+    in
+     BlockOfMigrations { allMigs = hoistedAllMigs, reReadBlock = hoistedReReadBlock }
 blockInTxn :: BlockOfMigrations m -> Bool
 blockInTxn (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _) =
     migrationInTxn addedSqlMig

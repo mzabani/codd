@@ -1,12 +1,18 @@
 module Codd.Query
-  ( execvoid_
+  ( InTxnT(..) -- TODO: we probably don't want to export the constructor as it can break the transaction sandbox if misused
+  , beginCommitTxnBracket
+  , execvoid_
+  , hoistInTxn
   , query
   , unsafeQuery1
-  , beginCommitTxnBracket
   ) where
 
+import           Codd.Parsing                   ( AddedSqlMigration
+                                                , hoistAddedSqlMigration
+                                                )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
+import           Control.Monad.Logger           ( MonadLogger )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
                                                 , MonadUnliftIO
@@ -50,16 +56,23 @@ beginStatement = \case
   ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
   ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
 
+-- class InTxn m
+newtype InTxnT m a = InTxnT { unTxnT :: m a }
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO)
+
 beginCommitTxnBracket
   :: (MonadUnliftIO m, MonadIO m)
   => TxnIsolationLvl
   -> DB.Connection
+  -> InTxnT m a
   -> m a
-  -> m a
-beginCommitTxnBracket isolLvl conn f = do
+beginCommitTxnBracket isolLvl conn (unTxnT -> f) = do
   iof <- toIO f
   liftIO $ do
     execvoid_ conn $ beginStatement isolLvl
     v <- iof `onException` DB.rollback conn
     DB.commit conn
     pure v
+
+hoistInTxn :: Monad m => AddedSqlMigration m -> AddedSqlMigration (InTxnT m)
+hoistInTxn = hoistAddedSqlMigration InTxnT
