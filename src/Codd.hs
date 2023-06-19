@@ -16,6 +16,7 @@ import           Codd.Parsing                   ( AddedSqlMigration
                                                 , EnvVars
                                                 , hoistAddedSqlMigration
                                                 )
+import           Codd.Query                     ( InTxn )
 import           Codd.Representations           ( DbRep
                                                 , readRepsFromDisk
                                                 )
@@ -85,7 +86,7 @@ applyMigrationsNoCheck
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
   -> DiffTime
   -> (  forall t
-      . (MonadLogger t, MonadUnliftIO t)
+      . (InTxn t, MonadLogger t, MonadUnliftIO t)
      => DB.Connection
      -> t a
      )

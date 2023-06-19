@@ -6,7 +6,8 @@ module Codd.Representations.Database
   ) where
 
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Query                     ( beginCommitTxnBracket
+import           Codd.Query                     ( InTxn
+                                                , beginCommitTxnBracket
                                                 , unsafeQuery1
                                                 )
 import           Codd.Representations.Database.Model
@@ -64,8 +65,9 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 )
 
+-- brittany-disable-next-binding
 data RepresentationReq a where
-  GetRepsReq ::ObjectRep -> Maybe ObjName -> Maybe ObjName -> RepresentationReq [(ObjName, Value)]
+  GetRepsReq :: ObjectRep -> Maybe ObjName -> Maybe ObjName -> RepresentationReq [(ObjName, Value)]
   deriving stock (Typeable)
 
 instance Eq (RepresentationReq a) where
@@ -278,9 +280,8 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
     $ readRepresentationsFromDbWithSettings sett conn
 
 -- | This function _must_ be called inside a transaction to behave correctly.
--- Work to make such a requirement a class constraint will come in the future.
 readRepresentationsFromDbWithSettings
-  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
+  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, InTxn m, HasCallStack)
   => CoddSettings
   -> DB.Connection
   -> m DbRep
