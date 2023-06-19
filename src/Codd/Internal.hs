@@ -17,7 +17,6 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , FileStream(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
-                                                , hoistAddedSqlMigration
                                                 , parseAddedSqlMigration
                                                 )
 import           Codd.Query                     ( InTxn
@@ -52,7 +51,6 @@ import           Control.Monad.Logger           ( MonadLogger
                                                 )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
-import qualified Data.Bifunctor
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
 import           Data.List                      ( sortOn )
@@ -170,12 +168,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
              if isServerNotAvailableError e
         then Nothing
 
-                                                                                                                                                                                                                                           -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                                                                                           -- - The DB does not exist.
-                                                                                                                                                                                                                                           -- - CONNECT rights not granted.
-                                                                                                                                                                                                                                           -- - User doesn't exist.
-                                                                                                                                                                                                                                           -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                                                                                           -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                                                                                                                                                                               -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                                                                                                                                                                               -- - The DB does not exist.
+                                                                                                                                                                                                                                                                                                                                                                                               -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                                                                                                                                                                               -- - User doesn't exist.
+                                                                                                                                                                                                                                                                                                                                                                                               -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                                                                                                                                                                               -- here as errors that might just require bootstrapping.
         else if isLibPqError e
           then Just BootstrapCheck { defaultConnAccessible = False
                                    , coddSchemaExists      = False
@@ -207,7 +205,12 @@ collectAndApplyMigrations
      , MonadThrow m
      , EnvVars m
      )
-  => ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
+  => (  forall t
+      . (InTxn t, MonadLogger t, MonadUnliftIO t)
+     => [BlockOfMigrations m]
+     -> DB.Connection
+     -> t a
+     )
   -> CoddSettings
   -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
@@ -233,7 +236,12 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
 
 applyCollectedMigrations
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
-  => ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
+  => (  forall t
+      . (InTxn t, MonadLogger t, MonadUnliftIO t)
+     => [BlockOfMigrations m]
+     -> DB.Connection
+     -> t a
+     )
   -> CoddSettings
   -> PendingMigrations m
   -> DiffTime
@@ -492,7 +500,12 @@ baseApplyMigsBlock
   => DB.ConnectInfo
   -> DiffTime
   -> RetryPolicy
-  -> ([BlockOfMigrations m] -> DB.Connection -> InTxnT m a)
+  -> (  forall t
+      . (InTxn t, MonadLogger t, MonadUnliftIO t)
+     => [BlockOfMigrations m]
+     -> DB.Connection
+     -> t a
+     )
   -> TxnIsolationLvl
   -> BootstrapCheck
   -> [BlockOfMigrations m]
@@ -596,7 +609,6 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         logInfoN "Creating codd_schema..."
         createCoddSchema isolLvl defaultConn
       beginCommitTxnBracket isolLvl defaultConn
-        $ lift
         $ registerPendingMigrations defaultConn appliedMigs
       actAfterResult <- beginCommitTxnBracket isolLvl defaultConn
         $ actionAfter blocksOfMigs defaultConn
@@ -605,7 +617,10 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
 
  where
   registerPendingMigrations
-    :: DB.Connection -> [(AppliedMigration, MigrationRegistered)] -> n ()
+    :: MonadIO n
+    => DB.Connection
+    -> [(AppliedMigration, MigrationRegistered)]
+    -> n ()
   registerPendingMigrations defaultConn appliedMigs =
     liftIO
       $ forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
@@ -624,7 +639,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         $ registerRanMigration defaultConn fp time
 
   runMigs
-    :: DB.Connection
+    :: (MonadUnliftIO n, MonadLogger n)
+    => DB.Connection
     -> RetryPolicy
     -> NonEmpty (AddedSqlMigration n)
     -> (FilePath -> DB.UTCTimestamp -> n UTCTime)
@@ -676,7 +692,12 @@ strictCheckLastAction
   :: (MonadUnliftIO m, MonadLogger m)
   => CoddSettings
   -> DbRep
-  -> ([BlockOfMigrations m] -> DB.Connection -> m ())
+  -> (  forall t
+      . (InTxn t, MonadUnliftIO t, MonadLogger t, MonadUnliftIO t)
+     => [BlockOfMigrations m]
+     -> DB.Connection
+     -> t ()
+     )
 strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
   cksums <- readRepresentationsFromDbWithSettings coddSettings conn
   unless (all blockInTxn blocksOfMigs) $ do
@@ -690,10 +711,16 @@ strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
 -- lax-check schemas, logging differences or success, but
 -- _never_ throwing exceptions and returning the database schema.
 laxCheckLastAction
-  :: (MonadUnliftIO m, MonadLogger m)
+  :: forall m
+   . (MonadUnliftIO m, MonadLogger m)
   => CoddSettings
   -> DbRep
-  -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
+  -> (  forall t
+      . (InTxn t, MonadUnliftIO t, MonadLogger t, MonadUnliftIO t)
+     => [BlockOfMigrations m]
+     -> DB.Connection
+     -> t DbRep
+     )
 laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
   cksums <- readRepresentationsFromDbWithSettings coddSettings conn
   logSchemasComparison cksums expectedReps
@@ -706,7 +733,7 @@ data BlockOfMigrations m = BlockOfMigrations
   , reReadBlock :: m (BlockOfMigrations m)
   }
 hoistBlockOfMigrationsInTxn
-  :: forall m . BlockOfMigrations m -> BlockOfMigrations (InTxnT m)
+  :: forall m . Monad m => BlockOfMigrations m -> BlockOfMigrations (InTxnT m)
 hoistBlockOfMigrationsInTxn (BlockOfMigrations {..}) =
   let hoistedAllMigs     = hoistInTxn <$> allMigs
       hoistedReReadBlock = InTxnT $ reReadBlock <&> hoistBlockOfMigrationsInTxn
