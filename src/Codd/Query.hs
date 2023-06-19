@@ -1,3 +1,4 @@
+
 module Codd.Query
   ( InTxnT(..) -- TODO: we probably don't want to export the constructor as it can break the transaction sandbox if misused
   , beginCommitTxnBracket
@@ -5,6 +6,7 @@ module Codd.Query
   , hoistInTxn
   , query
   , unsafeQuery1
+  , InTxn
   ) where
 
 import           Codd.Parsing                   ( AddedSqlMigration
@@ -19,6 +21,8 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , onException
                                                 , toIO
                                                 )
+import Data.Kind (Type)
+-- import UnliftIO.Resource (ResourceT)
 
 execvoid_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
 execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
@@ -56,9 +60,16 @@ beginStatement = \case
   ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
   ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
 
--- class InTxn m
+class InTxn (m :: Type -> Type)
 newtype InTxnT m a = InTxnT { unTxnT :: m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO)
+
+-- instance ResourceT m => ResourceT (InTxnT m) where
+
+
+-- instance MonadTrans InTxnT where
+--   lift :: Monad m => m a -> InTxnT m a
+--   lift = InTxnT
 
 beginCommitTxnBracket
   :: (MonadUnliftIO m, MonadIO m)

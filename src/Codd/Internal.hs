@@ -20,7 +20,8 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 , parseAddedSqlMigration
                                                 )
-import           Codd.Query                     ( InTxnT(..)
+import           Codd.Query                     ( InTxn
+                                                , InTxnT(..)
                                                 , beginCommitTxnBracket
                                                 , execvoid_
                                                 , hoistInTxn
@@ -169,12 +170,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
              if isServerNotAvailableError e
         then Nothing
 
-                                                                                                                                                                 -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                 -- - The DB does not exist.
-                                                                                                                                                                 -- - CONNECT rights not granted.
-                                                                                                                                                                 -- - User doesn't exist.
-                                                                                                                                                                 -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                 -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                           -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                           -- - The DB does not exist.
+                                                                                                                                                                                                                                           -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                           -- - User doesn't exist.
+                                                                                                                                                                                                                                           -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                           -- here as errors that might just require bootstrapping.
         else if isLibPqError e
           then Just BootstrapCheck { defaultConnAccessible = False
                                    , coddSchemaExists      = False
@@ -598,7 +599,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         $ lift
         $ registerPendingMigrations defaultConn appliedMigs
       actAfterResult <- beginCommitTxnBracket isolLvl defaultConn
-        $ lift (actionAfter blocksOfMigs defaultConn)
+        $ actionAfter blocksOfMigs defaultConn
 
       pure $ ApplyMigsResult (map fst appliedMigs) actAfterResult
 
