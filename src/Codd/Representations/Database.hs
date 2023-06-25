@@ -279,9 +279,9 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
   beginCommitTxnBracket txnIsolationLvl conn
     $ readRepresentationsFromDbWithSettings sett conn
 
--- | This function _must_ be called inside a transaction to behave correctly.
 readRepresentationsFromDbWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, InTxn m, HasCallStack)
+  -- ^ The `InTxn` constraint is necessary for this function's correctness
   => CoddSettings
   -> DB.Connection
   -> m DbRep
