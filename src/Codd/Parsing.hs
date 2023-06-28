@@ -147,8 +147,8 @@ instance Monad m => MigrationStream m (PureStream m) where
     migStream PureStream { unPureStream } = unPureStream
 
 instance MonadIO m => MigrationStream m (FileStream m) where
-  -- | Reads entire file from disk again as so to
-  -- be immune to the state of the Stream.
+    -- | Reads entire file from disk again as so to
+    -- be immune to the state of the Stream.
     readFullContents FileStream { filePath } = liftIO $ Text.readFile filePath
     migStream FileStream { fileStream } = fileStream
 
