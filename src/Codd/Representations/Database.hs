@@ -8,7 +8,7 @@ module Codd.Representations.Database
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Query                     ( InTxn
                                                 , beginCommitTxnBracket
-                                                , unsafeQuery1
+                                                , unsafeQuery1, NotInTxn
                                                 )
 import           Codd.Representations.Database.Model
                                                 ( DbObjRepresentationQuery(..)
@@ -267,11 +267,10 @@ queryServerMajorVersion conn = do
     Left _ -> error $ "Non-integral server_version_num: " <> show strVersion
     Right (numVersion :: Int) -> pure $ numVersion `div` 10000
 
--- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Must not
+-- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
--- Work to make such a requirement a class constraint will come in the future.
 readRepsFromDbWithNewTxn
-  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, HasCallStack)
+  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, NotInTxn m, HasCallStack)
   => CoddSettings
   -> DB.Connection
   -> m DbRep
@@ -281,7 +280,7 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
 
 readRepresentationsFromDbWithSettings
   :: (MonadUnliftIO m, MonadIO m, MonadLogger m, InTxn m, HasCallStack)
-  -- ^ The `InTxn` constraint is necessary for this function's correctness
+  -- ^ The `InTxn` constraint is necessary for this function's correctness.
   => CoddSettings
   -> DB.Connection
   -> m DbRep

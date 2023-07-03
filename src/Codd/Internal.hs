@@ -1,4 +1,4 @@
-{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE BlockArguments, AllowAmbiguousTypes #-}
 module Codd.Internal where
 
 import           Prelude                 hiding ( readFile )
@@ -25,7 +25,7 @@ import           Codd.Query                     ( InTxn
                                                 , execvoid_
                                                 , hoistInTxn
                                                 , query
-                                                , unsafeQuery1
+                                                , unsafeQuery1, CanStartTxn, withTxnIfNecessary, NotInTxn
                                                 )
 import           Codd.Representations           ( DbRep
                                                 , logSchemasComparison
@@ -204,6 +204,7 @@ collectAndApplyMigrations
      , MonadResource m
      , MonadThrow m
      , EnvVars m
+     , NotInTxn m
      )
   => (  forall t
       . (InTxn t, MonadLogger t, MonadUnliftIO t)
@@ -235,7 +236,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
     applyCollectedMigrations lastAction settings pendingMigs connectTimeout
 
 applyCollectedMigrations
-  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m)
+  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, NotInTxn m)
   => (  forall t
       . (InTxn t, MonadLogger t, MonadUnliftIO t)
      => [BlockOfMigrations m]
@@ -493,10 +494,10 @@ data CoddStateTransition = NoTransition | DefaultConnectionMadeAvailable
 -- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
 --   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
 --   Otherwise - and including if there are no migrations - it runs after all migrations, in an explicit transaction of
---   its own and in the default connection - not necessarily in the same as the last migration's.
+--   its own and in the default connection, which is not necessarily the same connection as the last migration's.
 baseApplyMigsBlock
   :: forall m a
-   . (MonadUnliftIO m, MonadIO m, MonadLogger m)
+   . (MonadUnliftIO m, MonadIO m, MonadLogger m, NotInTxn m)
   => DB.ConnectInfo
   -> DiffTime
   -> RetryPolicy
@@ -532,10 +533,11 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         == defaultConnInfo
       ->
             -- Our very "special" and most common case case:
-            -- all migs being in-txn in the default connection-string
+            -- all migs being in-txn in the default connection-string.
+            -- We use `runResourceT` only to make type signatures more homogeneous, since
+            -- the more complex case uses `runResourceT` as well.
          withConnection defaultConnInfo connectTimeout $ \defaultConn ->
-        let runAfterMig = getRegisterMigRunFunc defaultConn (blockInTxn block)
-        in  runBlock (actionAfter blocksOfMigs) defaultConn block runAfterMig
+            runResourceT $ runBlock (actionAfter blocksOfMigs) defaultConn block (registerRanMigration defaultConn)
     _ -> runResourceT $ do
            -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
            -- with MonadUnliftIO.
@@ -581,12 +583,11 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                 lift $ registerPendingMigrations defaultConn
                                                  previouslyAppliedMigs
                 pure
-                  ( getRegisterMigRunFunc defaultConn (blockInTxn block)
+                  ( registerRanMigration defaultConn
                   , newBootCheck
                   )
 
-            ApplyMigsResult justAppliedMigs () <- lift
-              $ runBlock (const (pure ())) conn block runAfterMig
+            ApplyMigsResult justAppliedMigs () <- runBlock (const (pure ())) conn block runAfterMig
 
             -- Keep in mind that migrations are applied but might not be registered if
             -- we still haven't run any default-connection-string migrations.
@@ -630,32 +631,25 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                 \                            VALUES (?, ?, ?)"
           (appliedMigrationTimestamp, appliedMigrationName, appliedMigrationAt)
 
-  getRegisterMigRunFunc
-    :: DB.Connection -> Bool -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
-  getRegisterMigRunFunc defaultConn inTxn = if inTxn
-    then registerRanMigration defaultConn
-    else \fp time ->
-      beginCommitTxnBracket isolLvl defaultConn
-        $ registerRanMigration defaultConn fp time
-
   runMigs
-    :: (MonadUnliftIO n, MonadLogger n)
+    :: (MonadUnliftIO n, MonadLogger n, CanStartTxn n txn)
     => DB.Connection
     -> RetryPolicy
     -> NonEmpty (AddedSqlMigration n)
-    -> (FilePath -> DB.UTCTimestamp -> n UTCTime)
+    -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
     -> n [AppliedMigration]
   runMigs conn withRetryPolicy migs runAfterMig =
     fmap NE.toList $ forM migs $ applySingleMigration conn
                                                       withRetryPolicy
                                                       runAfterMig
   runBlock
-    :: (DB.Connection -> InTxnT m b)
+    :: forall txn b. (CanStartTxn (ResourceT m) txn)
+    => (DB.Connection -> txn b)
     -> DB.Connection
     -> BlockOfMigrations m
-    -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
-    -> m (ApplyMigsResult b)
-  runBlock act conn migBlock runAfterMig = do
+    -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
+    -> ResourceT m (ApplyMigsResult b)
+  runBlock act conn migBlock registerMig = do
     if blockInTxn migBlock
       then do
         res <-
@@ -665,24 +659,24 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                 then pure previousBlock
                 else do
                   logDebugN "Re-reading migrations of this block from disk"
-                  reReadBlock previousBlock
+                  lift $ reReadBlock previousBlock
               )
               migBlock
             $ \blockFinal -> do
                 logInfoN "BEGINning transaction"
-                beginCommitTxnBracket isolLvl conn
+                withTxnIfNecessary isolLvl conn
                   $   ApplyMigsResult
-                  <$> runMigs @(InTxnT m)
+                  <$> runMigs
                         conn
                         singleTryPolicy
                         (allMigs (hoistBlockOfMigrationsInTxn blockFinal))
-                        (\a b -> InTxnT $ runAfterMig a b) -- We retry entire transactions, not individual statements
+                        registerMig -- We retry entire transactions, not individual statements
                   <*> act conn
         logInfoN "COMMITed transaction"
         pure res
       else
         ApplyMigsResult
-        <$> runMigs conn retryPol (allMigs migBlock) runAfterMig
+        <$> runMigs conn retryPol (allMigs migBlock) (\fp ts -> beginCommitTxnBracket isolLvl conn $ registerMig fp ts)
         <*> beginCommitTxnBracket isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to
@@ -751,11 +745,11 @@ blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) 
 -- | Applies a single migration and returns the time when it finished being applied. Does not
 -- itself register that the migration ran, only runs "afterMigRun" after applying the migration.
 applySingleMigration
-  :: forall m
-   . (MonadUnliftIO m, MonadIO m, MonadLogger m)
+  :: forall m txn
+   . (MonadUnliftIO m, MonadIO m, MonadLogger m, CanStartTxn m txn)
   => DB.Connection
   -> RetryPolicy
-  -> (FilePath -> DB.UTCTimestamp -> m UTCTime)
+  -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
   -> AddedSqlMigration m
   -> m AppliedMigration
 applySingleMigration conn statementRetryPol afterMigRun (AddedSqlMigration sqlMig migTimestamp)
@@ -768,7 +762,7 @@ applySingleMigration conn statementRetryPol afterMigRun (AddedSqlMigration sqlMi
           else NotInTransaction statementRetryPol
 
     multiQueryStatement_ inTxn conn $ migrationSql sqlMig
-    timestamp <- afterMigRun fn migTimestamp
+    timestamp <- withTxnIfNecessary (error "applySingleMigration needs isolLvl") conn $ afterMigRun fn migTimestamp
     pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                           , appliedMigrationTimestamp = migTimestamp
                           , appliedMigrationAt        = timestamp
@@ -780,13 +774,13 @@ data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 --   has been applied and returns the DB's now() value (used for the "applied_at" column).
 --   Fails if the codd_schema hasn't yet been created.
 registerRanMigration
-  :: MonadIO m
+  :: forall txn m. (MonadUnliftIO m, MonadIO txn, CanStartTxn m txn)
   => DB.Connection
     -- ^ The default connection, not any other or this might fail.
   -> FilePath
   -> DB.UTCTimestamp
   -> m UTCTime
-registerRanMigration conn fn migTimestamp = DB.fromOnly <$> unsafeQuery1
+registerRanMigration conn fn migTimestamp = withTxnIfNecessary @txn @m (error "register missing isolLvl") conn $ DB.fromOnly <$> unsafeQuery1
   conn
   "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
             \                            VALUES (?, ?, now()) \
