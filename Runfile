@@ -19,7 +19,23 @@ ci-tests:
     run test-with-db --nix --pg 13
     run test-with-db --nix --pg 12
     run test-with-db --nix --pg 11
-    run test-with-db --nix --pg 10
+
+##
+# Formats all Haskell files with brittany.
+format-hs:
+    # set -eo pipefail
+
+    for f in **/*.hs; do
+        echo "Formatting $f..";
+        ERR=""
+        brittany --write-mode inplace --indent 4 "$f" || ERR=$?
+
+        if [ "$ERR" = "60" ]; then
+            echo Ignoring XCpp error
+        elif [ "$ERR" != "" ]; then
+            exit "$ERR"
+        fi
+    done
 
 ## 
 # Runs a test without starting a postgresql DB for it. If no extra arguments are passed, special cases to running
@@ -57,7 +73,7 @@ test-no-db:
 test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(15)
-    [ "${PG[0]}" = "all" ] && PG=(10 11 12 13 14 15)
+    [ "${PG[0]}" = "all" ] && PG=(11 12 13 14 15)
 
     # Build the test executable only once with Nix
     if [ -n "$NIX" ]; then
