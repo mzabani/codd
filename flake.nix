@@ -1,7 +1,7 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/0d3dea73be92c98dc099739da8914c40e0fb9deb";
+    "github:input-output-hk/haskell.nix/eb98796446a42551bc685065b296dba8f9241ca7";
   # When switching away from nixpkgs-unstable, make sure to change
   # install-codd-nixpkgs.nix accordingly!
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
@@ -49,89 +49,89 @@
           haskellNix.overlay
           (final: prev:
             let
-              finalIohkPkgs = final.haskell-nix.haskellPackages;
               mkProject = stackYaml: compiler-nix-name:
-                final.haskell-nix.stackProject' {
-                  src = ./.;
-                  inherit compiler-nix-name stackYaml;
+                let
+                  proj = final.haskell-nix.stackProject' {
+                    src = ./.;
+                    inherit compiler-nix-name stackYaml;
 
-                  modules = [{
-                    # Set to true to be able to run `cabal --enable-profiling`
-                    enableLibraryProfiling = false;
+                    modules = [{
+                      # Set to true to be able to run `cabal --enable-profiling`
+                      enableLibraryProfiling = false;
 
-                    # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
-                    # in codd.cabal
-                    packages.codd.components.tests.codd-test.build-tools = [
-                      finalIohkPkgs.hspec-discover.components.exes.hspec-discover
+                      # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
+                      # in codd.cabal
+                      packages.codd.components.tests.codd-test.build-tools =
+                        [ proj.hsPkgs.hspec-discover ];
+
+                      packages.codd.components.exes.codd = {
+                        dontStrip = false;
+                        configureFlags = [
+                          # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                          # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
+                          # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
+                          # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
+                          # dynamically linked glibc builds.
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                          "--ghc-option=-optl=-lssl"
+                          "--ghc-option=-optl=-lcrypto"
+
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-lpgcommon"
+                          "--ghc-option=-optl=-lpgport"
+                        ];
+                      };
+
+                      packages.codd.components.tests.codd-test = {
+                        dontStrip = false;
+                        configureFlags = [
+                          # Same as for the executable here
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                          "--ghc-option=-optl=-lssl"
+                          "--ghc-option=-optl=-lcrypto"
+
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-lpgcommon"
+                          "--ghc-option=-optl=-lpgport"
+                        ];
+                      };
+                    }];
+
+                    # This is used by `nix develop .` to open a shell for use with
+                    # `cabal`, `hlint` and `haskell-language-server`
+                    shell.tools = {
+                      cabal = "latest";
+                      hlint = "3.4.1"; # latest was failing cabal deps bounds
+                      haskell-language-server = "latest";
+                    };
+                    # Non-Haskell shell tools go here
+                    shell.buildInputs = with pkgs; [
+                      cacert
+                      ghcid
+                      glibcLocales
+                      # haskellPackages.brittany # Brittany from the LTS is older than this
+                      proj.hsPkgs.brittany.components.exes.brittany
+                      postgresql
+                      postgres-service
+                      run
                     ];
+                    shell.shellHook = ''
+                      source scripts/source-env.sh .env
 
-                    packages.codd.components.exes.codd = {
-                      dontStrip = false;
-                      configureFlags = [
-                        # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
-                        # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
-                        # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
-                        # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
-                        # dynamically linked glibc builds.
-                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                        "--ghc-option=-optl=-lssl"
-                        "--ghc-option=-optl=-lcrypto"
+                      # init-postgres doesn't actually work with direnv. I tried to daemonize starting postgres but was not able
+                      # to make it work. See https://github.com/direnv/direnv/issues/755
+                      init-postgres
 
-                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                        "--ghc-option=-optl=-lpgcommon"
-                        "--ghc-option=-optl=-lpgport"
-                      ];
-                    };
+                      echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
+                      echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
+                      echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-                    packages.codd.components.tests.codd-test = {
-                      dontStrip = false;
-                      configureFlags = [
-                        # Same as for the executable here
-                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                        "--ghc-option=-optl=-lssl"
-                        "--ghc-option=-optl=-lcrypto"
-
-                        "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                        "--ghc-option=-optl=-lpgcommon"
-                        "--ghc-option=-optl=-lpgport"
-                      ];
-                    };
-                  }];
-
-                  # This is used by `nix develop .` to open a shell for use with
-                  # `cabal`, `hlint` and `haskell-language-server`
-                  shell.tools = {
-                    cabal = "latest";
-                    hlint = "latest";
-                    haskell-language-server = "latest";
+                      export PATH="$PATH:scripts/path"
+                    '';
+                    # This adds `js-unknown-linux-musl` to the shell.
+                    # shell.crossPlatforms = p: [ p.musl64 ];
                   };
-                  # Non-Haskell shell tools go here
-                  shell.buildInputs = with pkgs; [
-                    cacert
-                    ghcid
-                    glibcLocales
-                    haskellPackages.brittany # Brittany from the LTS is older than this
-                    # finalIohkPkgs.brittany.components.exes.brittany
-                    postgresql
-                    postgres-service
-                    run
-                  ];
-                  shell.shellHook = ''
-                    source scripts/source-env.sh .env
-
-                    # init-postgres doesn't actually work with direnv. I tried to daemonize starting postgres but was not able
-                    # to make it work. See https://github.com/direnv/direnv/issues/755
-                    init-postgres
-
-                    echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
-                    echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
-                    echo If 'psql' fails to connect, check logs at $PGDATA/log/
-
-                    export PATH="$PATH:scripts/path"
-                  '';
-                  # This adds `js-unknown-linux-musl` to the shell.
-                  # shell.crossPlatforms = p: [ p.musl64 ];
-                };
+                in proj;
             in {
               # This overlay adds our project to pkgs
               coddProjectAeson1 = mkProject "stack.yaml" "ghc8107";
