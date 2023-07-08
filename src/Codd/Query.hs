@@ -21,7 +21,7 @@ import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO (..)
+                                                , MonadUnliftIO(..)
                                                 , onException
                                                 , toIO
                                                 )
@@ -112,15 +112,15 @@ instance (InTxn m, Monoid w) => InTxn (WriterT w m)
 -- This seems kind of acceptable. Other common idioms will be adding constraints such as `(NotInTxn m, txn ~ InTxnT (ResourceT m))`,
 -- which provides a type argument that can be used for arguments like functions `(Connection -> txn a)`.
 
-data CheckTxnFancy m txn where
-  AlreadyInTxn :: CheckTxnFancy m m -- Proof that `m ~ txn`
-  NotInTxn :: CheckTxnFancy m (InTxnT m) -- Proof that `InTxnT m ~ txn`
+data CheckTxnWit m txn where
+  AlreadyInTxn :: CheckTxnWit m m -- Proof that `m ~ txn`
+  NotInTxn :: CheckTxnWit m (InTxnT m) -- Proof that `InTxnT m ~ txn`
 
 -- We maybe would be able to better guide type inference by adding a functional dependency from m -> txn.
 -- However, that creates a conflict in instance resolution for the next two `CanStartTxn` instances, probably
 -- because instance heads are disconsidered.
 class (InTxn txn) => CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
-  txnCheck :: m (CheckTxnFancy m txn)
+  txnCheck :: m (CheckTxnWit m txn)
 
 instance InTxn m => CanStartTxn m m where
     txnCheck = pure AlreadyInTxn
@@ -142,7 +142,7 @@ withTransaction
     -> txn a
     -> m a
 withTransaction isolLvl conn f = do
-    t :: CheckTxnFancy m txn <- txnCheck
+    t :: CheckTxnWit m txn <- txnCheck
     case t of
         AlreadyInTxn -> f -- No `rollback` because it'd be bad and/or because the function that already started the transaction might do that anyway
         NotInTxn     -> do
