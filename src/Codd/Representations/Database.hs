@@ -62,7 +62,6 @@ import qualified Database.PostgreSQL.Simple    as DB
 import           GHC.Stack                      ( HasCallStack )
 import           Haxl.Core
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO
                                                 )
 
 data RepresentationReq a where
@@ -284,7 +283,7 @@ queryServerMajorVersion conn = do
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
-    :: forall m. (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
+    :: forall m. (MonadIO m, MonadLogger m, NotInTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -293,7 +292,7 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
         $ readRepresentationsFromDbWithSettings sett conn
 
 readRepresentationsFromDbWithSettings
-    :: (MonadUnliftIO m, MonadLogger m, InTxn m, HasCallStack)
+    :: (MonadIO m, MonadLogger m, InTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -350,7 +349,8 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                                            schemaAlgoOpts
 
 readSchemaFromDatabase
-    :: (MonadUnliftIO m, InTxn m, HasCallStack)
+    :: (MonadIO m, InTxn m, HasCallStack)
+    -- This functions uses transaction-local modifications so it needs to be inside a transaction to work properly
     => PgVersionHasher
     -> DB.Connection
     -> SchemaSelection

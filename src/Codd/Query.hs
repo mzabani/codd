@@ -21,9 +21,7 @@ import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO(..)
-                                                , onException
-                                                , toIO
+                                                , MonadUnliftIO
                                                 )
 import           UnliftIO.Resource              ( ResourceT )
 
@@ -136,7 +134,7 @@ instance NotInTxn m => CanStartTxn m (InTxnT m) where
 -- it for better type inference, while the monad `m` not so much.
 withTransaction
     :: forall txn m a
-     . (MonadUnliftIO m, CanStartTxn m txn)
+     . (MonadIO m, CanStartTxn m txn)
     => TxnIsolationLvl
     -> DB.Connection
     -> txn a
@@ -144,14 +142,12 @@ withTransaction
 withTransaction isolLvl conn f = do
     t :: CheckTxnWit m txn <- txnCheck
     case t of
-        AlreadyInTxn -> f -- No `rollback` because it'd be bad and/or because the function that already started the transaction might do that anyway
+        AlreadyInTxn -> f
         NotInTxn     -> do
-            iof <- toIO $ unTxnT f
-            liftIO $ do
-                execvoid_ conn $ beginStatement isolLvl
-                v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
-                DB.commit conn
-                pure v
+            execvoid_ conn $ beginStatement isolLvl
+            v <- unTxnT f
+            liftIO $ DB.commit conn
+            pure v
 
 
 -- testFnIO :: IO ()
