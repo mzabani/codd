@@ -21,7 +21,7 @@ import Codd.Query (NotInTxn)
 data WriteSchemaOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 
 writeSchema
-  :: (MonadUnliftIO m, MonadIO m, NotInTxn m) => CoddSettings -> WriteSchemaOpts -> m ()
+  :: (MonadUnliftIO m, NotInTxn m) => CoddSettings -> WriteSchemaOpts -> m ()
 writeSchema dbInfo@CoddSettings { migsConnString } opts = case opts of
   WriteToDisk mdest -> runStdoutLoggingT $ do
     dbSchema <- Codd.withConnection migsConnString

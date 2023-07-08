@@ -23,7 +23,6 @@ import           Codd.Query                     ( CanStartTxn
 import           Codd.Representations           ( DbRep
                                                 , readRepsFromDisk
                                                 )
-import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
 import           Control.Monad.Trans            ( lift )
@@ -49,13 +48,7 @@ data ApplyResult = SchemasDiffer SchemasPair | SchemasMatch DbRep | SchemasNotVe
 -- the Database's schema if they're not the ones expected or a success result otherwise.
 -- Throws an exception if a migration fails or if schemas mismatch and strict-checking is enabled.
 applyMigrations
-    :: ( MonadUnliftIO m
-       , MonadIO m
-       , MonadLogger m
-       , MonadThrow m
-       , EnvVars m
-       , NotInTxn m
-       )
+    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
@@ -93,7 +86,6 @@ applyMigrations dbInfo@CoddSettings { onDiskReps } mOverrideMigs connectTimeout 
 -- Throws an exception if a migration fails.
 applyMigrationsNoCheck
     :: ( MonadUnliftIO m
-       , MonadIO m
        , MonadLogger m
        , MonadThrow m
        , EnvVars m

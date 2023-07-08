@@ -106,7 +106,7 @@ dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 -- | Tries to connect until a connection succeeds or until a timeout,
 --   executes the supplied action and disposes of the opened Connection.
 withConnection
-  :: (MonadUnliftIO m, MonadIO m)
+  :: (MonadUnliftIO m)
   => DB.ConnectInfo
   -> DiffTime
   -> (DB.Connection -> m a)
@@ -157,7 +157,7 @@ data BootstrapCheck = BootstrapCheck
 -- waiting up to the time limit for postgres to be up before throwing
 -- an exception.
 checkNeedsBootstrapping
-  :: (MonadUnliftIO m, MonadIO m)
+  :: MonadUnliftIO m
   => DB.ConnectInfo
   -> DiffTime
   -> m BootstrapCheck
@@ -199,7 +199,6 @@ data PendingMigrations m = PendingMigrations
 
 collectAndApplyMigrations
   :: ( MonadUnliftIO m
-     , MonadIO m
      , MonadLogger m
      , MonadResource m
      , MonadThrow m
@@ -236,7 +235,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
     applyCollectedMigrations lastAction settings pendingMigs connectTimeout
 
 applyCollectedMigrations
-  :: forall m a txn. (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadResource m, NotInTxn m, txn ~ InTxnT (ResourceT m), CanStartTxn (ResourceT m) txn)
+  :: forall m a txn. (MonadUnliftIO m, MonadLogger m, MonadResource m, NotInTxn m, txn ~ InTxnT (ResourceT m), CanStartTxn (ResourceT m) txn)
   => ([BlockOfMigrations txn]
      -> DB.Connection
      -> txn a
@@ -270,7 +269,7 @@ doesCoddSchemaExist conn = isSingleTrue <$> query
   ("sql_migrations" :: String, "codd_schema" :: String)
 
 createCoddSchema
-  :: (MonadUnliftIO m, MonadIO m) => TxnIsolationLvl -> DB.Connection -> m ()
+  :: MonadUnliftIO m => TxnIsolationLvl -> DB.Connection -> m ()
 createCoddSchema txnIsolationLvl conn = catchJust
   (\e -> if isPermissionDeniedError e then Just () else Nothing)
   go
@@ -302,7 +301,6 @@ createCoddSchema txnIsolationLvl conn = catchJust
 --   or not.
 collectPendingMigrations
   :: ( MonadUnliftIO m
-     , MonadIO m
      , MonadLogger m
      , MonadResource m
      , MonadThrow m
@@ -389,7 +387,6 @@ closeFileStream (FileStream _ releaseKey _) = release releaseKey
 parseMigrationFiles
   :: forall m
    . ( MonadUnliftIO m
-     , MonadIO m
      , MonadLogger m
      , MonadResource m
      , MonadThrow m
@@ -493,7 +490,7 @@ data ApplyMigsResult a = ApplyMigsResult
 --   its own and in the default connection, which is not necessarily the same connection as the last migration's.
 baseApplyMigsBlock
   :: forall m a txn
-   . (MonadUnliftIO m, MonadIO m, MonadLogger m, NotInTxn m, txn ~ InTxnT (ResourceT m), CanStartTxn (ResourceT m) txn) -- TODO: This last constraint should be redundant. Review.
+   . (MonadUnliftIO m, MonadLogger m, NotInTxn m, txn ~ InTxnT (ResourceT m), CanStartTxn (ResourceT m) txn) -- TODO: This last constraint should be redundant. Review.
   => DB.ConnectInfo
   -> DiffTime
   -> RetryPolicy
@@ -749,7 +746,7 @@ blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) 
 -- itself register that the migration ran, only runs "afterMigRun" after applying the migration.
 applySingleMigration
   :: forall m txn
-   . (MonadUnliftIO m, MonadIO m, MonadLogger m, CanStartTxn m txn)
+   . (MonadUnliftIO m, MonadLogger m, CanStartTxn m txn)
   => DB.Connection
   -> RetryPolicy
   -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)

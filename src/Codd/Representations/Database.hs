@@ -270,7 +270,7 @@ queryServerMajorVersion conn = do
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
-  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, NotInTxn m, HasCallStack)
+  :: (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
   => CoddSettings
   -> DB.Connection
   -> m DbRep
@@ -279,7 +279,7 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
     $ readRepresentationsFromDbWithSettings sett conn
 
 readRepresentationsFromDbWithSettings
-  :: (MonadUnliftIO m, MonadIO m, MonadLogger m, InTxn m, HasCallStack)
+  :: (MonadUnliftIO m, MonadLogger m, InTxn m, HasCallStack)
   -- ^ The `InTxn` constraint is necessary for this function's correctness.
   => CoddSettings
   -> DB.Connection
@@ -339,7 +339,7 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
 -- | This function _must_ be called inside a transaction to behave correctly.
 -- Work to make such a requirement a class constraint will come in the future.
 readSchemaFromDatabase
-  :: (MonadUnliftIO m, MonadIO m, HasCallStack)
+  :: (MonadUnliftIO m, HasCallStack)
   => PgVersionHasher
   -> DB.Connection
   -> SchemaSelection
