@@ -164,7 +164,7 @@ instance MonadIO m => MigrationStream m (FileStream m) where
 
 -- TODO: This should probably not be in Parsing.hs
 hoistAddedSqlMigration
-  :: (Monad m, Monad n)
+  :: Monad m
   => (forall x . m x -> n x)
   -> AddedSqlMigration m
   -> AddedSqlMigration n

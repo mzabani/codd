@@ -280,7 +280,6 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
 
 readRepresentationsFromDbWithSettings
   :: (MonadUnliftIO m, MonadLogger m, InTxn m, HasCallStack)
-  -- ^ The `InTxn` constraint is necessary for this function's correctness.
   => CoddSettings
   -> DB.Connection
   -> m DbRep
@@ -336,10 +335,8 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                                  rolesToCheck
                                  schemaAlgoOpts
 
--- | This function _must_ be called inside a transaction to behave correctly.
--- Work to make such a requirement a class constraint will come in the future.
 readSchemaFromDatabase
-  :: (MonadUnliftIO m, HasCallStack)
+  :: (MonadUnliftIO m, InTxn m, HasCallStack)
   => PgVersionHasher
   -> DB.Connection
   -> SchemaSelection

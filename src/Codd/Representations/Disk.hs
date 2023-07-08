@@ -266,7 +266,7 @@ readMultiple dir f = do
             return $ listToMap objList
         else pure Map.empty
 
-readRepsFromDisk :: (HasCallStack, MonadIO m) => FilePath -> m DbRep
+readRepsFromDisk :: MonadIO m => FilePath -> m DbRep
 readRepsFromDisk dir = do
     allRepsE <- runExceptT $ readExpectedSchema dir
     case allRepsE of

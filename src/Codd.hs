@@ -88,8 +88,8 @@ applyMigrationsNoCheck
        , MonadLogger m
        , MonadThrow m
        , EnvVars m
-       , NotInTxn m
        , MonadResource m
+       , NotInTxn m
        , txn ~ InTxnT (ResourceT m)
        )
     => CoddSettings

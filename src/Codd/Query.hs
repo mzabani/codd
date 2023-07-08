@@ -126,7 +126,7 @@ instance NotInTxn m => CanStartTxn m (InTxnT m) where
   txnCheck = pure NotInTxn
 
 beginCommitTxnBracket
-  :: (MonadUnliftIO m, NotInTxn m)
+  :: (MonadUnliftIO m, NotInTxn m) -- Requires not warning about redundant constraints, since the compiler couldn't ever understand `NotInTxn` is not redundant here
   => TxnIsolationLvl
   -> DB.Connection
   -> InTxnT m a

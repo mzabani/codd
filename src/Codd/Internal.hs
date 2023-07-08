@@ -233,7 +233,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
     applyCollectedMigrations lastAction settings pendingMigs connectTimeout
 
 applyCollectedMigrations
-  :: forall m a txn. (MonadUnliftIO m, MonadLogger m, MonadResource m, NotInTxn m, txn ~ InTxnT (ResourceT m))
+  :: forall m a txn. (MonadUnliftIO m, MonadLogger m, NotInTxn m, txn ~ InTxnT (ResourceT m))
   => ([BlockOfMigrations txn]
      -> DB.Connection
      -> txn a
@@ -245,14 +245,11 @@ applyCollectedMigrations
 applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } PendingMigrations { pendingMigs, bootstrapCheck } connectTimeout
   = do
     let dbName = Text.pack $ DB.connectDatabase migsConnString
-        txnApp = baseApplyMigsBlock migsConnString
-                                    connectTimeout
-                                    retryPolicy
-                                    lastAction
-                                    txnIsolationLvl
-
-
-    ApplyMigsResult _ actionAfterResult <- txnApp bootstrapCheck pendingMigs
+    ApplyMigsResult _ actionAfterResult <- baseApplyMigsBlock migsConnString
+                                              connectTimeout
+                                              retryPolicy
+                                              lastAction
+                                              txnIsolationLvl bootstrapCheck pendingMigs
 
     logInfoN $ "All migrations applied to " <> dbName <> " successfully"
     return actionAfterResult
@@ -676,14 +673,11 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
 -- strict-check schemas, logging differences, success and throwing
 -- an exception if they mismatch.
 strictCheckLastAction
-  :: (MonadUnliftIO m, MonadLogger m)
-  => CoddSettings
+  :: (MonadUnliftIO m, MonadLogger m, InTxn m) => CoddSettings
   -> DbRep
-  -> (  forall t
-      . (InTxn t, MonadUnliftIO t, MonadLogger t, MonadUnliftIO t)
-     => [BlockOfMigrations m]
+  -> (  [BlockOfMigrations m]
      -> DB.Connection
-     -> t ()
+     -> m ()
      )
 strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
   cksums <- readRepresentationsFromDbWithSettings coddSettings conn
@@ -698,15 +692,11 @@ strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
 -- lax-check schemas, logging differences or success, but
 -- _never_ throwing exceptions and returning the database schema.
 laxCheckLastAction
-  :: forall m
-   . (MonadUnliftIO m, MonadLogger m)
-  => CoddSettings
+  :: (MonadUnliftIO m, MonadLogger m, InTxn m) => CoddSettings
   -> DbRep
-  -> (  forall t
-      . (InTxn t, MonadUnliftIO t, MonadLogger t, MonadUnliftIO t)
-     => [BlockOfMigrations m]
+  -> ( [BlockOfMigrations m]
      -> DB.Connection
-     -> t DbRep
+     -> m DbRep
      )
 laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
   cksums <- readRepresentationsFromDbWithSettings coddSettings conn
