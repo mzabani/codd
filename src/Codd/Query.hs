@@ -1,5 +1,5 @@
 module Codd.Query
-  ( InTxnT(..) -- TODO: we probably don't want to export the constructor as it can break the transaction sandbox if misused
+  ( InTxnT -- Do not export constructor, as it can break this module's transaction management sandbox
   , CanStartTxn
   , InTxn
   , NotInTxn

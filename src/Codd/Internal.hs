@@ -20,7 +20,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , parseAddedSqlMigration, hoistAddedSqlMigration
                                                 )
 import           Codd.Query                     ( InTxn
-                                                , InTxnT(..)
+                                                , InTxnT
                                                 , beginCommitTxnBracket
                                                 , execvoid_
                                                 , query
