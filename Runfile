@@ -23,17 +23,23 @@ ci-tests:
 ##
 # Formats all Haskell files with brittany.
 format-hs:
-    # set -eo pipefail
+    set -eo pipefail
 
-    for f in **/*.hs; do
-        echo "Formatting $f..";
-        ERR=""
-        brittany --write-mode inplace --indent 4 "$f" || ERR=$?
+    readarray -d '' FILES < <(git ls-files -z '*.hs')
 
-        if [ "$ERR" = "60" ]; then
-            echo Ignoring XCpp error
-        elif [ "$ERR" != "" ]; then
-            exit "$ERR"
+    for f in "${FILES[@]}"; do
+        if [ "$f" = "src/Codd/Representations/Database.hs" ]; then
+            echo "Skipping \"$f\" because of https://github.com/lspitzner/brittany/issues/368"
+        else
+            echo "Formatting $f..";
+            ERR=""
+            brittany --write-mode inplace --indent 4 "$f" || ERR=$?
+
+            if [ "$ERR" = "60" ]; then
+                echo Ignoring XCpp error
+            elif [ "$ERR" != "" ]; then
+                exit "$ERR"
+            fi
         fi
     done
 

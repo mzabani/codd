@@ -1,19 +1,24 @@
 module Codd.Query
-  ( InTxnT -- Do not export constructor, as it can break this module's transaction management sandbox
-  , CanStartTxn
-  , InTxn
-  , NotInTxn
-  , beginCommitTxnBracket
-  , execvoid_
-  , query
-  , unsafeQuery1
-  , withTxnIfNecessary
-  ) where
+    ( InTxnT -- Do not export constructor, as it can break this module's transaction management sandbox
+    , CanStartTxn
+    , InTxn
+    , NotInTxn
+    , beginCommitTxnBracket
+    , execvoid_
+    , query
+    , unsafeQuery1
+    , withTxnIfNecessary
+    ) where
 
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
-import           Control.Monad.Logger           ( MonadLogger, LoggingT )
+import           Control.Monad.Logger           ( LoggingT
+                                                , MonadLogger
+                                                )
+import           Control.Monad.Reader           ( ReaderT )
+import           Control.Monad.State            ( StateT )
 import           Control.Monad.Trans            ( MonadTrans(..) )
+import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
@@ -21,46 +26,43 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , onException
                                                 , toIO
                                                 )
-import UnliftIO.Resource (ResourceT)
-import Control.Monad.Reader (ReaderT)
-import Control.Monad.State (StateT)
-import Control.Monad.Trans.Writer (WriterT)
+import           UnliftIO.Resource              ( ResourceT )
 
 execvoid_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
 execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
 
 query
-  :: (DB.FromRow b, MonadIO m, DB.ToRow a)
-  => DB.Connection
-  -> DB.Query
-  -> a
-  -> m [b]
+    :: (DB.FromRow b, MonadIO m, DB.ToRow a)
+    => DB.Connection
+    -> DB.Query
+    -> a
+    -> m [b]
 query conn q r = liftIO $ DB.query conn q r
 
 -- | Throws an exception if 0 or more than 1 results are returned.
 unsafeQuery1
-  :: (DB.FromRow b, MonadIO m, DB.ToRow a)
-  => DB.Connection
-  -> DB.Query
-  -> a
-  -> m b
+    :: (DB.FromRow b, MonadIO m, DB.ToRow a)
+    => DB.Connection
+    -> DB.Query
+    -> a
+    -> m b
 unsafeQuery1 conn q r = liftIO $ do
-  res <- DB.query conn q r
-  case res of
-    []  -> error "No results for query1"
-    [x] -> return x
-    _   -> error "More than one result for query1"
+    res <- DB.query conn q r
+    case res of
+        []  -> error "No results for query1"
+        [x] -> return x
+        _   -> error "More than one result for query1"
 
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
 beginStatement :: TxnIsolationLvl -> DB.Query
 beginStatement = \case
-  DbDefault       -> "BEGIN READ WRITE"
-  Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
-  RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
-  ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
-  ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
+    DbDefault       -> "BEGIN READ WRITE"
+    Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
+    RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
+    ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
+    ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
 
 {-|
 We want to allow functions to specify the following constraints:
@@ -80,7 +82,7 @@ newtype InTxnT m a = InTxnT { unTxnT :: m a }
 
 -- | TODO: Is this instance a way of breaking this module's sandbox? Check!
 instance MonadTrans InTxnT where
-  lift = InTxnT
+    lift = InTxnT
 
 -- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also don't.
 -- We do this for some common monad transformers to increase compatibility.
@@ -121,24 +123,24 @@ class (InTxn txn) => CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
   txnCheck :: m (CheckTxnFancy m txn)
 
 instance InTxn m => CanStartTxn m m where
-  txnCheck = pure AlreadyInTxn
+    txnCheck = pure AlreadyInTxn
 
 instance NotInTxn m => CanStartTxn m (InTxnT m) where
-  txnCheck = pure NotInTxn
+    txnCheck = pure NotInTxn
 
 beginCommitTxnBracket
-  :: (MonadUnliftIO m, NotInTxn m) -- Requires not warning about redundant constraints, since the compiler couldn't ever understand `NotInTxn` is not redundant here
-  => TxnIsolationLvl
-  -> DB.Connection
-  -> InTxnT m a
-  -> m a
+    :: (MonadUnliftIO m, NotInTxn m) -- Requires not warning about redundant constraints, since the compiler couldn't ever understand `NotInTxn` is not redundant here
+    => TxnIsolationLvl
+    -> DB.Connection
+    -> InTxnT m a
+    -> m a
 beginCommitTxnBracket isolLvl conn (unTxnT -> f) = do
-  iof <- toIO f
-  liftIO $ do
-    execvoid_ conn $ beginStatement isolLvl
-    v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
-    DB.commit conn
-    pure v
+    iof <- toIO f
+    liftIO $ do
+        execvoid_ conn $ beginStatement isolLvl
+        v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
+        DB.commit conn
+        pure v
 
 -- simpleExample :: IO ()
 -- simpleExample = beginCommitTxnBracket DbDefault undefined $ pure ()
@@ -153,22 +155,23 @@ beginCommitTxnBracket isolLvl conn (unTxnT -> f) = do
 -- The first type argument is the desired InTxn monad, as it is helpful for callers to define
 -- it for better type inference, while the monad `m` not so much.
 withTxnIfNecessary
-  :: forall txn m a. (MonadUnliftIO m, CanStartTxn m txn)
-  => TxnIsolationLvl
-  -> DB.Connection
-  -> txn a
-  -> m a
+    :: forall txn m a
+     . (MonadUnliftIO m, CanStartTxn m txn)
+    => TxnIsolationLvl
+    -> DB.Connection
+    -> txn a
+    -> m a
 withTxnIfNecessary isolLvl conn f = do
-  t :: CheckTxnFancy m txn <- txnCheck
-  case t of
-    AlreadyInTxn -> f -- No `rollback` because it'd be bad and/or because the function that already started the transaction might do that anyway
-    NotInTxn -> do
-      iof <- toIO $ unTxnT f
-      liftIO $ do
-        execvoid_ conn $ beginStatement isolLvl
-        v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
-        DB.commit conn
-        pure v
+    t :: CheckTxnFancy m txn <- txnCheck
+    case t of
+        AlreadyInTxn -> f -- No `rollback` because it'd be bad and/or because the function that already started the transaction might do that anyway
+        NotInTxn     -> do
+            iof <- toIO $ unTxnT f
+            liftIO $ do
+                execvoid_ conn $ beginStatement isolLvl
+                v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
+                DB.commit conn
+                pure v
 
 
 -- testFnIO :: IO ()
