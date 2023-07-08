@@ -29,8 +29,7 @@ import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Time                      ( DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
-import           UnliftIO.Resource              ( MonadResource
-                                                , ResourceT
+import           UnliftIO.Resource              ( ResourceT
                                                 , runResourceT
                                                 )
 
@@ -88,7 +87,6 @@ applyMigrationsNoCheck
        , MonadLogger m
        , MonadThrow m
        , EnvVars m
-       , MonadResource m
        , NotInTxn m
        , txn ~ InTxnT (ResourceT m)
        )

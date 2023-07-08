@@ -199,7 +199,6 @@ data PendingMigrations m = PendingMigrations
 collectAndApplyMigrations
   :: ( MonadUnliftIO m
      , MonadLogger m
-     , MonadResource m
      , MonadThrow m
      , EnvVars m
      , NotInTxn m
@@ -225,15 +224,16 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
       <> Text.pack (show @Int $ truncate waitTimeInSecs)
       <> "sec)"
 
-    let migsToUse = maybe (Left sqlMigrations) Right mOverrideMigs
-    pendingMigs <- collectPendingMigrations migsConnString
-                                            migsToUse
-                                            txnIsolationLvl
-                                            connectTimeout
-    applyCollectedMigrations lastAction settings pendingMigs connectTimeout
+    runResourceT $ do
+      let migsToUse = maybe (Left sqlMigrations) (Right . map (hoistAddedSqlMigration lift)) mOverrideMigs
+      pendingMigs <- collectPendingMigrations migsConnString
+                                              migsToUse
+                                              txnIsolationLvl
+                                              connectTimeout
+      applyCollectedMigrations lastAction settings pendingMigs connectTimeout
 
 applyCollectedMigrations
-  :: forall m a txn. (MonadUnliftIO m, MonadLogger m, NotInTxn m, txn ~ InTxnT (ResourceT m))
+  :: forall m a txn. (MonadUnliftIO m, MonadLogger m, MonadResource m, NotInTxn m, txn ~ InTxnT m)
   => ([BlockOfMigrations txn]
      -> DB.Connection
      -> txn a
@@ -485,7 +485,7 @@ data ApplyMigsResult a = ApplyMigsResult
 --   its own and in the default connection, which is not necessarily the same connection as the last migration's.
 baseApplyMigsBlock
   :: forall m a txn
-   . (MonadUnliftIO m, MonadLogger m, NotInTxn m, txn ~ InTxnT (ResourceT m))
+   . (MonadUnliftIO m, MonadLogger m, NotInTxn m, MonadResource m, txn ~ InTxnT m)
   => DB.ConnectInfo
   -> DiffTime
   -> RetryPolicy
@@ -508,11 +508,10 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         -- So we separate the first two cases (the second hopefully being the most common one) into simpler code paths
         -- and make sure to test the third code path very well.
     let
-      hoistedBlocks :: [BlockOfMigrations (InTxnT (ResourceT m))] = map (hoistBlockOfMigrations (lift . lift)) blocksOfMigs
+      hoistedBlocks :: [BlockOfMigrations txn] = map (hoistBlockOfMigrations lift) blocksOfMigs
     in
     case blocksOfMigs of
     [] -> withConnection defaultConnInfo connectTimeout $ \defaultConn ->
-      runResourceT $ 
         withTxnIfNecessary
           isolLvl
           defaultConn
@@ -524,15 +523,13 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
       ->
             -- Our very "special" and most common case case:
             -- all migs being in-txn in the default connection-string.
-            -- We use `runResourceT` only to make type signatures more homogeneous, since
-            -- the more complex case uses `runResourceT` as well.
          withConnection defaultConnInfo connectTimeout $ \defaultConn ->
-            runResourceT $ runBlock (actionAfter hoistedBlocks) defaultConn block (registerRanMigration @txn defaultConn isolLvl)
-    _ -> runResourceT $ do
+            runBlock (actionAfter hoistedBlocks) defaultConn block (registerRanMigration @txn defaultConn isolLvl)
+    _ -> do
            -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
            -- with MonadUnliftIO.
       connsPerInfo <- newMVar (mempty :: [(DB.ConnectInfo, DB.Connection)])
-      let openConn :: DB.ConnectInfo -> ResourceT m (ReleaseKey, DB.Connection)
+      let openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
           openConn cinfo = flip allocate DB.close $ do
             mConn <- lookup cinfo <$> readMVar connsPerInfo
             case mConn of
@@ -543,7 +540,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                 conn <- DB.connect cinfo
                 pure ((cinfo, conn) : m, conn)
 
-          queryConn :: DB.ConnectInfo -> ResourceT m (Maybe DB.Connection)
+          queryConn :: DB.ConnectInfo -> m (Maybe DB.Connection)
           queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
 
       (appliedMigs :: [(AppliedMigration, MigrationRegistered)], finalBootCheck :: BootstrapCheck) <-
@@ -570,7 +567,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                    , coddSchemaExists      = True
                                    }
                   else pure bootCheck
-                lift $ registerPendingMigrations defaultConn
+                registerPendingMigrations defaultConn
                                                  previouslyAppliedMigs
                 pure
                   ( registerRanMigration @txn defaultConn isolLvl
@@ -638,7 +635,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
     -> DB.Connection
     -> BlockOfMigrations m
     -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
-    -> ResourceT m (ApplyMigsResult b)
+    -> m (ApplyMigsResult b)
   runBlock act conn migBlock registerMig = do
     if blockInTxn migBlock
       then do
@@ -649,7 +646,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                 then pure previousBlock
                 else do
                   logDebugN "Re-reading migrations of this block from disk"
-                  lift $ reReadBlock previousBlock
+                  reReadBlock previousBlock
               )
               migBlock
             $ \blockFinal -> do
@@ -659,14 +656,14 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                     <$> runMigs
                           conn
                           singleTryPolicy
-                          (allMigs (hoistBlockOfMigrations (lift . lift) blockFinal))
+                          (allMigs (hoistBlockOfMigrations lift blockFinal))
                           registerMig -- We retry entire transactions, not individual statements
                     <*> act conn
         logInfoN "COMMITed transaction"
         pure res
       else
         ApplyMigsResult
-        <$> runMigs conn retryPol (allMigs (hoistBlockOfMigrations lift migBlock)) (\fp ts -> withTxnIfNecessary isolLvl conn $ registerMig fp ts)
+        <$> runMigs conn retryPol (allMigs migBlock) (\fp ts -> withTxnIfNecessary isolLvl conn $ registerMig fp ts)
         <*> beginCommitTxnBracket isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to

@@ -78,6 +78,7 @@ class Monad m => NotInTxn (m :: Type -> Type)
 newtype InTxnT m a = InTxnT { unTxnT :: m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO, InTxn)
 
+-- | TODO: Is this instance a way of breaking this module's sandbox? Check!
 instance MonadTrans InTxnT where
   lift = InTxnT
 
