@@ -146,6 +146,7 @@ executable codd
     , monad-logger
     , optparse-applicative
     , postgresql-simple
+    , resourcet
     , text
     , time
   default-language: Haskell2010

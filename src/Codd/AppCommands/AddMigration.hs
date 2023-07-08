@@ -43,6 +43,8 @@ import           UnliftIO.Directory             ( copyFile
                                                 )
 import           UnliftIO.Exception             ( bracketOnError )
 import           UnliftIO.Resource              ( runResourceT )
+import Codd.Query (NotInTxn)
+import UnliftIO.Resource (ResourceT)
 
 newtype AddMigrationOptions = AddMigrationOptions
   { dontApply :: Bool
@@ -50,7 +52,7 @@ newtype AddMigrationOptions = AddMigrationOptions
 
 addMigration
   :: forall m
-   . (MonadUnliftIO m, MonadLoggerIO m, MonadThrow m, EnvVars m)
+   . (MonadUnliftIO m, MonadLoggerIO m, MonadThrow m, EnvVars m, NotInTxn m)
   => CoddSettings
   -> AddMigrationOptions
   -> Maybe FilePath
@@ -94,32 +96,32 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskReps } AddMigration
             forM_ migErrors (Text.hPutStrLn stderr)
             exitWith (ExitFailure 1)
 
-    bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
-                   moveMigrationBack
-      $ \finalMigFile -> do
-          unless dontApply $ do
-            -- Important, and we don't have a test for this:
-            -- fetch representations in the same transaction as migrations
-            -- when possible, since that's what "up" does.
-            databaseSchemas <- Codd.applyMigrationsNoCheck
-              dbInfo
-              Nothing
-              (secondsToDiffTime 5)
-              (readRepresentationsFromDbWithSettings dbInfo)
-            persistRepsToDisk databaseSchemas onDiskRepsDir
+      bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
+                    moveMigrationBack
+        $ \finalMigFile -> do
+            unless dontApply $ do
+              -- Important, and we don't have a test for this:
+              -- fetch representations in the same transaction as migrations
+              -- when possible, since that's what "up" does.
+              databaseSchemas <- Codd.applyMigrationsNoCheck
+                dbInfo
+                Nothing
+                (secondsToDiffTime 5)
+                (readRepresentationsFromDbWithSettings dbInfo)
+              persistRepsToDisk databaseSchemas onDiskRepsDir
 
-            liftIO
+              liftIO
+                $  putStrLn
+                $  "Migration applied and added to "
+                <> finalMigFile
+            when dontApply
+              $  liftIO
               $  putStrLn
-              $  "Migration applied and added to "
+              $  "Migration was NOT applied, but was added to "
               <> finalMigFile
-          when dontApply
-            $  liftIO
-            $  putStrLn
-            $  "Migration was NOT applied, but was added to "
-            <> finalMigFile
 
  where
-  moveMigrationBack :: FilePath -> m ()
+  moveMigrationBack :: FilePath -> ResourceT m ()
   moveMigrationBack deleteFrom = do
     copyFile deleteFrom fp
     removeFile deleteFrom

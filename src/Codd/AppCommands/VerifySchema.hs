@@ -25,9 +25,10 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 , liftIO
                                                 , stdin
                                                 )
+import Codd.Query (NotInTxn)
 
 verifySchema
-  :: (MonadUnliftIO m, MonadLoggerIO m) => CoddSettings -> Bool -> m ()
+  :: (MonadUnliftIO m, MonadLoggerIO m, NotInTxn m) => CoddSettings -> Bool -> m ()
 verifySchema dbInfoWithAllMigs@CoddSettings { onDiskReps, migsConnString } fromStdin
   = do
     let dbInfoDontApplyAnything = dbInfoWithAllMigs { sqlMigrations = [] }

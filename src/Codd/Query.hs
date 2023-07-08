@@ -17,6 +17,7 @@ import           Codd.Parsing                   ( AddedSqlMigration
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
 import           Control.Monad.Logger           ( MonadLogger, LoggingT )
+import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
@@ -78,6 +79,8 @@ class Monad m => NotInTxn (m :: Type -> Type)
 newtype InTxnT m a = InTxnT { unTxnT :: m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO, InTxn)
 
+instance MonadTrans InTxnT where
+  lift = InTxnT
 
 -- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also don't.
 -- Ideally we wouldn't add each MonadTransformerT instance here manually, but rather something `MonadTrans` based?
@@ -106,7 +109,7 @@ data CheckTxnFancy m txn where
 
 -- | We maybe would be able to better guide type inference by adding a functional dependency from m -> txn.
 -- However, that creates a conflict between the
-class CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
+class (InTxn txn) => CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
   txnCheck :: m (CheckTxnFancy m txn)
 
 -- instance CanStartTxn IO (InTxnT IO) where
@@ -177,5 +180,5 @@ withTxnIfNecessary isolLvl conn f = do
 
 
 
-hoistInTxn :: Monad m => AddedSqlMigration m -> AddedSqlMigration (InTxnT m)
-hoistInTxn = hoistAddedSqlMigration InTxnT
+hoistInTxn :: (Monad m, MonadTrans t, Monad (t m)) => AddedSqlMigration m -> AddedSqlMigration (t m)
+hoistInTxn = hoistAddedSqlMigration lift
