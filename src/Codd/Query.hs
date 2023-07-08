@@ -22,6 +22,9 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , toIO
                                                 )
 import UnliftIO.Resource (ResourceT)
+import Control.Monad.Reader (ReaderT)
+import Control.Monad.State (StateT)
+import Control.Monad.Trans.Writer (WriterT)
 
 execvoid_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
 execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
@@ -79,20 +82,25 @@ instance MonadTrans InTxnT where
   lift = InTxnT
 
 -- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also don't.
--- Ideally we wouldn't add each MonadTransformerT instance here manually, but rather something `MonadTrans` based?
--- Need to look into `MonadTrans` again.
+-- We do this for some common monad transformers to increase compatibility.
 instance NotInTxn IO
 instance NotInTxn m => NotInTxn (LoggingT m)
 instance NotInTxn m => NotInTxn (ResourceT m)
+instance NotInTxn m => NotInTxn (ReaderT r m)
+instance NotInTxn m => NotInTxn (StateT s m)
+instance (NotInTxn m, Monoid w) => NotInTxn (WriterT w m)
 
 -- 2. Next, if some monad `m` is inside a transaction, `SomeMonadTransformerT m` also is.
--- Here too the comment from `1` about `MonadTrans` might apply.
+-- We could add an instance with with `MonadTrans t => InTxn (t m)`, but that would require XUndecidableInstances.
+-- I wonder if it's worth it?
+-- instance (InTxn m, MonadTrans t, Monad (t m)) => InTxn (t m)
 instance InTxn m => InTxn (LoggingT m)
 instance InTxn m => InTxn (ResourceT m)
+instance InTxn m => InTxn (ReaderT r m)
+instance InTxn m => InTxn (StateT s m)
+instance (NotInTxn m, Monoid w) => InTxn (WriterT w m)
 
--- 3. Now we want functions running in some monad `m` to specify another type parameter `txn` that is either equal to `m`
--- if `m` is in a transaction, or `InTxnT m` otherwise, and allow these functions to start a transaction in the latter.
--- We also want type inference to work well.
+-- 3. Now we want the type-level trickery to let us infer from class constraints if we're inside an `InTxn` monad or not.
 -- There are possibly many ways to go about this with GHC. I'm not well versed in them.
 -- My ~first~ second attempt is to use we use multi-parameter classes to avoid duplicate instances (since instance heads are ignored
 -- for instance selection).
@@ -116,8 +124,6 @@ instance InTxn m => CanStartTxn m m where
 
 instance NotInTxn m => CanStartTxn m (InTxnT m) where
   txnCheck = pure NotInTxn
-
--- How do we do other instances?
 
 beginCommitTxnBracket
   :: (MonadUnliftIO m, NotInTxn m)
