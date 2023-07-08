@@ -3,11 +3,10 @@ module Codd.Query
     , CanStartTxn
     , InTxn
     , NotInTxn
-    , beginCommitTxnBracket
     , execvoid_
     , query
     , unsafeQuery1
-    , withTxnIfNecessary
+    , withTransaction
     ) where
 
 import           Codd.Types                     ( TxnIsolationLvl(..) )
@@ -22,7 +21,7 @@ import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO
+                                                , MonadUnliftIO (..)
                                                 , onException
                                                 , toIO
                                                 )
@@ -80,6 +79,7 @@ class Monad m => NotInTxn (m :: Type -> Type)
 newtype InTxnT m a = InTxnT { unTxnT :: m a }
   deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO, InTxn)
 
+
 -- | TODO: Is this instance a way of breaking this module's sandbox? Check!
 instance MonadTrans InTxnT where
     lift = InTxnT
@@ -101,14 +101,14 @@ instance InTxn m => InTxn (LoggingT m)
 instance InTxn m => InTxn (ResourceT m)
 instance InTxn m => InTxn (ReaderT r m)
 instance InTxn m => InTxn (StateT s m)
-instance (NotInTxn m, Monoid w) => InTxn (WriterT w m)
+instance (InTxn m, Monoid w) => InTxn (WriterT w m)
 
 -- 3. Now we want the type-level trickery to let us infer from class constraints if we're inside an `InTxn` monad or not.
 -- There are possibly many ways to go about this with GHC. I'm not well versed in them.
 -- My ~first~ second attempt is to use we use multi-parameter classes to avoid duplicate instances (since instance heads are ignored
 -- for instance selection).
 -- However, in some contexts where the `txn` monad type appears only in class constraints, but not in the function's arguments, using
--- `withTxnIfNecessary` will require enabling AllowAmbiguousTypes and explicit type applications like `withTxnIfNecessary @txn`.
+-- `withTransaction` will require enabling AllowAmbiguousTypes and explicit type applications like `withTransaction @txn`.
 -- This seems kind of acceptable. Other common idioms will be adding constraints such as `(NotInTxn m, txn ~ InTxnT (ResourceT m))`,
 -- which provides a type argument that can be used for arguments like functions `(Connection -> txn a)`.
 
@@ -128,40 +128,20 @@ instance InTxn m => CanStartTxn m m where
 instance NotInTxn m => CanStartTxn m (InTxnT m) where
     txnCheck = pure NotInTxn
 
-beginCommitTxnBracket
-    :: (MonadUnliftIO m, NotInTxn m) -- Requires not warning about redundant constraints, since the compiler couldn't ever understand `NotInTxn` is not redundant here
-    => TxnIsolationLvl
-    -> DB.Connection
-    -> InTxnT m a
-    -> m a
-beginCommitTxnBracket isolLvl conn (unTxnT -> f) = do
-    iof <- toIO f
-    liftIO $ do
-        execvoid_ conn $ beginStatement isolLvl
-        v <- iof `onException` DB.rollback conn -- TODO: Running `rollback` or any queries in generic exception handlers is not right!
-        DB.commit conn
-        pure v
-
--- simpleExample :: IO ()
--- simpleExample = beginCommitTxnBracket DbDefault undefined $ pure ()
-
--- simpleExampleLoggingT :: IO ()
--- simpleExampleLoggingT = beginCommitTxnBracket DbDefault undefined $ runStderrLoggingT $ pure ()
-
 -- | Runs a function inside a read-write transaction of the desired isolation level,
 -- BEGINning the transaction if not in one, or just running the supplied function otherwise,
 -- even if you are in a different isolation level than the one supplied.
 -- If not in a transaction, commits after running `f`. Does not commit otherwise.
 -- The first type argument is the desired InTxn monad, as it is helpful for callers to define
 -- it for better type inference, while the monad `m` not so much.
-withTxnIfNecessary
+withTransaction
     :: forall txn m a
      . (MonadUnliftIO m, CanStartTxn m txn)
     => TxnIsolationLvl
     -> DB.Connection
     -> txn a
     -> m a
-withTxnIfNecessary isolLvl conn f = do
+withTransaction isolLvl conn f = do
     t :: CheckTxnFancy m txn <- txnCheck
     case t of
         AlreadyInTxn -> f -- No `rollback` because it'd be bad and/or because the function that already started the transaction might do that anyway
@@ -175,16 +155,21 @@ withTxnIfNecessary isolLvl conn f = do
 
 
 -- testFnIO :: IO ()
--- testFnIO = withTxnIfNecessary @(InTxnT IO) DbDefault undefined $ pure ()
+-- testFnIO = withTransaction @(InTxnT IO) DbDefault undefined $ pure ()
 
 -- testFnInTxnT :: InTxnT IO ()
--- testFnInTxnT = withTxnIfNecessary @(InTxnT IO) DbDefault undefined $ pure ()
+-- testFnInTxnT = withTransaction @(InTxnT IO) DbDefault undefined $ pure ()
 
 -- testFnWithLoggerAsBase :: LoggingT IO ()
--- testFnWithLoggerAsBase = withTxnIfNecessary @(InTxnT (LoggingT IO)) DbDefault undefined $ pure ()
+-- testFnWithLoggerAsBase = withTransaction @(InTxnT (LoggingT IO)) DbDefault undefined $ pure ()
 
 -- testFnWithInTxnTAsBase :: InTxnT IO ()
--- testFnWithInTxnTAsBase = runStderrLoggingT $ withTxnIfNecessary @(LoggingT (InTxnT IO)) DbDefault undefined $ pure ()
+-- testFnWithInTxnTAsBase = runStderrLoggingT $ withTransaction @(LoggingT (InTxnT IO)) DbDefault undefined $ pure ()
 
+-- | This example should not compile because there is no `NotInTxn m` nor `InTxn m` constraint
+-- in the function, and yet it opens a transaction!
+-- _invalidExample :: forall m. MonadUnliftIO m => m ()
+-- _invalidExample = withTransaction @(InTxnT m) @m undefined undefined $ pure ()
 
-
+-- Other possibly invalid examples that compile might be built with the help of `liftIO`, `lift` etc.
+-- Try to come up with them!

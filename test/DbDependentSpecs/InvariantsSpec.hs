@@ -9,7 +9,6 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
-import           Codd.Query                     ( beginCommitTxnBracket )
 import           Codd.Representations           ( readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )

@@ -8,8 +8,7 @@ module Codd.Representations.Database
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Query                     ( InTxn
                                                 , NotInTxn
-                                                , beginCommitTxnBracket
-                                                , unsafeQuery1
+                                                , unsafeQuery1, InTxnT, withTransaction
                                                 )
 import           Codd.Representations.Database.Model
                                                 ( DbObjRepresentationQuery(..)
@@ -285,12 +284,12 @@ queryServerMajorVersion conn = do
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
-    :: (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
+    :: forall m. (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
 readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
-    beginCommitTxnBracket txnIsolationLvl conn
+    withTransaction @(InTxnT m) txnIsolationLvl conn
         $ readRepresentationsFromDbWithSettings sett conn
 
 readRepresentationsFromDbWithSettings

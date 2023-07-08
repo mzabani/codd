@@ -24,11 +24,11 @@ import           Codd.Query                     ( CanStartTxn
                                                 , InTxn
                                                 , InTxnT
                                                 , NotInTxn
-                                                , beginCommitTxnBracket
+                                                , withTransaction
                                                 , execvoid_
                                                 , query
                                                 , unsafeQuery1
-                                                , withTxnIfNecessary
+                                                , withTransaction
                                                 )
 import           Codd.Representations           ( DbRep
                                                 , logSchemasComparison
@@ -156,6 +156,7 @@ data BootstrapCheck = BootstrapCheck
     , coddSchemaExists      :: Bool
     }
 
+-- brittany-disable-next-identifier
 -- | Returns info on what kind of bootstrapping will be necessary,
 -- waiting up to the time limit for postgres to be up before throwing
 -- an exception.
@@ -165,22 +166,22 @@ checkNeedsBootstrapping connInfo connectTimeout =
     handleJust
             (\e ->
                 -- 1. No server available is a big "No", meaning we throw an exception.
-                   if isServerNotAvailableError e
-                then Nothing
+                if isServerNotAvailableError e
+                    then Nothing
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- - The DB does not exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- - CONNECT rights not granted.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- - User doesn't exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             -- here as errors that might just require bootstrapping.
+                -- 2. Maybe the default migration connection string doesn't work because:
+                -- - The DB does not exist.
+                -- - CONNECT rights not granted.
+                -- - User doesn't exist.
+                -- In any case, it's best to be conservative and consider any libpq errors
+                -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
                     then Just BootstrapCheck { defaultConnAccessible = False
                                              , coddSchemaExists      = False
                                              }
 
                 -- 3. Let other exceptions blow up
-                    else Nothing
+                else Nothing
             )
             pure
         $ withConnection connInfo
@@ -273,7 +274,7 @@ doesCoddSchemaExist conn = isSingleTrue <$> query
     "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ? AND schemaname = ?"
     ("sql_migrations" :: String, "codd_schema" :: String)
 
-createCoddSchema :: MonadUnliftIO m => TxnIsolationLvl -> DB.Connection -> m ()
+createCoddSchema :: forall txn m. (MonadUnliftIO m, NotInTxn m, txn ~ InTxnT m) => TxnIsolationLvl -> DB.Connection -> m ()
 createCoddSchema txnIsolationLvl conn = catchJust
     (\e -> if isPermissionDeniedError e then Just () else Nothing)
     go
@@ -283,7 +284,7 @@ createCoddSchema txnIsolationLvl conn = catchJust
                   "Not enough permissions to create codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions."
     )
   where
-    go = liftIO $ beginCommitTxnBracket txnIsolationLvl conn $ do
+    go = withTransaction @txn txnIsolationLvl conn $ do
         schemaAlreadyExists <- doesCoddSchemaExist conn
         unless schemaAlreadyExists $ do
             execvoid_
@@ -304,10 +305,11 @@ createCoddSchema txnIsolationLvl conn = catchJust
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
 collectPendingMigrations
-    :: ( MonadUnliftIO m
+    :: forall m. ( MonadUnliftIO m
        , MonadLogger m
        , MonadResource m
        , MonadThrow m
+       , NotInTxn m
        , EnvVars m
        )
     => DB.ConnectInfo
@@ -348,8 +350,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                 defaultConnString
                 connectTimeout
                 (\conn ->
-                    liftIO
-                        $   beginCommitTxnBracket txnIsolationLvl conn
+                    withTransaction @(InTxnT m) txnIsolationLvl conn
                         $   map DB.fromOnly
                         <$> query
                                 conn
@@ -527,7 +528,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
           case blocksOfMigs of
               [] ->
                   withConnection defaultConnInfo connectTimeout
-                      $ \defaultConn -> withTxnIfNecessary
+                      $ \defaultConn -> withTransaction
                             isolLvl
                             defaultConn
                             (ApplyMigsResult [] <$> actionAfter [] defaultConn)
@@ -596,7 +597,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                                   do
                                                       logInfoN
                                                           "Creating codd_schema..."
-                                                      createCoddSchema
+                                                      createCoddSchema @txn
                                                           isolLvl
                                                           defaultConn
                                                       pure bootCheck
@@ -644,11 +645,11 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                   (_, defaultConn) <- openConn defaultConnInfo
                   unless (coddSchemaExists finalBootCheck) $ do
                       logInfoN "Creating codd_schema..."
-                      createCoddSchema isolLvl defaultConn
-                  beginCommitTxnBracket isolLvl defaultConn
+                      createCoddSchema @txn isolLvl defaultConn
+                  withTransaction @txn isolLvl defaultConn
                       $ registerPendingMigrations defaultConn appliedMigs
                   actAfterResult <-
-                      beginCommitTxnBracket isolLvl defaultConn
+                      withTransaction isolLvl defaultConn
                           $ actionAfter hoistedBlocks defaultConn
 
                   pure $ ApplyMigsResult (map fst appliedMigs) actAfterResult
@@ -706,7 +707,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                             migBlock
                         $ \blockFinal -> do
                               logInfoN "BEGINning transaction"
-                              beginCommitTxnBracket isolLvl conn
+                              withTransaction isolLvl conn
                                   $   ApplyMigsResult
                                   <$> runMigs
                                           conn
@@ -727,10 +728,10 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                         conn
                         retryPol
                         (allMigs migBlock)
-                        (\fp ts -> withTxnIfNecessary isolLvl conn
+                        (\fp ts -> withTransaction isolLvl conn
                             $ registerMig fp ts
                         )
-                <*> beginCommitTxnBracket isolLvl conn (act conn)
+                <*> withTransaction isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to
 -- strict-check schemas, logging differences, success and throwing
@@ -812,7 +813,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
 
         multiQueryStatement_ inTxn conn $ migrationSql sqlMig
-        timestamp <- withTxnIfNecessary isolLvl conn
+        timestamp <- withTransaction isolLvl conn
             $ afterMigRun fn migTimestamp
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
@@ -834,7 +835,7 @@ registerRanMigration
     -> DB.UTCTimestamp
     -> m UTCTime
 registerRanMigration conn isolLvl fn migTimestamp =
-    withTxnIfNecessary @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
+    withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
         conn
         "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
             \                            VALUES (?, ?, now()) \
