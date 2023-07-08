@@ -5,15 +5,11 @@ module Codd.Query
   , NotInTxn
   , beginCommitTxnBracket
   , execvoid_
-  , hoistInTxn
   , query
   , unsafeQuery1
   , withTxnIfNecessary
   ) where
 
-import           Codd.Parsing                   ( AddedSqlMigration
-                                                , hoistAddedSqlMigration
-                                                )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
 import           Control.Monad.Logger           ( MonadLogger, LoggingT )
@@ -147,6 +143,8 @@ beginCommitTxnBracket isolLvl conn (unTxnT -> f) = do
 -- BEGINning the transaction if not in one, or just running the supplied function otherwise,
 -- even if you are in a different isolation level than the one supplied.
 -- If not in a transaction, commits after running `f`. Does not commit otherwise.
+-- The first type argument is the desired InTxn monad, as it is helpful for callers to define
+-- it for better type inference, while the monad `m` not so much.
 withTxnIfNecessary
   :: forall txn m a. (MonadUnliftIO m, CanStartTxn m txn)
   => TxnIsolationLvl
@@ -180,5 +178,3 @@ withTxnIfNecessary isolLvl conn f = do
 
 
 
-hoistInTxn :: (Monad m, MonadTrans t, Monad (t m)) => AddedSqlMigration m -> AddedSqlMigration (t m)
-hoistInTxn = hoistAddedSqlMigration lift

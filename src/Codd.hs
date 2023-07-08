@@ -16,8 +16,7 @@ import           Codd.Parsing                   ( AddedSqlMigration
                                                 , EnvVars
                                                 , hoistAddedSqlMigration
                                                 )
-import           Codd.Query                     ( CanStartTxn
-                                                , InTxnT
+import           Codd.Query                     ( InTxnT
                                                 , NotInTxn
                                                 )
 import           Codd.Representations           ( DbRep
@@ -92,7 +91,6 @@ applyMigrationsNoCheck
        , NotInTxn m
        , MonadResource m
        , txn ~ InTxnT (ResourceT m)
-       , CanStartTxn (ResourceT m) txn
        )
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
