@@ -65,9 +65,9 @@ We want to allow functions to specify the following constraints:
 2. That they must be called not inside a transaction.
 3. That they don't care if they're in a transaction, but they want to be able to open one if they're not in one.
 
-Of course, any type level constraints we devise must assume the user will not call `execute conn "BEGIN"` or `execute conn "COMMIT"`
-or similar statements, but rather that they'll use functions exposed by this module to do that.
-With that little bit of discipline, we should be able to achieve our goal.
+Of course, any type level constraints we devise must assume the user will not call `execute conn "BEGIN"`, `execute conn "COMMIT"`,
+or similar statements, but rather that they'll use functions exposed by this module to manage transactions.
+And with that little bit of discipline, we should be able to achieve goals 1 to 3.
 -}
 
 class Monad m => InTxn (m :: Type -> Type)
@@ -94,22 +94,22 @@ instance InTxn m => InTxn (ResourceT m)
 -- if `m` is in a transaction, or `InTxnT m` otherwise, and allow these functions to start a transaction in the latter.
 -- We also want type inference to work well.
 -- There are possibly many ways to go about this with GHC. I'm not well versed in them.
--- My ~first~ second attempt is to use we use multi-parameter classes to avoid duplicate instances (since instance heads are ignored).
--- However, type inference with those is bad (GHC doesn't know which of the two `CanStartTxn m` instances to select) and thus requires
--- explicit type applications in _all_ cases with `withTxnIfNecessary`, or enabling AllowAmbiguousTypes, which is required
--- for polymorphic functions anyway.
+-- My ~first~ second attempt is to use we use multi-parameter classes to avoid duplicate instances (since instance heads are ignored
+-- for instance selection).
+-- However, in some contexts where the `txn` monad type appears only in class constraints, but not in the function's arguments, using
+-- `withTxnIfNecessary` will require enabling AllowAmbiguousTypes and explicit type applications like `withTxnIfNecessary @txn`.
+-- This seems kind of acceptable. Other common idioms will be adding constraints such as `(NotInTxn m, txn ~ InTxnT (ResourceT m))`,
+-- which provides a type argument that can be used for arguments like functions `(Connection -> txn a)`.
 
 data CheckTxnFancy m txn where
   AlreadyInTxn :: CheckTxnFancy m m -- Proof that `m ~ txn`
   NotInTxn :: CheckTxnFancy m (InTxnT m) -- Proof that `InTxnT m ~ txn`
 
--- | We maybe would be able to better guide type inference by adding a functional dependency from m -> txn.
--- However, that creates a conflict between the
+-- We maybe would be able to better guide type inference by adding a functional dependency from m -> txn.
+-- However, that creates a conflict in instance resolution for the next two `CanStartTxn` instances, probably
+-- because instance heads are disconsidered.
 class (InTxn txn) => CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
   txnCheck :: m (CheckTxnFancy m txn)
-
--- instance CanStartTxn IO (InTxnT IO) where
---   txnCheck = pure NotInTxn
 
 instance InTxn m => CanStartTxn m m where
   txnCheck = pure AlreadyInTxn

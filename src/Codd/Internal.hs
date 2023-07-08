@@ -657,12 +657,9 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
               migBlock
             $ \blockFinal -> do
                 logInfoN "BEGINning transaction"
-                -- Apparently we need to use `withTxnIfNecessary` instead of `beginCommitTxnBracket`
-                -- because otherwise the compiler doesn't know `txn ~ InTxnT (ResourceT m)` inside
-                -- the nested block
-                withTxnIfNecessary isolLvl conn $
+                beginCommitTxnBracket isolLvl conn $
                   ApplyMigsResult
-                    <$> runMigs @txn
+                    <$> runMigs
                           conn
                           singleTryPolicy
                           (allMigs (hoistBlockOfMigrations (lift . lift) blockFinal))
@@ -673,7 +670,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
       else
         ApplyMigsResult
         <$> runMigs conn retryPol (allMigs (hoistBlockOfMigrations lift migBlock)) (\fp ts -> withTxnIfNecessary isolLvl conn $ registerMig fp ts)
-        <*> withTxnIfNecessary isolLvl conn (act conn)
+        <*> beginCommitTxnBracket isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to
 -- strict-check schemas, logging differences, success and throwing
