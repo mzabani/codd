@@ -23,7 +23,6 @@ import           Data.Time                      ( DiffTime )
 import           Options.Applicative
 import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
-import           UnliftIO.Resource              ( runResourceT )
 
 data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema Verbosity Bool
 
@@ -194,11 +193,10 @@ main = do
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckSchemas connectTimeout) =
     runStdoutLoggingT $ case mCheckSchemas of
-        Nothing -> runResourceT $ Codd.applyMigrationsNoCheck
-            dbInfo
-            Nothing
-            connectTimeout
-            (const $ pure ())
+        Nothing -> Codd.applyMigrationsNoCheck dbInfo
+                                               Nothing
+                                               connectTimeout
+                                               (const $ pure ())
         Just checkSchemas -> void $ Codd.applyMigrations dbInfo
                                                          Nothing
                                                          connectTimeout
