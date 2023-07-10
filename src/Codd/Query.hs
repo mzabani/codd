@@ -1,13 +1,13 @@
 module Codd.Query
-    ( InTxnT -- Do not export constructor, as it can break this module's transaction management sandbox
-    , CanStartTxn
-    , InTxn
-    , NotInTxn
-    , execvoid_
-    , query
-    , unsafeQuery1
-    , withTransaction
-    ) where
+  ( InTxnT -- Do not export constructor, as it can break this module's transaction management sandbox
+  , CanStartTxn
+  , InTxn
+  , NotInTxn
+  , execvoid_
+  , query
+  , unsafeQuery1
+  , withTransaction
+  ) where
 
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
@@ -29,37 +29,37 @@ execvoid_ :: MonadIO m => DB.Connection -> DB.Query -> m ()
 execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
 
 query
-    :: (DB.FromRow b, MonadIO m, DB.ToRow a)
-    => DB.Connection
-    -> DB.Query
-    -> a
-    -> m [b]
+  :: (DB.FromRow b, MonadIO m, DB.ToRow a)
+  => DB.Connection
+  -> DB.Query
+  -> a
+  -> m [b]
 query conn q r = liftIO $ DB.query conn q r
 
 -- | Throws an exception if 0 or more than 1 results are returned.
 unsafeQuery1
-    :: (DB.FromRow b, MonadIO m, DB.ToRow a)
-    => DB.Connection
-    -> DB.Query
-    -> a
-    -> m b
+  :: (DB.FromRow b, MonadIO m, DB.ToRow a)
+  => DB.Connection
+  -> DB.Query
+  -> a
+  -> m b
 unsafeQuery1 conn q r = liftIO $ do
-    res <- DB.query conn q r
-    case res of
-        []  -> error "No results for query1"
-        [x] -> return x
-        _   -> error "More than one result for query1"
+  res <- DB.query conn q r
+  case res of
+    []  -> error "No results for query1"
+    [x] -> return x
+    _   -> error "More than one result for query1"
 
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
 -- the desired isolation level.
 beginStatement :: TxnIsolationLvl -> DB.Query
 beginStatement = \case
-    DbDefault       -> "BEGIN READ WRITE"
-    Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
-    RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
-    ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
-    ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
+  DbDefault       -> "BEGIN READ WRITE"
+  Serializable    -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE"
+  RepeatableRead  -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ"
+  ReadCommitted   -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED"
+  ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED"
 
 {-|
 We want to allow functions to specify the following constraints:
@@ -69,7 +69,8 @@ We want to allow functions to specify the following constraints:
 
 Of course, any type level constraints we devise must assume the user will not call `execute conn "BEGIN"`, `execute conn "COMMIT"`,
 or similar statements, but rather that they'll use functions exposed by this module to manage transactions.
-And with that little bit of discipline, we should be able to achieve goals 1 to 3.
+And with that little bit of discipline, we should be able to moderately achieve goals 1 to 3, where "moderately" means
+this is not necessarily an airtight sandbox, but any ways to break out of it might be unlikely in codd's codebase.
 -}
 
 class Monad m => InTxn (m :: Type -> Type)
@@ -80,7 +81,7 @@ newtype InTxnT m a = InTxnT { unTxnT :: m a }
 
 -- | TODO: Is this instance a way of breaking this module's sandbox? Check!
 instance MonadTrans InTxnT where
-    lift = InTxnT
+  lift = InTxnT
 
 -- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also don't.
 -- We do this for some common monad transformers to increase compatibility.
@@ -121,10 +122,10 @@ class (InTxn txn) => CanStartTxn (m :: Type -> Type) (txn :: Type -> Type) where
   txnCheck :: m (CheckTxnWit m txn)
 
 instance InTxn m => CanStartTxn m m where
-    txnCheck = pure AlreadyInTxn
+  txnCheck = pure AlreadyInTxn
 
 instance NotInTxn m => CanStartTxn m (InTxnT m) where
-    txnCheck = pure NotInTxn
+  txnCheck = pure NotInTxn
 
 -- | Runs a function inside a read-write transaction of the desired isolation level,
 -- BEGINning the transaction if not in one, or just running the supplied function otherwise,
@@ -133,39 +134,18 @@ instance NotInTxn m => CanStartTxn m (InTxnT m) where
 -- The first type argument is the desired InTxn monad, as it is helpful for callers to define
 -- it for better type inference, while the monad `m` not so much.
 withTransaction
-    :: forall txn m a
-     . (MonadIO m, CanStartTxn m txn)
-    => TxnIsolationLvl
-    -> DB.Connection
-    -> txn a
-    -> m a
+  :: forall txn m a
+   . (MonadIO m, CanStartTxn m txn)
+  => TxnIsolationLvl
+  -> DB.Connection
+  -> txn a
+  -> m a
 withTransaction isolLvl conn f = do
-    t :: CheckTxnWit m txn <- txnCheck
-    case t of
-        AlreadyInTxn -> f
-        NotInTxn     -> do
-            execvoid_ conn $ beginStatement isolLvl
-            v <- unTxnT f
-            liftIO $ DB.commit conn
-            pure v
-
-
--- testFnIO :: IO ()
--- testFnIO = withTransaction @(InTxnT IO) DbDefault undefined $ pure ()
-
--- testFnInTxnT :: InTxnT IO ()
--- testFnInTxnT = withTransaction @(InTxnT IO) DbDefault undefined $ pure ()
-
--- testFnWithLoggerAsBase :: LoggingT IO ()
--- testFnWithLoggerAsBase = withTransaction @(InTxnT (LoggingT IO)) DbDefault undefined $ pure ()
-
--- testFnWithInTxnTAsBase :: InTxnT IO ()
--- testFnWithInTxnTAsBase = runStderrLoggingT $ withTransaction @(LoggingT (InTxnT IO)) DbDefault undefined $ pure ()
-
--- | This example should not compile because there is no `NotInTxn m` nor `InTxn m` constraint
--- in the function, and yet it opens a transaction!
--- _invalidExample :: forall m. MonadUnliftIO m => m ()
--- _invalidExample = withTransaction @(InTxnT m) @m undefined undefined $ pure ()
-
--- Other possibly invalid examples that compile might be built with the help of `liftIO`, `lift` etc.
--- Try to come up with them!
+  t :: CheckTxnWit m txn <- txnCheck
+  case t of
+    AlreadyInTxn -> f
+    NotInTxn     -> do
+      execvoid_ conn $ beginStatement isolLvl
+      v <- unTxnT f
+      liftIO $ DB.commit conn
+      pure v
