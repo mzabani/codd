@@ -24,7 +24,6 @@ import           Codd.Query                     ( CanStartTxn
                                                 , InTxn
                                                 , InTxnT
                                                 , NotInTxn
-                                                , withTransaction
                                                 , execvoid_
                                                 , query
                                                 , unsafeQuery1
@@ -274,7 +273,12 @@ doesCoddSchemaExist conn = isSingleTrue <$> query
     "SELECT TRUE FROM pg_catalog.pg_tables WHERE tablename = ? AND schemaname = ?"
     ("sql_migrations" :: String, "codd_schema" :: String)
 
-createCoddSchema :: forall txn m. (MonadUnliftIO m, NotInTxn m, txn ~ InTxnT m) => TxnIsolationLvl -> DB.Connection -> m ()
+createCoddSchema
+    :: forall txn m
+     . (MonadUnliftIO m, NotInTxn m, txn ~ InTxnT m)
+    => TxnIsolationLvl
+    -> DB.Connection
+    -> m ()
 createCoddSchema txnIsolationLvl conn = catchJust
     (\e -> if isPermissionDeniedError e then Just () else Nothing)
     go
@@ -305,7 +309,8 @@ createCoddSchema txnIsolationLvl conn = catchJust
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
 collectPendingMigrations
-    :: forall m. ( MonadUnliftIO m
+    :: forall m
+     . ( MonadUnliftIO m
        , MonadLogger m
        , MonadResource m
        , MonadThrow m
@@ -728,8 +733,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                         conn
                         retryPol
                         (allMigs migBlock)
-                        (\fp ts -> withTransaction isolLvl conn
-                            $ registerMig fp ts
+                        (\fp ts ->
+                            withTransaction isolLvl conn $ registerMig fp ts
                         )
                 <*> withTransaction isolLvl conn (act conn)
 
@@ -813,8 +818,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
 
         multiQueryStatement_ inTxn conn $ migrationSql sqlMig
-        timestamp <- withTransaction isolLvl conn
-            $ afterMigRun fn migTimestamp
+        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp

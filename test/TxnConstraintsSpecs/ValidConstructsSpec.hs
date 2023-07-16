@@ -1,6 +1,6 @@
 module TxnConstraintsSpecs.ValidConstructsSpec
-  ( spec
-  ) where
+    ( spec
+    ) where
 import           Codd.Query                     ( InTxn
                                                 , InTxnT
                                                 , NotInTxn
@@ -36,18 +36,18 @@ _testFnInTxnT = withTransaction @(InTxnT IO) DbDefault someConn $ pure ()
 
 _testFnWithLoggerAsBase :: LoggingT IO ()
 _testFnWithLoggerAsBase =
-  withTransaction @(InTxnT (LoggingT IO)) DbDefault someConn $ pure ()
+    withTransaction @(InTxnT (LoggingT IO)) DbDefault someConn $ pure ()
 
 _testFnWithInTxnTAsBase :: InTxnT IO ()
 _testFnWithInTxnTAsBase =
-  runStderrLoggingT
-    $ withTransaction @(LoggingT (InTxnT IO)) DbDefault someConn
-    $ pure ()
+    runStderrLoggingT
+        $ withTransaction @(LoggingT (InTxnT IO)) DbDefault someConn
+        $ pure ()
 
 _canStartFromNoTxnByChangingMonad
-  :: forall m . (MonadIO m, NotInTxn m) => m ()
+    :: forall m . (MonadIO m, NotInTxn m) => m ()
 _canStartFromNoTxnByChangingMonad =
-  withTransaction @(InTxnT m) DbDefault someConn $ pure ()
+    withTransaction @(InTxnT m) DbDefault someConn $ pure ()
 
 _canStartFromInTxnSameMonad :: forall m . (MonadIO m, InTxn m) => m ()
 _canStartFromInTxnSameMonad = withTransaction @m DbDefault someConn $ pure ()
