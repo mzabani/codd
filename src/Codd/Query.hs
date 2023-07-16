@@ -21,7 +21,7 @@ import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO
+                                                , MonadUnliftIO, onException
                                                 )
 import           UnliftIO.Resource              ( ResourceT )
 
@@ -135,7 +135,7 @@ instance NotInTxn m => CanStartTxn m (InTxnT m) where
 -- it for better type inference, while the monad `m` not so much.
 withTransaction
     :: forall txn m a
-     . (MonadIO m, CanStartTxn m txn)
+     . (MonadUnliftIO m, CanStartTxn m txn)
     => TxnIsolationLvl
     -> DB.Connection
     -> txn a
@@ -146,6 +146,8 @@ withTransaction isolLvl conn f = do
         AlreadyInTxn -> f
         NotInTxn     -> do
             execvoid_ conn $ beginStatement isolLvl
-            v <- unTxnT f
+            -- Note: once we stop rolling back on exception here, we can relax this function's `MonadUnliftIO`
+            -- constraint to just `MonadIO`
+            v <- unTxnT f `onException` liftIO (DB.rollback conn)
             liftIO $ DB.commit conn
             pure v

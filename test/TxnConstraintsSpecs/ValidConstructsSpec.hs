@@ -13,6 +13,7 @@ import           Control.Monad.Logger           ( LoggingT(..)
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Test.Hspec
+import UnliftIO (MonadUnliftIO)
 
 {-|
 There is no need to run actual tests in this module, and it should be fine to use
@@ -45,9 +46,9 @@ _testFnWithInTxnTAsBase =
         $ pure ()
 
 _canStartFromNoTxnByChangingMonad
-    :: forall m . (MonadIO m, NotInTxn m) => m ()
+    :: forall m . (MonadUnliftIO m, NotInTxn m) => m ()
 _canStartFromNoTxnByChangingMonad =
     withTransaction @(InTxnT m) DbDefault someConn $ pure ()
 
-_canStartFromInTxnSameMonad :: forall m . (MonadIO m, InTxn m) => m ()
+_canStartFromInTxnSameMonad :: forall m . (MonadUnliftIO m, InTxn m) => m ()
 _canStartFromInTxnSameMonad = withTransaction @m DbDefault someConn $ pure ()
