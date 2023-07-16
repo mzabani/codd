@@ -13,7 +13,7 @@ import           Control.Monad.Logger           ( LoggingT(..)
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Test.Hspec
-import UnliftIO (MonadUnliftIO)
+import           UnliftIO                       ( MonadUnliftIO )
 
 {-|
 There is no need to run actual tests in this module, and it should be fine to use

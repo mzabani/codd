@@ -21,7 +21,8 @@ import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
 import qualified Database.PostgreSQL.Simple    as DB
 import           UnliftIO                       ( MonadIO(..)
-                                                , MonadUnliftIO, onException
+                                                , MonadUnliftIO
+                                                , onException
                                                 )
 import           UnliftIO.Resource              ( ResourceT )
 

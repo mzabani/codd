@@ -37,6 +37,8 @@ format-hs:
 
             if [ "$ERR" = "60" ]; then
                 echo Ignoring XCpp error
+            elif [ "$ERR" = "61" ]; then
+                echo Ignoring parse error in inline configuration
             elif [ "$ERR" != "" ]; then
                 exit "$ERR"
             fi
