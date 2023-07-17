@@ -200,6 +200,7 @@ test-suite codd-test
   main-is: Main.hs
   other-modules:
       AllSpecs
+      AesonValueGen
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
@@ -209,9 +210,9 @@ test-suite codd-test
       EnvironmentSpec
       LiftedExpectations
       ParsingSpec
-      TypesGen
-      AesonValueGen
       Paths_codd
+      TypesGen
+      TxnConstraintsSpecs.ValidConstructsSpec
       WritingReadingRepresentationsSpec
   autogen-modules:
       Paths_codd

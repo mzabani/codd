@@ -18,13 +18,12 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , parseSqlMigration
                                                 , parseSqlPiecesStreaming
                                                 )
-import           Codd.Query                     ( execvoid_
+import           Codd.Query                     ( NotInTxn
+                                                , execvoid_
                                                 , query
                                                 )
 import           Codd.Types                     ( SchemaAlgo(..)
-                                                , SchemaSelection
-                                                    ( IncludeSchemas
-                                                    )
+                                                , SchemaSelection(..)
                                                 , TxnIsolationLvl(..)
                                                 , singleTryPolicy
                                                 )
@@ -91,7 +90,7 @@ mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
 withCoddDbAndDrop
-    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m)
+    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => [AddedSqlMigration m]
     -> (ConnectInfo -> m a)
     -> m a
@@ -172,7 +171,7 @@ createTestUserMigPol = do
             { migrationName           = "bootstrap-test-db-and-user.sql"
             , migrationSql            = psql
             , migrationInTxn          = False
--- A custom connection string is necessary because the DB doesn't yet exist
+  -- A custom connection string is necessary because the DB doesn't yet exist
             , migrationCustomConnInfo = Just cinfo
                                             { connectUser     = "postgres"
                                             , connectDatabase = "postgres"
@@ -187,8 +186,7 @@ testCoddSettings = do
         { migsConnString    = connInfo
         , sqlMigrations     = []
         , onDiskReps        = Left ""
-        , namespacesToCheck = IncludeSchemas
-                                  ["public", "codd-extra-mapped-schema"]
+        , namespacesToCheck = AllNonInternalSchemas
         , extraRolesToCheck = ["codd-test-user", "extra-codd-test-user"] -- Important for SchemaVerificationSpec
         , retryPolicy       = singleTryPolicy
         , txnIsolationLvl   = DbDefault

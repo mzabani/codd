@@ -28,7 +28,7 @@ runVerbosityLogger NonVerbose m = runLoggingT
     )
 
 -- |Logs Errors only, and to stderr.
-runErrorsOnlyLogger :: MonadIO m => LoggingT m a -> m a
+runErrorsOnlyLogger :: LoggingT m a -> m a
 runErrorsOnlyLogger m = runLoggingT
     m
     (\loc source level str -> case level of

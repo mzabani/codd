@@ -9,7 +9,6 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( baseApplyMigsBlock
-                                                , beginCommitTxnBracket
                                                 , collectAndApplyMigrations
                                                 , withConnection
                                                 )

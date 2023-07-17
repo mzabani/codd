@@ -16,10 +16,12 @@ import           Codd.Parsing                   ( AddedSqlMigration
                                                 , EnvVars
                                                 , hoistAddedSqlMigration
                                                 )
+import           Codd.Query                     ( InTxnT
+                                                , NotInTxn
+                                                )
 import           Codd.Representations           ( DbRep
                                                 , readRepsFromDisk
                                                 )
-import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
 import           Control.Monad.Logger           ( MonadLogger )
 import           Control.Monad.Trans            ( lift )
@@ -27,7 +29,9 @@ import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Time                      ( DiffTime )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Prelude                 hiding ( readFile )
-import           UnliftIO.Resource              ( runResourceT )
+import           UnliftIO.Resource              ( ResourceT
+                                                , runResourceT
+                                                )
 
 data VerifySchemas = LaxCheck | StrictCheck
     deriving stock (Show)
@@ -42,7 +46,7 @@ data ApplyResult = SchemasDiffer SchemasPair | SchemasMatch DbRep | SchemasNotVe
 -- the Database's schema if they're not the ones expected or a success result otherwise.
 -- Throws an exception if a migration fails or if schemas mismatch and strict-checking is enabled.
 applyMigrations
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m, EnvVars m)
+    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
@@ -76,20 +80,24 @@ applyMigrations dbInfo@CoddSettings { onDiskReps } mOverrideMigs connectTimeout 
 
 -- | Collects pending migrations from disk and applies them all.
 -- Does not verify schemas but allows a function that runs in the same transaction as the last migrations
--- iff all migrations are in-txn or separately after the last migration and not in an explicit transaction
--- otherwise.
+-- iff all migrations are in-txn or separately after the last migration otherwise.
 -- Throws an exception if a migration fails.
 applyMigrationsNoCheck
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m, MonadThrow m, EnvVars m)
+    :: ( MonadUnliftIO m
+       , MonadLogger m
+       , MonadThrow m
+       , EnvVars m
+       , NotInTxn m
+       , txn ~ InTxnT (ResourceT m)
+       )
     => CoddSettings
     -> Maybe [AddedSqlMigration m]
     -- ^ Instead of collecting migrations from disk according to codd settings, use these if they're defined.
     -> DiffTime
-    -> (DB.Connection -> m a)
+    -> (DB.Connection -> txn a)
     -> m a
 applyMigrationsNoCheck dbInfo mOverrideMigs connectTimeout finalFunc =
-    runResourceT $ collectAndApplyMigrations
-        (\_migBlocks conn -> lift $ finalFunc conn)
-        dbInfo
-        (map (hoistAddedSqlMigration lift) <$> mOverrideMigs)
-        connectTimeout
+    collectAndApplyMigrations (\_migBlocks conn -> finalFunc conn)
+                              dbInfo
+                              mOverrideMigs
+                              connectTimeout

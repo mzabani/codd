@@ -1,6 +1,6 @@
 module Codd.Representations.Database.Pg15
-  ( objRepQueryFor
-  ) where
+    ( objRepQueryFor
+    ) where
 
 import           Codd.Representations.Database.Model
                                                 ( DbObjRepresentationQuery(..) )
@@ -15,24 +15,26 @@ import           Codd.Types                     ( SchemaAlgo
                                                 )
 
 objRepQueryFor
-  :: [SqlRole]
-  -> SchemaSelection
-  -> SchemaAlgo
-  -> Maybe ObjName
-  -> Maybe ObjName
-  -> ObjectRep
-  -> DbObjRepresentationQuery
+    :: [SqlRole]
+    -> SchemaSelection
+    -> SchemaAlgo
+    -> Maybe ObjName
+    -> Maybe ObjName
+    -> ObjectRep
+    -> DbObjRepresentationQuery
 objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
-  let hq = Pg14.objRepQueryFor allRoles
-                               allSchemas
-                               schemaAlgoOpts
-                               schemaName
-                               tableName
-                               hobj
-  in  case hobj of
-        HCollation ->
-          hq { repCols = repCols hq ++ [("iculocale", "colliculocale")] }
-        HIndex ->
-          hq { repCols = repCols hq ++ [("nullsnotdistinct", "indnullsnotdistinct")] }
-        _ -> hq
+    let hq = Pg14.objRepQueryFor allRoles
+                                 allSchemas
+                                 schemaAlgoOpts
+                                 schemaName
+                                 tableName
+                                 hobj
+    in  case hobj of
+            HCollation ->
+                hq { repCols = repCols hq ++ [("iculocale", "colliculocale")] }
+            HIndex -> hq
+                { repCols = repCols hq
+                                ++ [("nullsnotdistinct", "indnullsnotdistinct")]
+                }
+            _ -> hq
 

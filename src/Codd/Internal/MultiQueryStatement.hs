@@ -73,7 +73,7 @@ data InTransaction = InTransaction | NotInTransaction RetryPolicy deriving stock
 --   2. If not in a transaction, then statements will be executed one-by-one and
 --      will be retried according to the retry policy.
 multiQueryStatement_
-    :: (MonadUnliftIO m, MonadIO m, MonadLogger m)
+    :: (MonadUnliftIO m, MonadLogger m)
     => InTransaction
     -> DB.Connection
     -> ParsedSql m

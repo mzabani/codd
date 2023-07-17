@@ -1,12 +1,13 @@
 module Codd.Parsing
-    ( SqlMigration(..)
-    , AddedSqlMigration(..)
+    ( AddedSqlMigration(..)
+    , AppliedMigration(..)
     , CoddCommentParseResult(..)
     , EnvVars(..)
     , FileStream(..)
     , SqlPiece(..)
     , ParsedSql(..)
     , PureStream(..)
+    , SqlMigration(..)
     , connStringParser
     , hoistAddedSqlMigration
     , isCommentPiece
@@ -123,6 +124,15 @@ data AddedSqlMigration m = AddedSqlMigration
     , addedSqlTimestamp :: DB.UTCTimestamp
     }
 
+data AppliedMigration = AppliedMigration
+    { appliedMigrationName      :: FilePath
+    , appliedMigrationTimestamp :: DB.UTCTimestamp
+    ,
+    -- ^ The migration's timestamp as extracted from its file name.
+      appliedMigrationAt        :: UTCTime
+    -- ^ When the migration was effectively applied.
+    }
+
 data FileStream m = FileStream
     { filePath   :: FilePath
     , releaseKey :: ReleaseKey
@@ -154,7 +164,7 @@ instance MonadIO m => MigrationStream m (FileStream m) where
 
 -- TODO: This should probably not be in Parsing.hs
 hoistAddedSqlMigration
-    :: (Monad m, Monad n)
+    :: Monad m
     => (forall x . m x -> n x)
     -> AddedSqlMigration m
     -> AddedSqlMigration n
