@@ -477,6 +477,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                 , ("identity"     , "attidentity")
                 , ("local"        , "attislocal")
                 , ("inhcount"     , "attinhcount")
+                , ("typmod"       , "atttypmod")
                 , ("collation"    , "pg_collation.collname")
                 , ("collation_nsp", "collation_namespace.nspname")
                 , ("privileges"   , "_codd_roles.permissions")
