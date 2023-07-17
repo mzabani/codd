@@ -507,9 +507,8 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                            "pg_class.relowner"
                            "attacl"
             <> "_codd_roles ON TRUE"
-        , nonIdentWhere =
-            Just
-                "NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')"
+        , nonIdentWhere = Just
+            "NOT pg_attribute.attisdropped AND pg_attribute.attnum >= 1"
         , identWhere    = Just
                           $  "TRUE"
                           <> maybe ""
