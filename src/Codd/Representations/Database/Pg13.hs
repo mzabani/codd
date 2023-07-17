@@ -14,7 +14,7 @@ import           Codd.Types                     ( SchemaAlgo
                                                 , SqlRole
                                                 )
 
--- Postgres 13 and 14 don't seem to have any verifiable new features compared to 12.
+-- Postgres 13 doesn't seem to have any verifiable new features compared to 12.
 objRepQueryFor
     :: [SqlRole]
     -> SchemaSelection

@@ -167,7 +167,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
 
       -- TABLES AND COLUMNS
     addMig_
-            "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT)"
+            "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(30))"
             "DROP TABLE employee"
         $ ChangeEq
               [ ( "schemas/public/sequences/employee_employee_id_seq"
@@ -186,6 +186,14 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
                 , DExpectedButNotFound
                 )
               , ("schemas/public/tables/employee/objrep", DExpectedButNotFound)
+              ]
+    addMig_
+            "ALTER TABLE employee ALTER COLUMN employee_name TYPE VARCHAR(50)"
+            "ALTER TABLE employee ALTER COLUMN employee_name TYPE VARCHAR(30)"
+        $ ChangeEq
+              [ ( "schemas/public/tables/employee/cols/employee_name"
+                , DBothButDifferent
+                )
               ]
     addMig_ "ALTER TABLE employee ALTER COLUMN employee_name SET NOT NULL"
             "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
@@ -264,7 +272,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     addMig_
             "ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;"
 
-            "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name TEXT NOT NULL); \
+            "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(50) NOT NULL); \
              \ ALTER TABLE employee ADD COLUMN deathday DATE DEFAULT '2100-02-04'; ALTER TABLE employee ADD COLUMN birthday TIMESTAMP;"
 
         $ ChangeEq
@@ -643,7 +651,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
       -- makes Pg create a new sequence with a different name instead of doing what you might expect
         "ALTER SEQUENCE some_seq OWNED BY NONE; \
     \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN employee_id CASCADE;\
-    \\nALTER TABLE employee ADD COLUMN employee_name TEXT NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
+    \\nALTER TABLE employee ADD COLUMN employee_name VARCHAR(50) NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
                           \ ADD COLUMN birthday TIMESTAMP, ADD COLUMN employee_id SERIAL PRIMARY KEY, \
                           \ ADD COLUMN name TEXT;\
     \\nALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY');\
