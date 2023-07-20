@@ -25,16 +25,27 @@ checkMigration mig = do
     migEndsTransaction <- case (migrationSql mig, migrationInTxn mig) of
         (UnparsedSql   _     , _   ) -> pure $ Right Nothing
         (WellParsedSql pieces, True) -> do
-            problem <- Streaming.any_ isTransactionEndingPiece pieces
-            pure $ Right $ if problem
+            (hasSomeTxnEndingPiece, hasAnyStatement) <- Streaming.fold_
+                (\(hasSomeTxnEndingPiece, hasAnyStatement) p ->
+                    ( hasSomeTxnEndingPiece || isTransactionEndingPiece p
+                    , hasAnyStatement
+                        || not (isWhiteSpacePiece p || isCommentPiece p)
+                    )
+                )
+                (False, False)
+                id
+                pieces
+            pure $ Right $ if hasSomeTxnEndingPiece
                 then Just "in-txn migration cannot issue COMMIT or ROLLBACK"
-                else Nothing
+                else if not hasAnyStatement
+                    then Just "The migration seems to have no SQL statements"
+                    else Nothing
         (WellParsedSql pieces, False) -> do
             noSqlToRun <- Streaming.all_
                 (\p -> isWhiteSpacePiece p || isCommentPiece p)
                 pieces
             if noSqlToRun
-                then pure $ Left "The migration seems to be empty"
+                then pure $ Left "The migration seems to have no SQL statements"
                 else do
                     let isOpenAfter wasOpen p = case p of
                             BeginTransaction _ -> True

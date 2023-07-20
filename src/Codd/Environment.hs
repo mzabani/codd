@@ -49,8 +49,7 @@ data CoddSettings = CoddSettings
     -- ^ A list of directories with .sql files.
     --   All .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
     , onDiskReps        :: Either FilePath DbRep
-    -- ^ The directory where DB schema representations are persisted to when SQL migrations are applied. In a valid setup, this should always match the representations obtained from the Database,
-    -- (perhaps only after applying migrations when deploying).
+    -- ^ The directory with the expected DB schema representations, or the expected representations themselves.
     , namespacesToCheck :: SchemaSelection
     -- ^ Selection of Schemas in the DB that codd should check.
     , extraRolesToCheck :: [SqlRole]

@@ -395,6 +395,22 @@ streamingReadFile filePath = do
 closeFileStream :: MonadResource m => FileStream m -> m ()
 closeFileStream (FileStream _ releaseKey _) = release releaseKey
 
+-- | Returns all migrations on the supplied folders (including possibly already applied ones)
+-- except for the explicitly supplied ones.
+listMigrationsFromDisk :: MonadIO m => [FilePath]
+    -- ^ The folders where to look for migrations.
+     -> [FilePath] 
+    -- ^ Migration filenames (without their directories) to exclude from returned list.
+    -> m [FilePath]
+listMigrationsFromDisk sqlDirs excludeList = do
+    fmap (sortOn takeFileName . concat) $ forM sqlDirs $ \dir -> do
+            filesInDir <- listDirectory dir
+            return $ map (dir </>) $ filter
+                (\fn ->
+                    ".sql" `List.isSuffixOf` fn && fn `notElem` excludeList
+                )
+                filesInDir
+
 parseMigrationFiles
     :: forall m
      . ( MonadUnliftIO m
@@ -451,14 +467,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
     listPendingFromMemory = filter
         (\(AddedSqlMigration mig _) -> migrationName mig `notElem` migsCompleted
         )
-    listPendingFromDisk sqlDirs =
-        fmap (sortOn takeFileName . concat) $ forM sqlDirs $ \dir -> do
-            filesInDir <- listDirectory dir
-            return $ map (dir </>) $ filter
-                (\fn ->
-                    ".sql" `List.isSuffixOf` fn && fn `notElem` migsCompleted
-                )
-                filesInDir
+    listPendingFromDisk sqlDirs = listMigrationsFromDisk sqlDirs migsCompleted
 
     readFromDisk
         :: forall t

@@ -127,9 +127,8 @@ data AddedSqlMigration m = AddedSqlMigration
 data AppliedMigration = AppliedMigration
     { appliedMigrationName      :: FilePath
     , appliedMigrationTimestamp :: DB.UTCTimestamp
-    ,
     -- ^ The migration's timestamp as extracted from its file name.
-      appliedMigrationAt        :: UTCTime
+    , appliedMigrationAt        :: UTCTime
     -- ^ When the migration was effectively applied.
     }
 
@@ -835,7 +834,7 @@ coddCommentParser = do
     parseOptions = do
         opts <-
             optionParser `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
-        endOfLine
+        endOfLine <|> endOfInput
         pure $ CoddCommentSuccess opts
 
 -- | Parses a "-- codd-connection: some-connection-string" line. Consumes all available input
@@ -850,7 +849,7 @@ coddConnStringCommentParser = do
   where
     parseConn = do
         connInfo <- connStringParser
-        endOfLine
+        endOfLine <|> endOfInput
         pure $ CoddCommentSuccess connInfo
 
 -- | Parses a "-- codd-env-vars: VAR1, VAR2, ..." line. Consumes all available input
@@ -872,7 +871,7 @@ coddEnvVarsCommentParser = do
         vars <-
             singleVarNameParser
                 `sepBy1` (skipJustSpace >> char ',' >> skipJustSpace)
-        endOfLine
+        endOfLine <|> endOfInput
         pure $ CoddCommentSuccess vars
     singleVarNameParser = Parsec.takeWhile1
         (\c ->
