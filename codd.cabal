@@ -79,7 +79,7 @@ library
       TypeOperators
       ViewPatterns
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
   build-depends:
       aeson
     , attoparsec
@@ -141,7 +141,7 @@ executable codd
   -- Disabling the parallel GC seems to make codd perform better in some heavier workloads I've tested.
   -- This makes sense, codd is single-threaded.
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
   build-depends:
       base
     , codd
@@ -157,7 +157,7 @@ benchmark codd-bench
   main-is: Main.hs
   hs-source-dirs: bench
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -with-rtsopts=-T -Wall -Wpartial-fields -Werror -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -with-rtsopts=-T -Wall -Wpartial-fields -optP-Wno-nonportable-include-path
   default-extensions:
       BangPatterns
       DeriveAnyClass

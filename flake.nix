@@ -101,8 +101,8 @@
                     # `cabal`, `hlint` and `haskell-language-server`
                     shell.tools = {
                       cabal = "latest";
-                      # hlint = "latest"; # latest was failing cabal deps bounds
-                      # haskell-language-server = "latest";
+                      hlint = "3.4.1"; # latest was failing cabal deps bounds
+                      haskell-language-server = "latest";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
@@ -110,7 +110,7 @@
                       ghcid
                       glibcLocales
                       # haskellPackages.brittany # Brittany from the LTS is older than this
-                      # proj.hsPkgs.brittany.components.exes.brittany
+                      proj.hsPkgs.brittany.components.exes.brittany
                       postgresql
                       postgres-service
                       run
@@ -135,7 +135,7 @@
             in {
               # This overlay adds our project to pkgs
               coddProjectAeson1 = mkProject "stack.yaml" "ghc8107";
-              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc945";
+              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc902";
             })
         ];
 
