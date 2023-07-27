@@ -11,7 +11,9 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( streamingReadFile )
+import           Codd.Internal                  ( listMigrationsFromDisk
+                                                , streamingReadFile
+                                                )
 import           Codd.Parsing                   ( EnvVars
                                                 , parseSqlMigration
                                                 )
@@ -20,16 +22,15 @@ import           Codd.Representations           ( persistRepsToDisk
                                                 , readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
-import           Control.Monad                  ( forM_
-                                                , unless
+import           Control.Monad                  ( unless
                                                 , when
                                                 )
 import           Control.Monad.Logger           ( MonadLoggerIO )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
-import           Data.Maybe                     ( maybeToList )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( secondsToDiffTime )
+import qualified Database.PostgreSQL.Simple    as DB
 import           System.Exit                    ( ExitCode(..)
                                                 , exitWith
                                                 )
@@ -39,12 +40,14 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 , stderr
                                                 )
 import           UnliftIO.Directory             ( copyFile
+                                                , doesDirectoryExist
                                                 , doesFileExist
                                                 , removeFile
                                                 )
-import           UnliftIO.Exception             ( bracketOnError )
+import           UnliftIO.Exception             ( SomeException
+                                                , try
+                                                )
 import           UnliftIO.Resource              ( runResourceT )
-import           UnliftIO.Resource              ( ResourceT )
 
 newtype AddMigrationOptions = AddMigrationOptions
   { dontApply :: Bool
@@ -63,7 +66,7 @@ addMigration
     -> Maybe FilePath
     -> SqlFilePath
     -> m ()
-addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskReps } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
+addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigrations } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
     = do
         finalDir <- case (destFolder, sqlMigrations) of
             (Just f, _) -> pure f
@@ -77,58 +80,106 @@ addMigration dbInfo@Codd.CoddSettings { sqlMigrations, onDiskReps } AddMigration
                 "This functionality needs a directory to write the expected representations to. Report this as a bug."
             )
             onDiskReps
-        exists <- doesFileExist fp
-        unless exists $ error $ "Could not find file " ++ fp
+
+        migFileExists <- doesFileExist fp
+        unless migFileExists $ liftIO $ do
+            Text.hPutStrLn stderr
+                $  "Could not find migration file \""
+                <> Text.pack fp
+                <> "\""
+            exitWith $ ExitFailure 99
+
+        finalDirExists <- doesDirectoryExist finalDir
+        unless finalDirExists $ liftIO $ do
+            Text.hPutStrLn stderr
+                $  "Could not find destination directory \""
+                <> Text.pack finalDir
+                <> "\""
+            exitWith $ ExitFailure 98
+
+        expectedSchemaDirExists <- doesDirectoryExist onDiskRepsDir
+        unless expectedSchemaDirExists $ liftIO $ do
+            Text.hPutStrLn stderr
+                $ "Could not find directory for expected DB schema representation \""
+                <> Text.pack onDiskRepsDir
+                <> "\""
+            exitWith $ ExitFailure 97
+
+        isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
         runResourceT $ do
             migStream     <- streamingReadFile fp
             parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
             case parsedSqlMigE of
-                Left err -> do
-                    liftIO
-                        $  Text.hPutStrLn stderr
+                Left err -> liftIO $ do
+                    Text.hPutStrLn stderr
                         $  "Could not add migration: "
                         <> Text.pack err
-                    liftIO $ exitWith (ExitFailure 1)
+                    when isFirstMigration
+                         (printSuggestedFirstMigration migsConnString)
+                    exitWith $ ExitFailure 96
+
                 Right sqlMig -> do
-                    migCheck  <- checkMigration sqlMig
-                    migErrors <- either
-                        (pure . (: []))
-                        (pure . maybeToList . transactionManagementProblem)
-                        migCheck
+                    migCheck <- checkMigration sqlMig
+                    let migError = case migCheck of
+                            Left  err -> Just err
+                            Right mc  -> transactionManagementProblem mc
 
-                    when (migErrors /= []) $ liftIO $ do
-                        Text.hPutStrLn
-                            stderr
-                            "Analysis of the migration detected errors."
-                        forM_ migErrors (Text.hPutStrLn stderr)
-                        exitWith (ExitFailure 1)
+                    case migError of
+                        Nothing  -> pure ()
+                        Just err -> liftIO $ do
+                            Text.hPutStrLn stderr $ "Error detected: " <> err
+                            when
+                                isFirstMigration
+                                (printSuggestedFirstMigration migsConnString)
+                            exitWith $ ExitFailure 95
 
-            bracketOnError (timestampAndMoveMigrationFile sqlFp finalDir)
-                           moveMigrationBack
-                $ \finalMigFile -> do
-                      unless dontApply $ do
-                        -- Important, and we don't have a test for this:
-                        -- fetch representations in the same transaction as migrations
-                        -- when possible, since that's what "up" does.
-                          databaseSchemas <- Codd.applyMigrationsNoCheck
-                              dbInfo
-                              Nothing
-                              (secondsToDiffTime 5)
-                              (readRepresentationsFromDbWithSettings dbInfo)
-                          persistRepsToDisk databaseSchemas onDiskRepsDir
+            finalMigFile <- timestampAndMoveMigrationFile sqlFp finalDir
+            addE         <- try $ do
+                unless dontApply $ do
+                    databaseSchemas <- Codd.applyMigrationsNoCheck
+                        dbInfo
+                        Nothing
+                        (secondsToDiffTime 5)
+                        (readRepresentationsFromDbWithSettings dbInfo)
+                    persistRepsToDisk databaseSchemas onDiskRepsDir
 
-                          liftIO
-                              $  putStrLn
-                              $  "Migration applied and added to "
-                              <> finalMigFile
-                      when dontApply
-                          $  liftIO
-                          $  putStrLn
-                          $  "Migration was NOT applied, but was added to "
-                          <> finalMigFile
+                    liftIO
+                        $  putStrLn
+                        $  "Migration applied and added to "
+                        <> finalMigFile
+                when dontApply
+                    $  liftIO
+                    $  putStrLn
+                    $  "Migration was NOT applied, but was added to "
+                    <> finalMigFile
+            case addE of
+                Right _                    -> pure ()
+                Left  (e :: SomeException) -> liftIO $ do
+                    -- Print error and move file back to its original directory
+                    Text.hPutStrLn stderr $ Text.pack $ show e
+                    copyFile finalMigFile fp
+                    removeFile finalMigFile
 
-  where
-    moveMigrationBack :: FilePath -> ResourceT m ()
-    moveMigrationBack deleteFrom = do
-        copyFile deleteFrom fp
-        removeFile deleteFrom
+                    when isFirstMigration
+                         (printSuggestedFirstMigration migsConnString)
+
+                    exitWith $ ExitFailure 1
+
+printSuggestedFirstMigration :: DB.ConnectInfo -> IO ()
+printSuggestedFirstMigration DB.ConnectInfo { connectDatabase, connectUser } =
+    putStrLn
+        $ "\nTip: It looks like this is your first migration. Make sure either the target database of your default connection string already exists, or add a migration that creates your database with a custom connection string. Example:\n\
+                        \\n\
+                        \    -- codd: no-txn\n\
+                        \    -- codd-connection: dbname=postgres user=postgres host=localhost\n\
+                        \    -- Make sure the connection string above works, or change it to one that works.\n\
+                        \    CREATE DATABASE \""
+        ++ connectDatabase
+        ++ "\" OWNER \""
+        ++ connectUser
+        <> "\";\n\
+                        \    -- Also make sure the DB above doesn't exist yet, and that the DB owner does.\n\
+                        \\n\
+                        \- The migration above looks scary, but it's one of the rare few that will require anything other than plain SQL.\n\
+                        \- If this is what you need, feel free to copy the migration above into a .sql file, modify it accordingly and add that as your first migration.\n\
+                        \- If the above doesn't work, you want a more complete example or want to know more, make sure to read https://github.com/mzabani/codd/blob/master/docs/BOOTSTRAPPING.md for more on bootstrapping your database with codd.\n"

@@ -1,3 +1,4 @@
+<!-- This file is referenced from error messages codd produces, so don't move it or rename it. -->
 # Bootstrapping
 
 _Codd_ can apply migrations but it needs an existing database to apply them on.
@@ -20,18 +21,18 @@ DO
 $do$
 BEGIN
    IF NOT EXISTS (
-      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'codd_admin') THEN
-      CREATE USER codd_admin WITH CREATEROLE;
+      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'my_admin_user') THEN
+      CREATE USER my_admin_user WITH CREATEROLE;
    END IF;
 END
 $do$;
 
-CREATE DATABASE codd_experiments TEMPLATE template1 OWNER codd_admin;
+CREATE DATABASE my_database TEMPLATE template1 OWNER my_admin_user;
 ````
 
 Now just make sure this is the very first migration to run - you can move it to your "dev-only" folder of migrations (the one you'd run in a Production server would likely be very different) with a very early date. One suitable named would be something like `1900-01-01-00-00-00-bootstrap-db.sql`, for example.
 
-This can help you recreate your local DB as easily as `dropdb codd_experiments && codd up`, and keeps all necessary statements to create it in folders familiar to you.
+This can help you recreate your local DB as easily as `dropdb my_database && codd up`, and keeps all necessary statements to create it in folders familiar to you.
 
 ## Tips
 - Check that ownership, encoding and locale of the created database matches across different environments. Especially if you're using Cloud SQL, this part can be tricky to get right.
