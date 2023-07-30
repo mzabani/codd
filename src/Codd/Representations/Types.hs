@@ -4,7 +4,6 @@ module Codd.Representations.Types
     , ObjName(..)
     , HasName(..)
     , DiffType(..)
-    -- , Json(..)
     , DbRep(..)
     , SchemaRep(..)
     , TableRep(..)

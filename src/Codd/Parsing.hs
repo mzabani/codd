@@ -27,8 +27,10 @@ module Codd.Parsing
 
   -- Exported for tests
     , ParserState(..)
+    , blockParser
     , copyFromStdinAfterStatementParser
     , parseSqlPiecesStreaming'
+    , sqlPieceParser
     ) where
 
 import           Control.Applicative            ( (<|>)
@@ -85,6 +87,7 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
+import           Debug.Trace
 import           Network.URI                    ( URI(..)
                                                 , URIAuth(..)
                                                 , parseURI
@@ -438,7 +441,8 @@ spaceSeparatedTokensToParser allTokens = case allTokens of
             in  listOfAtLeast1 [CustomParserToken singleIdentifier] "."
         CommaSeparatedIdentifiers -> listOfAtLeast1 [SqlIdentifier] ","
         AllUntilEndOfStatement    -> do
-            t1 <- takeWhile (\c -> not (isPossibleStartingChar c) && c /= ';')
+            t1 <- takeWhile
+                (\c -> not (isPossibleStartingChar Nothing c) && c /= ';')
             mc <- peekChar
             case mc of
                 Nothing  -> pure t1
@@ -537,35 +541,51 @@ commentOrSpaceParser atLeastOne = if atLeastOne
 commentParser :: Parser Text
 commentParser = do
     (commentType, commentInit) <-
-        (DoubleDashComment, ) <$> string "--" <|> (CStyleComment, ) <$> string
+        (DoubleDashComment, ) <$> string "--" <|> (CStyleComment 1, ) <$> string
             "/*"
     bRemaining <- blockInnerContentsParser commentType
     pure $ commentInit <> bRemaining
 
-data BlockType = DoubleDashComment | CStyleComment | DollarQuotedBlock !Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
+-- | Blocks are the name we give to some expressions that have a beginning and an end, inside of which
+-- semicolons are not to be considered statement boundaries. These include strings, comments,
+-- parenthesised expressions (TODO) and dollar quoted blocks.
+data BlockParsingStatus =
+      DoubleDashComment
+    | CStyleComment !Int -- ^ Open comment count (C-style comments can nest)
+    | DollarQuotedBlock !Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
 
-isPossibleStartingChar :: Char -> Bool
-isPossibleStartingChar c =
-    c == '-' || c == '/' || c == '"' || c == '$' || c == '\''
+isPossibleStartingChar :: Maybe BlockParsingStatus -> Char -> Bool
+isPossibleStartingChar mStatus c = case mStatus of
+    Just (CStyleComment _) -> c == '/'
+    _ -> c == '-' || c == '/' || c == '"' || c == '$' || c == '\''
 
-isPossibleEndingChar :: BlockType -> Char -> Bool
+
+isPossibleEndingChar :: BlockParsingStatus -> Char -> Bool
 isPossibleEndingChar DoubleDashComment      c = c == '\n'
-isPossibleEndingChar CStyleComment          c = c == '*'
+isPossibleEndingChar (CStyleComment     _)  c = c == '*'
 isPossibleEndingChar (DollarQuotedBlock _)  c = c == '$'
 isPossibleEndingChar DoubleQuotedIdentifier c = c == '"'
 isPossibleEndingChar SingleQuotedString     c = c == '\''
 
-blockBeginParser :: Parser (BlockType, Text)
-blockBeginParser =
-    (DoubleDashComment, )
-        <$> string "--"
-        <|> (CStyleComment, )
-        <$> string "/*"
-        <|> dollarBlockParser
-        <|> (DoubleQuotedIdentifier, )
-        <$> string "\""
-        <|> (SingleQuotedString, )
-        <$> string "'"
+blockBeginParser
+    :: Maybe BlockParsingStatus -> Parser (BlockParsingStatus, Text)
+blockBeginParser = \case
+    Just (CStyleComment n) -> (CStyleComment (n + 1), ) <$> string "/*"
+    Just bps ->
+        fail
+            $  "Will never find beginning of block '"
+            ++ show bps
+            ++ "' since it does not allow nesting"
+    Nothing ->
+        (DoubleDashComment, )
+            <$> string "--"
+            <|> (CStyleComment 1, )
+            <$> string "/*"
+            <|> dollarBlockParser
+            <|> (DoubleQuotedIdentifier, )
+            <$> string "\""
+            <|> (SingleQuotedString, )
+            <$> string "'"
   where
     dollarBlockParser = do
         void $ char '$'
@@ -574,52 +594,84 @@ blockBeginParser =
         let tb = "$" <> b <> "$"
         pure (DollarQuotedBlock tb, tb)
 
-blockEndingParser :: BlockType -> Parser Text
-blockEndingParser = \case
-    DoubleDashComment      -> eol <|> ("" <$ endOfInput)
-    CStyleComment          -> string "*/"
-    DollarQuotedBlock q    -> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
-    DoubleQuotedIdentifier -> string "\""
-    SingleQuotedString     -> string "'"
+data BlockEnding = BlockClosed !Text | BlockStillOpen !BlockParsingStatus !Text
+    deriving stock Show
+
+-- | Parses the ending of a block (parentheses, strings, comments, dollar quoted etc.),
+-- and returns the updated block parsing state.
+blockEndingParser :: BlockParsingStatus -> Parser BlockEnding
+blockEndingParser bt = case bt of
+    DoubleDashComment -> fmap BlockClosed $ eol <|> ("" <$ endOfInput)
+    CStyleComment n
+        | n <= 0
+        -> error
+            "CStyleComment parser reached impossible state. Please report this as a bug."
+        | n == 1
+        -> BlockClosed <$> string "*/"
+        | otherwise
+        -> BlockStillOpen (CStyleComment (n - 1)) <$> string "*/"
+    DollarQuotedBlock q    -> BlockClosed <$> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
+    DoubleQuotedIdentifier -> BlockClosed <$> string "\""
+    SingleQuotedString     -> BlockClosed <$> string "'"
 
 eol :: Parser Text
 eol = string "\n" <|> string "\r\n"
 
-blockParser :: Parser (BlockType, Text)
+blockParser :: Parser (BlockParsingStatus, Text)
 blockParser = do
-    (bt, bBegin) <- blockBeginParser
+    (bt, bBegin) <- blockBeginParser Nothing
     bRemaining   <- blockInnerContentsParser bt
     pure (bt, bBegin <> bRemaining)
 
-blockParserOfType :: (BlockType -> Bool) -> Parser Text
+blockParserOfType :: (BlockParsingStatus -> Bool) -> Parser Text
 blockParserOfType p = do
     (bt, c) <- blockParser
     guard $ p bt
     pure c
 
-blockInnerContentsParser :: BlockType -> Parser Text
+blockInnerContentsParser :: BlockParsingStatus -> Parser Text
 blockInnerContentsParser bt = do
     t <- case bt of
         SingleQuotedString     -> parseWithEscapeCharPreserve (== '\'') -- '' escaping is not to be explicitly implemented, but this parser understands it as two consecutive strings, and that's good enough for now
         DoubleQuotedIdentifier -> parseWithEscapeCharPreserve (== '"') -- "" escaping seems to be the same as above..
-        _                      -> takeWhile (not . isPossibleEndingChar bt)
+        CStyleComment _        -> takeWhile
+            (\c -> not (isPossibleEndingChar bt c)
+                && not (isPossibleStartingChar (Just bt) c)
+            ) -- These can nest, so might be opened "again"
+        _ -> takeWhile (not . isPossibleEndingChar bt)
     done <- atEnd
     if done
-        then pure t
+        then pure t -- We act conservatively and never fail the parser: return what's been parsed, instead
         else do
-            mEndingQuote <- optional (blockEndingParser bt)
-            case mEndingQuote of
+            mEndingOrStart <-
+                optional
+                $   Left
+                <$> blockEndingParser bt
+                <|> Right
+                <$> blockBeginParser (Just bt)
+            case mEndingOrStart of
                 Nothing -> do
-                  -- Could mean we found e.g. '*' inside a C-Style comment block, but not followed by '/'
+                    -- Could mean we found e.g. '*' inside a C-Style comment block, but not followed by '/'
                     c      <- anyChar
                     remain <- blockInnerContentsParser bt
                     pure $ Text.snoc t c <> remain
-                Just endingQuote -> pure $ t <> endingQuote
+                Just (Left (BlockStillOpen newParserStatus parsedNestedEnding))
+                    -> do
+                    -- This means we found a _nested_ terminator, so we're still inside the
+                    -- initial outermost block. This happens with e.g. C-style comments.
+                        remain <- blockInnerContentsParser newParserStatus
+                        pure $ t <> parsedNestedEnding <> remain
+                Just (Left (BlockClosed blockTerminator)) ->
+                    pure $ t <> blockTerminator
+                Just (Right (newParserStatus, parsedBlockOpening)) -> do
+                    -- A nested block opener, e.g. opening a nested C-style comment.
+                    remain <- blockInnerContentsParser newParserStatus
+                    pure $ t <> parsedBlockOpening <> remain
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Does not consume the ending char and RETURNS any
 -- backslash escape chars in the result.
--- Use parseWithEscapeCharProper to exclude the escape chars from the result.
+-- Use `parseWithEscapeCharProper` to exclude the escape chars from the result.
 -- This function is useful if you want the original parsed contents.
 parseWithEscapeCharPreserve :: (Char -> Bool) -> Parser Text
 parseWithEscapeCharPreserve untilc = do
@@ -723,7 +775,6 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
         (singleKeyVal `Parsec.sepBy` takeWhile1 (== ' '))
         (Text.strip line)
         "Invalid connection string"
-    -- TODO: Error if there are other keys that we're not using present.
     ConnectInfo
         <$> getVal "host"     Nothing     txtToString    kvs
         <*> getVal "port"     (Just 5432) Parsec.decimal kvs

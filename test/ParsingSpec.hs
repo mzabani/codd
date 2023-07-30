@@ -151,10 +151,9 @@ validSqlStatements =
             , CommitTransaction "COmmIT;"
             , CommitTransaction "COMMIT/*a*/;"
             , CommitTransaction "cOMMIT   ;"
-    -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
-    -- , "/* multiline comment"
-    --   <> "\n  * with nesting: /* nested block comment */"
-    --   <> "\n  */ SELECT 1;"
+        -- Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
+            , CommentPiece "/* multiline comment\n comment */"
+            , CommentPiece "/* nested block /* comment */ still a comment */"
             ]
         ++ [ [ CopyFromStdinStatement
                  "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
