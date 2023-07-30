@@ -87,7 +87,6 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
-import           Debug.Trace
 import           Network.URI                    ( URI(..)
                                                 , URIAuth(..)
                                                 , parseURI
@@ -541,52 +540,63 @@ commentOrSpaceParser atLeastOne = if atLeastOne
 commentParser :: Parser Text
 commentParser = do
     (commentType, commentInit) <-
-        (DoubleDashComment, ) <$> string "--" <|> (CStyleComment 1, ) <$> string
+        (DoubleDashComment, ) <$> string "--" <|> (CStyleComment, ) <$> string
             "/*"
     bRemaining <- blockInnerContentsParser commentType
     pure $ commentInit <> bRemaining
 
 -- | Blocks are the name we give to some expressions that have a beginning and an end, inside of which
 -- semicolons are not to be considered statement boundaries. These include strings, comments,
--- parenthesised expressions (TODO) and dollar quoted blocks.
+-- parenthesised expressions and dollar-quoted strings.
 data BlockParsingStatus =
       DoubleDashComment
-    | CStyleComment !Int -- ^ Open comment count (C-style comments can nest)
-    | DollarQuotedBlock !Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
+    | CStyleComment
+    | DollarQuotedBlock !Text
+    | DoubleQuotedIdentifier
+    | Parenthesised
+    | SingleQuotedString
+     deriving stock (Show, Eq)
 
 isPossibleStartingChar :: Maybe BlockParsingStatus -> Char -> Bool
 isPossibleStartingChar mStatus c = case mStatus of
-    Just (CStyleComment _) -> c == '/'
-    _ -> c == '-' || c == '/' || c == '"' || c == '$' || c == '\''
+    Just CStyleComment -> c == '/'
+    _ -> c == '-' || c == '(' || c == '/' || c == '"' || c == '$' || c == '\''
 
 
 isPossibleEndingChar :: BlockParsingStatus -> Char -> Bool
-isPossibleEndingChar DoubleDashComment      c = c == '\n'
-isPossibleEndingChar (CStyleComment     _)  c = c == '*'
-isPossibleEndingChar (DollarQuotedBlock _)  c = c == '$'
-isPossibleEndingChar DoubleQuotedIdentifier c = c == '"'
-isPossibleEndingChar SingleQuotedString     c = c == '\''
+isPossibleEndingChar bps c = case bps of
+    DoubleDashComment      -> c == '\n'
+    CStyleComment          -> c == '*'
+    DollarQuotedBlock _    -> c == '$'
+    DoubleQuotedIdentifier -> c == '"'
+    Parenthesised          -> c == ')'
+    SingleQuotedString     -> c == '\''
 
 blockBeginParser
     :: Maybe BlockParsingStatus -> Parser (BlockParsingStatus, Text)
 blockBeginParser = \case
-    Just (CStyleComment n) -> (CStyleComment (n + 1), ) <$> string "/*"
+    Just CStyleComment -> (CStyleComment, ) <$> string "/*" -- Only other C-style comments can nest inside C-style comments
+    Just Parenthesised -> anyBlockBegin -- Anything can nest inside parentheses
     Just bps ->
         fail
             $  "Will never find beginning of block '"
             ++ show bps
             ++ "' since it does not allow nesting"
-    Nothing ->
+    Nothing -> anyBlockBegin
+
+  where
+    anyBlockBegin =
         (DoubleDashComment, )
             <$> string "--"
-            <|> (CStyleComment 1, )
+            <|> (CStyleComment, )
             <$> string "/*"
             <|> dollarBlockParser
             <|> (DoubleQuotedIdentifier, )
             <$> string "\""
+            <|> (Parenthesised, )
+            <$> string "("
             <|> (SingleQuotedString, )
             <$> string "'"
-  where
     dollarBlockParser = do
         void $ char '$'
         b <- takeWhile (/= '$')
@@ -594,25 +604,16 @@ blockBeginParser = \case
         let tb = "$" <> b <> "$"
         pure (DollarQuotedBlock tb, tb)
 
-data BlockEnding = BlockClosed !Text | BlockStillOpen !BlockParsingStatus !Text
-    deriving stock Show
-
 -- | Parses the ending of a block (parentheses, strings, comments, dollar quoted etc.),
 -- and returns the updated block parsing state.
-blockEndingParser :: BlockParsingStatus -> Parser BlockEnding
+blockEndingParser :: BlockParsingStatus -> Parser Text
 blockEndingParser bt = case bt of
-    DoubleDashComment -> fmap BlockClosed $ eol <|> ("" <$ endOfInput)
-    CStyleComment n
-        | n <= 0
-        -> error
-            "CStyleComment parser reached impossible state. Please report this as a bug."
-        | n == 1
-        -> BlockClosed <$> string "*/"
-        | otherwise
-        -> BlockStillOpen (CStyleComment (n - 1)) <$> string "*/"
-    DollarQuotedBlock q    -> BlockClosed <$> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
-    DoubleQuotedIdentifier -> BlockClosed <$> string "\""
-    SingleQuotedString     -> BlockClosed <$> string "'"
+    DoubleDashComment      -> eol <|> ("" <$ endOfInput)
+    CStyleComment          -> string "*/"
+    DollarQuotedBlock q    -> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
+    DoubleQuotedIdentifier -> string "\""
+    Parenthesised          -> string ")"
+    SingleQuotedString     -> string "'"
 
 eol :: Parser Text
 eol = string "\n" <|> string "\r\n"
@@ -634,10 +635,14 @@ blockInnerContentsParser bt = do
     t <- case bt of
         SingleQuotedString     -> parseWithEscapeCharPreserve (== '\'') -- '' escaping is not to be explicitly implemented, but this parser understands it as two consecutive strings, and that's good enough for now
         DoubleQuotedIdentifier -> parseWithEscapeCharPreserve (== '"') -- "" escaping seems to be the same as above..
-        CStyleComment _        -> takeWhile
+        CStyleComment          -> takeWhile
             (\c -> not (isPossibleEndingChar bt c)
                 && not (isPossibleStartingChar (Just bt) c)
             ) -- These can nest, so might be opened "again"
+        Parenthesised -> takeWhile
+            (\c -> not (isPossibleEndingChar bt c)
+                && not (isPossibleStartingChar Nothing c) -- any kind of block (including parentheses) can be opened while inside parentheses
+            )
         _ -> takeWhile (not . isPossibleEndingChar bt)
     done <- atEnd
     if done
@@ -655,18 +660,19 @@ blockInnerContentsParser bt = do
                     c      <- anyChar
                     remain <- blockInnerContentsParser bt
                     pure $ Text.snoc t c <> remain
-                Just (Left (BlockStillOpen newParserStatus parsedNestedEnding))
-                    -> do
-                    -- This means we found a _nested_ terminator, so we're still inside the
-                    -- initial outermost block. This happens with e.g. C-style comments.
-                        remain <- blockInnerContentsParser newParserStatus
-                        pure $ t <> parsedNestedEnding <> remain
-                Just (Left (BlockClosed blockTerminator)) ->
-                    pure $ t <> blockTerminator
-                Just (Right (newParserStatus, parsedBlockOpening)) -> do
-                    -- A nested block opener, e.g. opening a nested C-style comment.
-                    remain <- blockInnerContentsParser newParserStatus
-                    pure $ t <> parsedBlockOpening <> remain
+                Just (Left blockTerminator) -> pure $ t <> blockTerminator
+                Just (Right (newParserStatus, parsedSubBlockOpening)) -> do
+                    -- A nested block opener, e.g. opening a nested C-style comment
+                    -- or any kind of block inside parentheses
+                    bodyAndEndingSubBlock <- blockInnerContentsParser
+                        newParserStatus
+                    -- Sub-block closed, parse rest of outermost block
+                    restOfOutermostBlock <- blockInnerContentsParser bt
+                    pure
+                        $  t
+                        <> parsedSubBlockOpening
+                        <> bodyAndEndingSubBlock
+                        <> restOfOutermostBlock
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Does not consume the ending char and RETURNS any

@@ -137,11 +137,24 @@ validSqlStatements =
             , OtherSqlPiece
             $  "$function$"
             <> "\nBEGIN"
-            <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
+            <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$); /* Some would-be non terminated comment, but it's fine inside dollar quotes"
             <> "\nEND;"
             <> "\n$function$;"
             , OtherSqlPiece "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
             , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            -- Semi-colons inside parenthesised blocks are not statement boundaries
+            , OtherSqlPiece
+                "create rule name as on some_event to some_table do (command1; command2; command3;);"
+            -- String blocks can be opened inside parentheses, just like comments, dollar-quoted strings and others
+            , OtherSqlPiece
+                "create rule name as on some_event to some_table do ('abcdef);'; other;);"
+            , OtherSqlPiece
+                "some statement with spaces (((U&'d\\0061t\\+000061', 'abc''def' ; ; ; /* comment /* nested */ ((( */ $hey$dollar string$hey$)) 'more''of'; this; ());"
+            , OtherSqlPiece
+                "select 'unclosed parentheses inside string (((((', (('string (('));"
+            -- We still want the following to be parsed; it's best to run invalid statements than have
+            -- a parser so strict that it might refuse valid ones.
+            , OtherSqlPiece "invalid statement, bad parentheses ()));"
             , BeginTransaction "begin;"
             , BeginTransaction "BEGiN/*a*/;"
             , BeginTransaction "BEgIN   ;"
