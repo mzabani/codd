@@ -13,7 +13,6 @@ module Codd.Parsing
     , isCommentPiece
     , isTransactionEndingPiece
     , isWhiteSpacePiece
-    , mapSqlMigration
     , piecesToText
     , sqlPieceText
     , parsedSqlText
@@ -40,7 +39,7 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Identity         ( Identity(runIdentity) )
+import           Control.Monad.Identity         ( Identity(..) )
 import           Control.Monad.Trans            ( MonadTrans
                                                 , lift
                                                 )
@@ -176,13 +175,6 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) = AddedSqlMigration
     hoistSqlMig mig = mig { migrationSql = hoistParsedSql $ migrationSql mig }
     hoistParsedSql (UnparsedSql   t     ) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
-
-mapSqlMigration
-    :: (SqlMigration m -> SqlMigration m)
-    -> AddedSqlMigration m
-    -> AddedSqlMigration m
-mapSqlMigration f (AddedSqlMigration sqlMig tst) =
-    AddedSqlMigration (f sqlMig) tst
 
 data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)

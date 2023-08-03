@@ -127,8 +127,19 @@ validSqlStatements =
             <> "\nEND;"
             <> "\n$$ LANGUAGE plpgsql;"
             , OtherSqlPiece
-                "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+                "select U&'d\\0061t\\+000061';"
+            , OtherSqlPiece
+                "select U&'\\0441\\043B\\043E\\043D';"
+            , OtherSqlPiece
+                "select U&'d!0061t!+000061' UESCAPE '!';"
+            -- , OtherSqlPiece
+            --     "select U&'d\\0061t\\+000061' UESCAPE '\\';"
+            , OtherSqlPiece
+                "select X'1FF';"
+            , OtherSqlPiece
+                "select B'1001';"
             , OtherSqlPiece "SELECT 'some''quoted ''string';"
+            , OtherSqlPiece "SELECT E'some\\'quoted string';"
             , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
             , OtherSqlPiece
                 "SELECT 'double quotes \" inside single quotes \" - 2';"
