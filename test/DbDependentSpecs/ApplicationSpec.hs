@@ -165,11 +165,12 @@ createCountCheckingMig expectedCount migName = SqlMigration
 -- test the parser, but we do this to sleep well at night too.
 -- This migration only makes sense with standard_conforming_strings=on.
 stdConfStringsMig :: MonadThrow m => AddedSqlMigration m
-stdConfStringsMig = AddedSqlMigration SqlMigration
-    { migrationName = "0001-string-escaping.sql"
-    , migrationSql            =
-        mkValidSql 
-        "create table string_escape_tests (id int not null, t text not null);\n\
+stdConfStringsMig = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "0001-string-escaping.sql"
+        , migrationSql            =
+            mkValidSql
+                "create table string_escape_tests (id int not null, t text not null);\n\
 
 \insert into string_escape_tests (id, t) values \n\
 \    (1, 'bc\\def')\n\
@@ -202,20 +203,21 @@ stdConfStringsMig = AddedSqlMigration SqlMigration
 \    , (10, $SomeTag$Dianne's horse$SomeTag$)\n\
 \    -- ^ Same as above\n\
 \;"
-    , migrationInTxn          = True
-    , migrationCustomConnInfo = Nothing
-    }
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
+        }
     (getIncreasingTimestamp 0)
 
 -- | A migration that uses many different ways of inputting strings in postgres. In theory we'd only need to
 -- test the parser, but we do this to sleep well at night too.
 -- This migration only makes sense with standard_conforming_strings=off.
 notStdConfStringsMig :: MonadThrow m => AddedSqlMigration m
-notStdConfStringsMig = AddedSqlMigration SqlMigration
-    { migrationName = "0001-string-escaping.sql"
-    , migrationSql            =
-        mkValidSql 
-        "set standard_conforming_strings=off; create table string_escape_tests (id int not null, t text not null);\n\
+notStdConfStringsMig = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "0001-string-escaping.sql"
+        , migrationSql            =
+            mkValidSql
+                "set standard_conforming_strings=off; create table string_escape_tests (id int not null, t text not null);\n\
 
 \insert into string_escape_tests (id, t) values \n\
 \    (1, 'bc\\def')\n\
@@ -224,9 +226,9 @@ notStdConfStringsMig = AddedSqlMigration SqlMigration
 \    , (2, 'abc\\\\de''f')\n\
 \    -- ^ The value above should _not_ contain the slash, it should be the Haskell string \"abc\\de'f\"\n\
 \;"
-    , migrationInTxn          = True
-    , migrationCustomConnInfo = Nothing
-    }
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
+        }
     (getIncreasingTimestamp 0)
 
 spec :: Spec
@@ -271,42 +273,48 @@ spec = do
                                           testConnTimeout
                                           (const $ pure ())
 
-                      it "String escaping works in all its forms with standard_conforming_strings=on"
+                      it
+                              "String escaping works in all its forms with standard_conforming_strings=on"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT
-                                    $ applyMigrationsNoCheck
-                                          emptyTestDbInfo
-                                          (Just [stdConfStringsMig])
-                                          testConnTimeout
-                                          (\conn -> liftIO $ DB.query conn "SELECT id, t FROM string_escape_tests ORDER BY id" ())
+                                    runStdoutLoggingT $ applyMigrationsNoCheck
+                                        emptyTestDbInfo
+                                        (Just [stdConfStringsMig])
+                                        testConnTimeout
+                                        (\conn -> liftIO $ DB.query
+                                            conn
+                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                            ()
+                                        )
 
-                                map snd stringsAndIds `shouldBe` [
-                                    "bc\\def"
-                                    , "abcdef"
-                                    , "abc\\def"
-                                    , "data"
-                                    , "data"
-                                    , "data"
-                                    , "data\\'"
-                                    , "слон"
-                                    , "Dianne's horse"
-                                    , "Dianne's horse"
-                                    ]
-                      it "String escaping works in all its forms with standard_conforming_strings=off"
+                                map snd stringsAndIds
+                                    `shouldBe` [ "bc\\def"
+                                               , "abcdef"
+                                               , "abc\\def"
+                                               , "data"
+                                               , "data"
+                                               , "data"
+                                               , "data\\'"
+                                               , "слон"
+                                               , "Dianne's horse"
+                                               , "Dianne's horse"
+                                               ]
+                      it
+                              "String escaping works in all its forms with standard_conforming_strings=off"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT
-                                    $ applyMigrationsNoCheck
-                                          emptyTestDbInfo
-                                          (Just [notStdConfStringsMig])
-                                          testConnTimeout
-                                          (\conn -> liftIO $ DB.query conn "SELECT id, t FROM string_escape_tests ORDER BY id" ())
+                                    runStdoutLoggingT $ applyMigrationsNoCheck
+                                        emptyTestDbInfo
+                                        (Just [notStdConfStringsMig])
+                                        testConnTimeout
+                                        (\conn -> liftIO $ DB.query
+                                            conn
+                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                            ()
+                                        )
 
-                                map snd stringsAndIds `shouldBe` [
-                                    "bcdef"
-                                    , "abc\\de'f"
-                                    ]
+                                map snd stringsAndIds
+                                    `shouldBe` ["bcdef", "abc\\de'f"]
 
                       it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
                           runStdoutLoggingT
