@@ -34,7 +34,7 @@ module Codd.Parsing
     , cStyleComment
     , doubleDashComment
     , dollarStringParser
-    , parseBackslashEscapedString
+    , cStyleEscapedString
     , objIdentifier
     , parenthesisedExpression
     ) where
@@ -529,20 +529,35 @@ eol = string "\n" <|> string "\r\n"
 -- | Blocks are the name we give to some expressions that have a beginning and an end, inside of which
 -- semicolons are not to be considered statement boundaries. These include strings, comments,
 -- parenthesised expressions and dollar-quoted strings.
+-- For now, this assumes standard_conforming_strings is always on.
 blockParser :: Parser Text
 blockParser =
-    parseBackslashEscapedString -- TODO: assume std_strings and use parseStdConformingString instead
+    parseStdConformingString
         <|> parenthesisedExpression
         <|> cStyleComment
         <|> dollarStringParser
         <|> doubleDashComment
         <|> doubleQuotedIdentifier
+        <|> cStyleEscapedString
 
 -- | A character that may be the first of a block. This needs to match parsers in `blockParser`, and is only useful
 -- to optimize our parsers by avoiding backtracking through usage of `takeWhile` and similar.
 isPossibleBlockStartingChar :: Char -> Bool
 isPossibleBlockStartingChar c =
-    c == '(' || c == '-' || c == '/' || c == '"' || c == '$' || c == '\''
+    c
+        == '('
+        || c
+        == '-'
+        || c
+        == '/'
+        || c
+        == '"'
+        || c
+        == '$'
+        || c
+        == '\''
+        || c
+        == 'E'
 
 
 dollarStringParser :: Parser Text
@@ -661,35 +676,42 @@ doubleQuotedIdentifier = do
     ending       <- string "\""
     pure $ openingQuote <> rest <> ending
 
--- | Parses a single quoted NON standard conforming string, i.e. strings that use backslash as an escape character.
-parseBackslashEscapedString :: Parser Text
-parseBackslashEscapedString = do
-    openingQuote <- string "'"
+-- | Parses a single quoted NON standard conforming string, i.e. strings that use backslash as an escape character, and are marked
+-- by beginning with an `E`. Consecutive simple quotes are also treated as a single quote, just like in std conforming strings.
+-- See https://www.postgresql.org/docs/current/sql-syntax-lexical.html
+cStyleEscapedString :: Parser Text
+cStyleEscapedString = do
+    openingChars <- string "E'"
     rest         <- Parsec.scan
-        False
-        (\lastCharWasBackslash c -> case (lastCharWasBackslash, c) of
-            (False, '\\') -> Just True
-            (False, '\'') -> Nothing -- end of string
-            (False, _   ) -> Just False
-            (True , _   ) -> Just False -- Any character after a backslash must be included in the string
+        (False, False)
+        (\(lastCharWasBackslash, lastCharWasSingleQuote) c ->
+            case ((lastCharWasBackslash, lastCharWasSingleQuote), c) of
+                ((False, False), '\'') -> Just (False, True)
+                ((False, True ), '\'') -> Just (False, False) -- Two consecutive single quotes are not end of string
+                ((False, True ), _   ) -> Nothing -- A single quote not preceded by \ and followed by not-a-single-quote is end of string
+                ((False, False), '\\') -> Just (True, False)
+                ((False, False), _   ) -> Just (False, False) -- "regular" character
+                ((True , False), _   ) -> Just (False, False) -- Any character after a backslash must be included in the string
+                ((True, True), _) ->
+                    error
+                        "Please submit this as a bug report to codd, saying both backslash and single quote were last char in cStyleEscapedString"
         )
-    ending <- string "'" <|> "" <$ endOfInput
-    pure $ openingQuote <> rest <> ending
+    pure $ openingChars <> rest
 
--- | Parses a single quoted standard conforming string, i.e. strings that use '' as a representation of a single quote.
+-- | Parses a single quoted standard conforming string, i.e. strings that use '' as a representation of a single quote, and
+-- takes any other character literally.
 parseStdConformingString :: Parser Text
 parseStdConformingString = do
     openingQuote <- string "'"
     rest         <- Parsec.scan
-        (0 :: Int)
-        (\lenTerminatorSoFar c -> case (lenTerminatorSoFar, c) of
-            (0, '\'') -> Just 1
-            (1, '\'') -> Just 0 -- Two consecutive single quotes represent a single quote, not end of string
-            (1, _   ) -> Nothing -- One single quote followed by any other character means that single quote was end of string 
-            _         -> Just 0
+        False
+        (\lastCharWasQuote c -> case (lastCharWasQuote, c) of
+            (False, '\'') -> Just True
+            (True , '\'') -> Just False -- Two consecutive single quotes represent a single quote, not end of string
+            (True , _   ) -> Nothing -- One single quote followed by any other character means that single quote was end of string 
+            (False, _   ) -> Just False
         )
-    ending <- string "'" <|> "" <$ endOfInput
-    pure $ openingQuote <> rest <> ending
+    pure $ openingQuote <> rest
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Stops at and does not consume the first predicate-passing
