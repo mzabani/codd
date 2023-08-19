@@ -47,17 +47,8 @@ module Codd.Parsing
 
   -- Exported for tests
     , ParserState(..)
-    , blockParser
     , copyFromStdinAfterStatementParser
     , parseSqlPiecesStreaming'
-    , sqlPieceParser
-    , parseStdConformingString
-    , cStyleComment
-    , doubleDashComment
-    , dollarStringParser
-    , cStyleEscapedString
-    , objIdentifier
-    , parenthesisedExpression
     ) where
 
 import           Control.Applicative            ( (<|>)
@@ -112,9 +103,6 @@ import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
-import           Debug.Trace                    ( traceShow
-                                                , traceShowId
-                                                )
 import           Network.URI                    ( URI(..)
                                                 , URIAuth(..)
                                                 , parseURI
@@ -552,6 +540,11 @@ eol = string "\n" <|> string "\r\n"
 -- For now, this assumes standard_conforming_strings is always on.
 blockParser :: Parser Text
 blockParser =
+    -- Unicode escaped strings aren't explicitly implemented, but work with the current parser.
+    -- Since single quotes can't be an escape character for them (see https://www.postgresql.org/docs/current/sql-syntax-lexical.html),
+    -- backslashes will be treated like a regular character - which works for us -, and if other characters are chosen as the escape character,
+    -- our parsers will treat those also as regular characters, which should be fine.
+    -- This seems fragile, but our tests will error out if changes make this unsupported.
     parseStdConformingString
         <|> parenthesisedExpression
         <|> cStyleComment

@@ -105,6 +105,7 @@ validSqlStatements =
                 "SELECT E'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
             , OtherSqlPiece
                 "SELECT E'Consecutive single quotes are also escaped here ''; see?';"
+            , OtherSqlPiece "SELECT E'''20s' = E'\\'20s';"
             , OtherSqlPiece
             $  "DO"
             <> "\n$do$"
@@ -136,8 +137,7 @@ validSqlStatements =
             , OtherSqlPiece "select U&'d\\0061t\\+000061';"
             , OtherSqlPiece "select U&'\\0441\\043B\\043E\\043D';"
             , OtherSqlPiece "select U&'d!0061t!+000061' UESCAPE '!';"
-            -- , OtherSqlPiece
-            --     "select U&'d\\0061t\\+000061' UESCAPE '\\';"
+            , OtherSqlPiece "select U&'d\\0061t\\+000061' UESCAPE '\\';"
             , OtherSqlPiece "select X'1FF';"
             , OtherSqlPiece "select B'1001';"
             , OtherSqlPiece "SELECT 'some''quoted ''string';"
