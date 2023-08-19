@@ -32,17 +32,6 @@ import           UnliftIO                       ( Exception
                                                 , throwIO
                                                 )
 
--- Multi-query statements are automatically enveloped in a single transaction by the server. This happens because according to
--- https://www.postgresql.org/docs/12/libpq-exec.html, "Multiple queries sent in a single PQexec call are processed in a single transaction,
--- unless there are explicit BEGIN/COMMIT commands included in the query string to divide it into multiple transactions."
--- This creates problem for statements that can't run inside a single transaction (changing enums, creating dbs etc.)
--- Because that seems to be at libpq level, we need to parse SQL (ugh..) and detect plPGSQL bodies and standard SQL to
--- split commands up.. tough situation.
--- Note 1: Maybe alex works to translate psqlscan.l to Haskell? Seems like a rather complicated translation when I look at the source,
--- and I don't know anything about lex/flex/alex.. also, we dong't need to be as good as psql in parsing SQL; we just need to find statement boundaries
--- (psql counts parentheses, for instance) to split them up by that.
--- Note 2: The CLI utility psql does the same and splits up commands before sending them to the server. See https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l
-
 data SqlStatementException = SqlStatementException
     { sqlStatement :: Text
     , psimpleError :: DB.SqlError

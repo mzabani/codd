@@ -1,3 +1,24 @@
+{-|
+
+This module contains parsers that are helpful to separate queries from each other by finding query boundaries: semi-colons, but not when inside a string or a parenthesised expression, for example.
+
+Parsing is made necessary because multi-query statements are automatically enveloped in a single transaction by the server. This happens because according to
+<https://www.postgresql.org/docs/12/libpq-exec.html>, /"Multiple queries sent in a single PQexec call are processed in a single transaction, unless there are explicit BEGIN\/COMMIT commands included in the query string to divide it into multiple transactions"/.
+
+This creates problem for statements that can't run inside a single transaction (changing enums, creating dbs etc.).
+Because that happens at libpq's level, we need to parse SQL (ouch..) and detect query boundaries so we send them one at a time.
+
+Parsing is far from trivial, but has a few advantages once implemented:  
+
+  * It makes reading migrations from disk in streaming fashion possible, meaning we can run arbitrarily large migrations with bounded memory.  
+
+  * It makes SQL errors when applying migrations much more granular.  
+
+  * It is necessary to support COPY, since that is not a statement we can just send to the server; it uses a different protocol.
+
+Ideally we would use the parser from upstream, at <https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l>, but that will require
+some FFI since it contains C code. But long term we really should.
+-}
 module Codd.Parsing
     ( AddedSqlMigration(..)
     , AppliedMigration(..)
@@ -38,7 +59,6 @@ module Codd.Parsing
     , objIdentifier
     , parenthesisedExpression
     ) where
-
 
 import           Control.Applicative            ( (<|>)
                                                 , optional
