@@ -1,1 +1,20 @@
-{"accessmethod":"btree","amoptions":null,"compositetype":null,"definition":"CREATE UNIQUE INDEX employee_pkey ON public.employee USING btree (employee_id)","exclusion":false,"forcerowsecurity":false,"immediate":true,"kind":"i","nullsnotdistinct":false,"owner":"codd_admin","partition":false,"persistence":"p","primary":true,"replident":"n","rowsecurity":false,"rowtype":null,"shared":false,"unique":true}
+{
+    "accessmethod": "btree",
+    "amoptions": null,
+    "compositetype": null,
+    "definition": "CREATE UNIQUE INDEX employee_pkey ON public.employee USING btree (employee_id)",
+    "exclusion": false,
+    "forcerowsecurity": false,
+    "immediate": true,
+    "kind": "i",
+    "nullsnotdistinct": false,
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "primary": true,
+    "replident": "n",
+    "rowsecurity": false,
+    "rowtype": null,
+    "shared": false,
+    "unique": true
+}

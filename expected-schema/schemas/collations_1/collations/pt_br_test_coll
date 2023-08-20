@@ -1,1 +1,9 @@
-{"collate":null,"ctype":null,"deterministic":true,"encoding":"","iculocale":"pt-u-co-phonebk","owner":"codd_admin","provider":"i"}
+{
+    "collate": null,
+    "ctype": null,
+    "deterministic": true,
+    "encoding": "",
+    "iculocale": "pt-u-co-phonebk",
+    "owner": "codd_admin",
+    "provider": "i"
+}

@@ -82,6 +82,7 @@ library
   ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
   build-depends:
       aeson
+    , aeson-pretty
     , attoparsec
     , base
     , bytestring

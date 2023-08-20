@@ -1,1 +1,20 @@
-{"accessmethod":"btree","amoptions":null,"compositetype":null,"definition":"CREATE UNIQUE INDEX any_unique_employee_idx_will_do ON public.employee USING btree (employee_name)","exclusion":false,"forcerowsecurity":false,"immediate":true,"kind":"i","nullsnotdistinct":false,"owner":"codd_admin","partition":false,"persistence":"p","primary":false,"replident":"n","rowsecurity":false,"rowtype":null,"shared":false,"unique":true}
+{
+    "accessmethod": "btree",
+    "amoptions": null,
+    "compositetype": null,
+    "definition": "CREATE UNIQUE INDEX any_unique_employee_idx_will_do ON public.employee USING btree (employee_name)",
+    "exclusion": false,
+    "forcerowsecurity": false,
+    "immediate": true,
+    "kind": "i",
+    "nullsnotdistinct": false,
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "primary": false,
+    "replident": "n",
+    "rowsecurity": false,
+    "rowtype": null,
+    "shared": false,
+    "unique": true
+}
