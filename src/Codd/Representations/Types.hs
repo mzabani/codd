@@ -19,6 +19,7 @@ module Codd.Representations.Types
     , TableTriggerRep(..)
     , TypeRep(..)
     , detEncodeJSON
+    , detEncodeSingleLineJSON
     , fromPathFrag
     , listToMap
     , mkPathFrag
@@ -31,6 +32,7 @@ import           Data.Aeson                     ( FromJSON
                                                 , Value(..)
                                                 )
 import           Data.Aeson.Encoding            ( encodingToLazyByteString )
+import           Data.Aeson.Encode.Pretty       ( encodePretty )
 import           Data.ByteString.Lazy           ( toStrict )
 import           Data.Hashable                  ( Hashable )
 import qualified Data.Map                      as Map
@@ -48,34 +50,51 @@ import           Database.PostgreSQL.Simple.ToField
                                                 ( ToField )
 import           GHC.Generics                   ( Generic )
 
+
 data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass Hashable
 
 #if MIN_VERSION_aeson(2,0,0)
--- | Deterministic `ToJSON` instances, i.e. instances whose implementation of `toEncoding`
--- produces the same result regardles of hashable's initial seed.
--- We should be able to remove this after we drop support for aeson-1.
+-- | Deterministically produces `ToJSON` prettified and multi-line output, i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardless of hashable's initial seed.
 detEncodeJSON :: ToJSON a => a -> Text
 detEncodeJSON =
+    decodeUtf8
+        . toStrict
+        . encodePretty
+
+-- | Deterministically produces `ToJSON` output in a single-line (good for logging output), i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardless of hashable's initial seed.
+detEncodeSingleLineJSON :: ToJSON a => a -> Text
+detEncodeSingleLineJSON =
     decodeUtf8
         . toStrict
         . encodingToLazyByteString
         . toEncoding
 #else
 
--- | Deterministic `ToJSON` instances, i.e. instances whose implementation of `toEncoding`
--- produces the same result regardles of hashable's initial seed.
--- We should be able to remove this after we drop support for aeson-1.
+-- | Deterministically produces `ToJSON` output, i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardless of hashable's initial seed.
+-- We should be able to remove this function after we drop support for aeson-1.
 detEncodeJSON :: ToJSON a => a -> Text
 detEncodeJSON =
+    decodeUtf8
+        . toStrict
+        . encodePretty
+        . Json
+        . toJSON
+
+-- | Deterministically produces `ToJSON` output in a single-line (good for logging output), i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardless of hashable's initial seed.
+detEncodeSingleLineJSON :: ToJSON a => a -> Text
+detEncodeSingleLineJSON =
     decodeUtf8
         . toStrict
         . encodingToLazyByteString
         . toEncoding
         . Json
         . toJSON
-
 
 newtype Json = Json Value
 instance ToJSON Json where

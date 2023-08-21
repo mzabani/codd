@@ -1,1 +1,38 @@
-{"accessmethod":"heap","amoptions":null,"compositetype":null,"forcerowsecurity":false,"kind":"r","owner":"codd_admin","partition":false,"persistence":"p","privileges":{"codd-user":[["daxr*tDw","codd_admin"]],"codd_admin":[["r","codd-user"],["daxrtDw","codd_admin"]],"public":[["r","codd-user"]]},"replident":"d","rowsecurity":false,"rowtype":"employee","shared":false}
+{
+    "accessmethod": "heap",
+    "amoptions": null,
+    "compositetype": null,
+    "forcerowsecurity": false,
+    "kind": "r",
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "codd-user": [
+            [
+                "daxr*tDw",
+                "codd_admin"
+            ]
+        ],
+        "codd_admin": [
+            [
+                "r",
+                "codd-user"
+            ],
+            [
+                "daxrtDw",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "r",
+                "codd-user"
+            ]
+        ]
+    },
+    "replident": "d",
+    "rowsecurity": false,
+    "rowtype": "employee",
+    "shared": false
+}

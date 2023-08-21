@@ -1,1 +1,14 @@
-{"bypassrls":false,"canlogin":true,"config":["search_path=public, collations_1"],"createdb":false,"createrole":true,"db_privileges":"[[\"cCT\", \"codd_admin\"]]","inherit":true,"membership":[],"replication":false,"superuser":false}
+{
+    "bypassrls": false,
+    "canlogin": true,
+    "config": [
+        "search_path=public, collations_1"
+    ],
+    "createdb": false,
+    "createrole": true,
+    "db_privileges": "[[\"cCT\", \"codd_admin\"]]",
+    "inherit": true,
+    "membership": [],
+    "replication": false,
+    "superuser": false
+}

@@ -1,1 +1,15 @@
-{"collation":null,"collation_nsp":null,"default":"nextval('public.employee_employee_id_seq'::regclass)","generated":"","hasdefault":true,"identity":"","inhcount":0,"local":true,"notnull":true,"order":1,"privileges":null,"type":"int4","typmod":-1}
+{
+    "collation": null,
+    "collation_nsp": null,
+    "default": "nextval('public.employee_employee_id_seq'::regclass)",
+    "generated": "",
+    "hasdefault": true,
+    "identity": "",
+    "inhcount": 0,
+    "local": true,
+    "notnull": true,
+    "order": 1,
+    "privileges": null,
+    "type": "int4",
+    "typmod": -1
+}
