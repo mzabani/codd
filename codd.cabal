@@ -275,6 +275,7 @@ test-suite codd-test
     , streaming
     , text
     , time
+    , typed-process
     , unliftio
     , unordered-containers
     , vector
