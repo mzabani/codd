@@ -1,3 +1,24 @@
+{-|
+
+This module contains parsers that are helpful to separate queries from each other by finding query boundaries: semi-colons, but not when inside a string or a parenthesised expression, for example.
+
+Parsing is made necessary because multi-query statements are automatically enveloped in a single transaction by the server. This happens because according to
+<https://www.postgresql.org/docs/12/libpq-exec.html>, /"Multiple queries sent in a single PQexec call are processed in a single transaction, unless there are explicit BEGIN\/COMMIT commands included in the query string to divide it into multiple transactions"/.
+
+This creates problem for statements that can't run inside a single transaction (changing enums, creating dbs etc.).
+Because that happens at libpq's level, we need to parse SQL (ouch..) and detect query boundaries so we send them one at a time.
+
+Parsing is far from trivial, but has a few advantages once implemented:  
+
+  * It makes reading migrations from disk in streaming fashion possible, meaning we can run arbitrarily large migrations with bounded memory.  
+
+  * It makes SQL errors when applying migrations much more granular.  
+
+  * It is necessary to support COPY, since that is not a statement we can just send to the server; it uses a different protocol.
+
+Ideally we would use the parser from upstream, at <https://github.com/postgres/postgres/blob/master/src/fe_utils/psqlscan.l>, but that will require
+some FFI since it contains C code. But long term we really should.
+-}
 module Codd.Parsing
     ( AddedSqlMigration(..)
     , AppliedMigration(..)
@@ -13,7 +34,6 @@ module Codd.Parsing
     , isCommentPiece
     , isTransactionEndingPiece
     , isWhiteSpacePiece
-    , mapSqlMigration
     , piecesToText
     , sqlPieceText
     , parsedSqlText
@@ -38,7 +58,7 @@ import           Control.Monad                  ( guard
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Identity         ( Identity(runIdentity) )
+import           Control.Monad.Identity         ( Identity(..) )
 import           Control.Monad.Trans            ( MonadTrans
                                                 , lift
                                                 )
@@ -47,9 +67,7 @@ import           Control.Monad.Trans.Except     ( runExceptT
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
-                                                , anyChar
                                                 , asciiCI
-                                                , atEnd
                                                 , char
                                                 , endOfInput
                                                 , endOfLine
@@ -174,13 +192,6 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) = AddedSqlMigration
     hoistSqlMig mig = mig { migrationSql = hoistParsedSql $ migrationSql mig }
     hoistParsedSql (UnparsedSql   t     ) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
-
-mapSqlMigration
-    :: (SqlMigration m -> SqlMigration m)
-    -> AddedSqlMigration m
-    -> AddedSqlMigration m
-mapSqlMigration f (AddedSqlMigration sqlMig tst) =
-    AddedSqlMigration (f sqlMig) tst
 
 data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)
@@ -417,28 +428,14 @@ spaceSeparatedTokensToParser allTokens = case allTokens of
         pure $ s1 <> spaces <> others
   where
     parseToken = \case
-        Optional          t -> spaceSeparatedTokensToParser t <|> pure ""
-        CITextToken       t -> asciiCI t
-        CustomParserToken p -> p
-        SqlIdentifier ->
-            let -- Identifiers can be in fully qualified form "database"."schema"."objectname",
-                -- with and without double quoting, e.g.: "schema".tablename
-                singleIdentifier =
-                    blockParserOfType (== DoubleQuotedIdentifier)
-                        <|> takeWhile1
-                                (\c ->
-                                    not (Char.isSpace c)
-                                        && c
-                                        /= ','
-                                        && c
-                                        /= '.'
-                                        && c
-                                        /= ')'
-                                ) -- TODO: What are the valid chars for identifiers?? Figure it out!!
-            in  listOfAtLeast1 [CustomParserToken singleIdentifier] "."
+        Optional          t       -> spaceSeparatedTokensToParser t <|> pure ""
+        CITextToken       t       -> asciiCI t
+        CustomParserToken p       -> p
+        SqlIdentifier             -> objIdentifier
         CommaSeparatedIdentifiers -> listOfAtLeast1 [SqlIdentifier] ","
         AllUntilEndOfStatement    -> do
-            t1 <- takeWhile (\c -> not (isPossibleStartingChar c) && c /= ';')
+            t1 <- takeWhile
+                (\c -> not (isPossibleBlockStartingChar c) && c /= ';')
             mc <- peekChar
             case mc of
                 Nothing  -> pure t1
@@ -446,25 +443,22 @@ spaceSeparatedTokensToParser allTokens = case allTokens of
                     void $ char ';'
                     pure $ t1 <> ";"
                 Just _ -> do
-                    t2 <-
-                        Text.concat
-                        .   map snd
-                        <$> many1 blockParser
-                        <|> Parsec.take 1
+                    t2 <- Text.concat <$> many1 blockParser <|> Parsec.take 1
                     -- After reading blocks or just a char, we still need to find a semi-colon to get a statement from start to finish!
                     t3 <- parseToken AllUntilEndOfStatement
                     pure $ t1 <> t2 <> t3
 
-    listOfAtLeast1 elementTokens separator = do
-        firstEl  <- spaceSeparatedTokensToParser elementTokens
-        -- We use pure "" only to allow for a space before the first separator..
-        otherEls <- Text.concat <$> many'
-            ( spaceSeparatedTokensToParser
-            $ CustomParserToken (pure "")
-            : CITextToken separator
-            : elementTokens
-            )
-        pure $ firstEl <> otherEls
+listOfAtLeast1 :: [SqlToken] -> Text -> Parser Text
+listOfAtLeast1 elementTokens separator = do
+    firstEl  <- spaceSeparatedTokensToParser elementTokens
+    -- We use pure "" only to allow for a space before the first separator..
+    otherEls <- Text.concat <$> many'
+        ( spaceSeparatedTokensToParser
+        $ CustomParserToken (pure "")
+        : CITextToken separator
+        : elementTokens
+        )
+    pure $ firstEl <> otherEls
 
 -- Urgh.. parsing statements precisely would benefit a lot from importing the lex parser
 copyFromStdinStatementParser :: Parser SqlPiece
@@ -535,91 +529,129 @@ commentOrSpaceParser atLeastOne = if atLeastOne
     else Text.concat <$> many' (commentParser <|> takeWhile1 Char.isSpace)
 
 commentParser :: Parser Text
-commentParser = do
-    (commentType, commentInit) <-
-        (DoubleDashComment, ) <$> string "--" <|> (CStyleComment, ) <$> string
-            "/*"
-    bRemaining <- blockInnerContentsParser commentType
-    pure $ commentInit <> bRemaining
-
-data BlockType = DoubleDashComment | CStyleComment | DollarQuotedBlock !Text | DoubleQuotedIdentifier | SingleQuotedString deriving stock (Show, Eq)
-
-isPossibleStartingChar :: Char -> Bool
-isPossibleStartingChar c =
-    c == '-' || c == '/' || c == '"' || c == '$' || c == '\''
-
-isPossibleEndingChar :: BlockType -> Char -> Bool
-isPossibleEndingChar DoubleDashComment      c = c == '\n'
-isPossibleEndingChar CStyleComment          c = c == '*'
-isPossibleEndingChar (DollarQuotedBlock _)  c = c == '$'
-isPossibleEndingChar DoubleQuotedIdentifier c = c == '"'
-isPossibleEndingChar SingleQuotedString     c = c == '\''
-
-blockBeginParser :: Parser (BlockType, Text)
-blockBeginParser =
-    (DoubleDashComment, )
-        <$> string "--"
-        <|> (CStyleComment, )
-        <$> string "/*"
-        <|> dollarBlockParser
-        <|> (DoubleQuotedIdentifier, )
-        <$> string "\""
-        <|> (SingleQuotedString, )
-        <$> string "'"
-  where
-    dollarBlockParser = do
-        void $ char '$'
-        b <- takeWhile (/= '$')
-        void $ char '$'
-        let tb = "$" <> b <> "$"
-        pure (DollarQuotedBlock tb, tb)
-
-blockEndingParser :: BlockType -> Parser Text
-blockEndingParser = \case
-    DoubleDashComment      -> eol <|> ("" <$ endOfInput)
-    CStyleComment          -> string "*/"
-    DollarQuotedBlock q    -> asciiCI q -- TODO: will asciiCI break for invalid ascii chars?
-    DoubleQuotedIdentifier -> string "\""
-    SingleQuotedString     -> string "'"
+commentParser = doubleDashComment <|> cStyleComment
 
 eol :: Parser Text
 eol = string "\n" <|> string "\r\n"
 
-blockParser :: Parser (BlockType, Text)
-blockParser = do
-    (bt, bBegin) <- blockBeginParser
-    bRemaining   <- blockInnerContentsParser bt
-    pure (bt, bBegin <> bRemaining)
+-- | Blocks are the name we give to some expressions that have a beginning and an end, inside of which
+-- semicolons are not to be considered statement boundaries. These include strings, comments,
+-- parenthesised expressions and dollar-quoted strings.
+-- For now, this assumes standard_conforming_strings is always on.
+blockParser :: Parser Text
+blockParser =
+    -- Unicode escaped strings aren't explicitly implemented, but work with the current parser.
+    -- Since single quotes can't be an escape character for them (see https://www.postgresql.org/docs/current/sql-syntax-lexical.html),
+    -- backslashes will be treated like a regular character - which works for us -, and if other characters are chosen as the escape character,
+    -- our parsers will treat those also as regular characters, which should be fine.
+    -- This seems fragile, but our tests will error out if changes make this unsupported.
+    parseStdConformingString
+        <|> parenthesisedExpression
+        <|> cStyleComment
+        <|> dollarStringParser
+        <|> doubleDashComment
+        <|> doubleQuotedIdentifier
+        <|> cStyleEscapedString
 
-blockParserOfType :: (BlockType -> Bool) -> Parser Text
-blockParserOfType p = do
-    (bt, c) <- blockParser
-    guard $ p bt
-    pure c
+-- | A character that may be the first of a block. This needs to match parsers in `blockParser`, and is only useful
+-- to optimize our parsers by avoiding backtracking through usage of `takeWhile` and similar.
+isPossibleBlockStartingChar :: Char -> Bool
+isPossibleBlockStartingChar c =
+    c
+        == '('
+        || c
+        == '-'
+        || c
+        == '/'
+        || c
+        == '"'
+        || c
+        == '$'
+        || c
+        == '\''
+        || c
+        == 'E'
 
-blockInnerContentsParser :: BlockType -> Parser Text
-blockInnerContentsParser bt = do
-    t <- case bt of
-        SingleQuotedString     -> parseWithEscapeCharPreserve (== '\'') -- '' escaping is not to be explicitly implemented, but this parser understands it as two consecutive strings, and that's good enough for now
-        DoubleQuotedIdentifier -> parseWithEscapeCharPreserve (== '"') -- "" escaping seems to be the same as above..
-        _                      -> takeWhile (not . isPossibleEndingChar bt)
-    done <- atEnd
-    if done
-        then pure t
-        else do
-            mEndingQuote <- optional (blockEndingParser bt)
-            case mEndingQuote of
-                Nothing -> do
-                  -- Could mean we found e.g. '*' inside a C-Style comment block, but not followed by '/'
-                    c      <- anyChar
-                    remain <- blockInnerContentsParser bt
-                    pure $ Text.snoc t c <> remain
-                Just endingQuote -> pure $ t <> endingQuote
+
+dollarStringParser :: Parser Text
+dollarStringParser = do
+    void $ char '$'
+    b <- takeWhile (/= '$')
+    void $ char '$'
+    let dollarSep = "$" <> b <> "$"
+    rest <- go dollarSep
+    pure $ dollarSep <> rest
+
+  where
+    go dollarSep = do
+        t      <- takeWhile (/= '$')
+        ending <- optional $ string dollarSep <|> "" <$ endOfInput
+        case ending of
+            Nothing -> do
+                void $ char '$'
+                rest <- go dollarSep
+                pure $ t <> "$" <> rest
+            Just e -> pure $ t <> e
+
+doubleDashComment :: Parser Text
+doubleDashComment = do
+    begin <- string "--"
+    rest  <- Parsec.takeWhile (\c -> c /= '\n' && c /= '\r')
+    end   <- eol <|> "" <$ endOfInput
+    pure $ begin <> rest <> end
+
+cStyleComment :: Parser Text
+cStyleComment = do
+    openComment <- string "/*"
+    rest        <- Parsec.scan
+        (1 :: Int, False, False)
+        (\(openCommentCount, hasPartialOpening, hasPartialClosing) c ->
+            nothingWhenDone $ case (hasPartialOpening, hasPartialClosing, c) of
+          -- Handle slashes in all possible contexts
+                (False, False, '/') -> Just (openCommentCount, True, False)
+                (False, True , '/') -> Just (openCommentCount - 1, False, False)
+                (True , False, '/') -> Just (openCommentCount, True, False)
+                -- Handle asterisks in all possible contexts
+                (False, False, '*') -> Just (openCommentCount, False, True)
+                (True , False, '*') -> Just (openCommentCount + 1, False, False)
+                (False, True , '*') -> Just (openCommentCount, False, True)
+                -- Handle other characters
+                (True, True, _) ->
+                    error
+                        "Report this as a bug in codd: C Style comment parser invalid state"
+                _ -> Just (openCommentCount, False, False)
+        )
+    end <- string "/" <|> "" <$ endOfInput -- We are generous with eof and allow even invalid SQL in many places
+    pure $ openComment <> rest <> end
+  where
+    nothingWhenDone (Just (0, _, _)) = Nothing
+    nothingWhenDone x                = x
+
+parenthesisedExpression :: Parser Text
+parenthesisedExpression = do
+    openParen <- string "(" <|> fail "No open paren"
+    rest      <- insideParenParser
+    pure $ openParen <> rest
+  where
+    insideParenParser :: Parser Text
+    insideParenParser = do
+        more <- takeWhile
+            (\c -> not (isPossibleBlockStartingChar c) && c /= ')')
+        nextChar <- peekChar
+        case nextChar of
+            Nothing  -> pure more -- Be gentle with EOF
+            Just ')' -> do
+                closeParen <- string ")"
+                pure $ more <> closeParen
+            Just _ -> do
+                blockOrOtherwise <- blockParser <|> Parsec.take 1
+                rest             <- insideParenParser -- We're still inside an openParen after parsing a block or a character
+                pure $ more <> blockOrOtherwise <> rest
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Does not consume the ending char and RETURNS any
 -- backslash escape chars in the result.
--- Use parseWithEscapeCharProper to exclude the escape chars from the result.
+-- Use `parseWithEscapeCharProper` to exclude the escape chars from the result.
 -- This function is useful if you want the original parsed contents.
 parseWithEscapeCharPreserve :: (Char -> Bool) -> Parser Text
 parseWithEscapeCharPreserve untilc = do
@@ -631,6 +663,68 @@ parseWithEscapeCharPreserve untilc = do
             rest <- parseWithEscapeCharPreserve untilc
             pure $ cs <> c <> rest
         _ -> pure cs
+
+-- | Identifiers can be in fully qualified form `"database"."schema"."objectname"`,
+-- with and without double quoting, e.g.: `"schema".tablename`, or just a simple `tablename`.
+objIdentifier :: Parser Text
+objIdentifier =
+    let singleIdentifier =
+            doubleQuotedIdentifier
+                <|> takeWhile1
+                        (\c ->
+                            not (Char.isSpace c)
+                                && c
+                                /= ','
+                                && c
+                                /= '.'
+                                && c
+                                /= ')'
+                        ) -- TODO: What are the valid chars for identifiers?? Figure it out!!
+    in  listOfAtLeast1 [CustomParserToken singleIdentifier] "."
+
+doubleQuotedIdentifier :: Parser Text
+doubleQuotedIdentifier = do
+    openingQuote <- string "\""
+    rest         <- parseWithEscapeCharPreserve (== '"')
+    ending       <- string "\""
+    pure $ openingQuote <> rest <> ending
+
+-- | Parses a single quoted NON standard conforming string, i.e. strings that use backslash as an escape character, and are marked
+-- by beginning with an `E`. Consecutive simple quotes are also treated as a single quote, just like in std conforming strings.
+-- See https://www.postgresql.org/docs/current/sql-syntax-lexical.html
+cStyleEscapedString :: Parser Text
+cStyleEscapedString = do
+    openingChars <- string "E'"
+    rest         <- Parsec.scan
+        (False, False)
+        (\(lastCharWasBackslash, lastCharWasSingleQuote) c ->
+            case ((lastCharWasBackslash, lastCharWasSingleQuote), c) of
+                ((False, False), '\'') -> Just (False, True)
+                ((False, True ), '\'') -> Just (False, False) -- Two consecutive single quotes are not end of string
+                ((False, True ), _   ) -> Nothing -- A single quote not preceded by \ and followed by not-a-single-quote is end of string
+                ((False, False), '\\') -> Just (True, False)
+                ((False, False), _   ) -> Just (False, False) -- "regular" character
+                ((True , False), _   ) -> Just (False, False) -- Any character after a backslash must be included in the string
+                ((True, True), _) ->
+                    error
+                        "Please submit this as a bug report to codd, saying both backslash and single quote were last char in cStyleEscapedString"
+        )
+    pure $ openingChars <> rest
+
+-- | Parses a single quoted standard conforming string, i.e. strings that use '' as a representation of a single quote, and
+-- takes any other character literally.
+parseStdConformingString :: Parser Text
+parseStdConformingString = do
+    openingQuote <- string "'"
+    rest         <- Parsec.scan
+        False
+        (\lastCharWasQuote c -> case (lastCharWasQuote, c) of
+            (False, '\'') -> Just True
+            (True , '\'') -> Just False -- Two consecutive single quotes represent a single quote, not end of string
+            (True , _   ) -> Nothing -- One single quote followed by any other character means that single quote was end of string 
+            (False, _   ) -> Just False
+        )
+    pure $ openingQuote <> rest
 
 -- | Parses a value using backslash as an escape char for any char that matches
 -- the supplied predicate. Stops at and does not consume the first predicate-passing
@@ -723,7 +817,6 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
         (singleKeyVal `Parsec.sepBy` takeWhile1 (== ' '))
         (Text.strip line)
         "Invalid connection string"
-    -- TODO: Error if there are other keys that we're not using present.
     ConnectInfo
         <$> getVal "host"     Nothing     txtToString    kvs
         <*> getVal "port"     (Just 5432) Parsec.decimal kvs

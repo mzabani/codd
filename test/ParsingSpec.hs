@@ -25,6 +25,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Control.Monad                  ( (>=>)
                                                 , forM
                                                 , forM_
+                                                , unless
                                                 , when
                                                 )
 import           Control.Monad.Identity         ( Identity(runIdentity) )
@@ -37,6 +38,7 @@ import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
 import           Data.Attoparsec.Text           ( parseOnly )
 import qualified Data.Char                     as Char
 import           Data.Either                    ( isLeft )
+import           Data.Foldable                  ( find )
 import qualified Data.List                     as List
 import           Data.List.NonEmpty             ( NonEmpty(..) )
 import qualified Data.List.NonEmpty            as NE
@@ -53,6 +55,7 @@ import qualified Database.PostgreSQL.Simple    as SQL
 import           DbUtils                        ( mkValidSql
                                                 , parseSqlMigrationIO
                                                 )
+import           Debug.Trace
 import           EnvironmentSpec                ( ConnStringGen(..) )
 import           GHC.Natural                    ( Natural )
 import           Streaming                      ( Of
@@ -97,7 +100,12 @@ validSqlStatements :: [[SqlPiece]]
 validSqlStatements =
     map
             (: [])
-            [ OtherSqlPiece "SELECT 'so\\'m -- not a comment' FROM ahahaha;"
+            [ OtherSqlPiece "SELECT 'so''m -- not a comment' FROM ahahaha;"
+            , OtherSqlPiece
+                "SELECT E'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
+            , OtherSqlPiece
+                "SELECT E'Consecutive single quotes are also escaped here ''; see?';"
+            , OtherSqlPiece "SELECT E'''20s' = E'\\'20s';"
             , OtherSqlPiece
             $  "DO"
             <> "\n$do$"
@@ -126,8 +134,12 @@ validSqlStatements =
             <> "\n    -- some computations using v_string and index here"
             <> "\nEND;"
             <> "\n$$ LANGUAGE plpgsql;"
-            , OtherSqlPiece
-                "select U&'d\\0061t\\+000061', U&'\\0441\\043B\\043E\\043D', U&'d!0061t!+000061' UESCAPE '!', X'1FF', B'1001';"
+            , OtherSqlPiece "select U&'d\\0061t\\+000061';"
+            , OtherSqlPiece "select U&'\\0441\\043B\\043E\\043D';"
+            , OtherSqlPiece "select U&'d!0061t!+000061' UESCAPE '!';"
+            , OtherSqlPiece "select U&'d\\0061t\\+000061' UESCAPE '\\';"
+            , OtherSqlPiece "select X'1FF';"
+            , OtherSqlPiece "select B'1001';"
             , OtherSqlPiece "SELECT 'some''quoted ''string';"
             , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
             , OtherSqlPiece
@@ -137,11 +149,24 @@ validSqlStatements =
             , OtherSqlPiece
             $  "$function$"
             <> "\nBEGIN"
-            <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$);"
+            <> "\n    RETURN ($1 ~ $q$[\t\r\n\v\\]$q$); /* Some would-be non terminated comment, but it's fine inside dollar quotes"
             <> "\nEND;"
             <> "\n$function$;"
             , OtherSqlPiece "SELECT COALESCE(4, 1 - 2) - 3 + 4 - 5;"
             , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
+            -- Semi-colons inside parenthesised blocks are not statement boundaries
+            , OtherSqlPiece
+                "create rule name as on some_event to some_table do (command1; command2; command3;);"
+            -- String blocks can be opened inside parentheses, just like comments, dollar-quoted strings and others
+            , OtherSqlPiece
+                "create rule name as on some_event to some_table do ('abcdef);'; other;);"
+            , OtherSqlPiece
+                "some statement with spaces (((U&'d\\0061t\\+000061', 'abc''def' ; ; ; /* comment /* nested */ ((( */ $hey$dollar string$hey$)) 'more''of'; this; ());"
+            , OtherSqlPiece
+                "select 'unclosed parentheses inside string (((((', (('string (('));"
+            -- We still want the following to be parsed; it's best to run invalid statements than have
+            -- a parser so strict that it might refuse valid ones.
+            , OtherSqlPiece "invalid statement, bad parentheses ()));"
             , BeginTransaction "begin;"
             , BeginTransaction "BEGiN/*a*/;"
             , BeginTransaction "BEgIN   ;"
@@ -151,10 +176,9 @@ validSqlStatements =
             , CommitTransaction "COmmIT;"
             , CommitTransaction "COMMIT/*a*/;"
             , CommitTransaction "cOMMIT   ;"
-    -- TODO: Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
-    -- , "/* multiline comment"
-    --   <> "\n  * with nesting: /* nested block comment */"
-    --   <> "\n  */ SELECT 1;"
+        -- Nested C-Style comments (https://www.postgresql.org/docs/9.2/sql-syntax-lexical.html)
+            , CommentPiece "/* multiline comment\n comment */"
+            , CommentPiece "/* nested block /* comment */ still a comment */"
             ]
         ++ [ [ CopyFromStdinStatement
                  "COPY employee FROM STDIN WITH (FORMAT CSV);\n"
@@ -768,18 +792,30 @@ spec = do
                                 <> "UPDATE employee SET employee_name=name WHERE name IS DISTINCT FROM employee_name;\n"
                             ]
                     forM_ emptyQueries $ \q -> do
-                        let
-                            parsed =
-                                parseSqlPiecesStreaming
-                                    $ unPureStream
-                                    $ mkRandStream randomSeed q
-                        Streaming.all_
-                                (\p -> isWhiteSpacePiece p || isCommentPiece p)
-                                parsed
-                            `shouldReturn` True
+                        parsed <-
+                            Streaming.toList_
+                            $ parseSqlPiecesStreaming
+                            $ unPureStream
+                            $ mkRandStream randomSeed q
+                        forM_ parsed $ \p ->
+                            unless (isWhiteSpacePiece p || isCommentPiece p)
+                                $ expectationFailure
+                                $ show p
                     forM_
-                            (  nonEmptyQueries
-                            ++ map piecesToText validSqlStatements
+                            (nonEmptyQueries
+                            -- We want to test with more SQL fragments, but some of the ones in `validSqlStatements` are purely comments or
+                            -- white space, and we don't want those for this test
+                                             ++ map
+                                piecesToText
+                                (filter
+                                    ( not
+                                    . all
+                                          (\p -> isWhiteSpacePiece p
+                                              || isCommentPiece p
+                                          )
+                                    )
+                                    validSqlStatements
+                                )
                             )
                         $ \q -> do
                               let parsed =
