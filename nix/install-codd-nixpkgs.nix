@@ -29,8 +29,8 @@ let
     (nixpkgs.haskellPackages.callCabal2nixWithOptions "codd" ../. "" { });
 in rec {
   inherit nixpkgs;
-  ## A derivation with tests so we're more comfortable that this release of codd
-  ## isn't completely broken just because it uses different libraries.
+  # A derivation with tests so we're more comfortable that this release of codd
+  # isn't completely broken just because it uses different library versions.
   coddWithCheck = coddFull.overrideAttrs (self: {
     checkPhase = ''
       export PGDATA="./cabal2nix-codd-datadir"
@@ -38,6 +38,7 @@ in rec {
       export PGPORT="5434"
       export PGHOST="127.0.0.1"
       export PGUSER="postgres"
+      export PATH="$PATH:${nixpkgs.postgresql}/bin" # Some tests require pg_dump in PATH
       ${pgService}/bin/init-postgres
     '' + self.checkPhase;
   });

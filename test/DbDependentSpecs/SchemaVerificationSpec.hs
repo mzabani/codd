@@ -65,6 +65,7 @@ import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text
                                                 , unpack
                                                 )
+import qualified Data.Text                     as Text
 import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( UTCTime(..) )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -72,12 +73,22 @@ import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           DbUtils                        ( aroundFreshDatabase
+                                                , finallyDrop
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 , parseSqlMigrationIO
+                                                , testConnInfo
                                                 , testConnTimeout
                                                 )
 import qualified Streaming.Prelude             as Streaming
+import           System.Process.Typed           ( ExitCode(..)
+                                                , byteStringInput
+                                                , readProcess
+                                                , readProcessStdout
+                                                , runProcess
+                                                , setStdin
+                                                , shell
+                                                )
 import           Test.Hspec
 import           Test.Hspec.QuickCheck          ( modifyMaxSuccess )
 import           Test.QuickCheck                ( Arbitrary
@@ -102,6 +113,9 @@ simplifyDiff = \case
 -- | Contains either text or a migration first and the SQL to undo it next.
 data MU a = MU a (Maybe Text)
 
+unMU :: MU a -> a
+unMU (MU a _) = a
+
 addMig :: Text -> Text -> DbChange -> State [(MU Text, DbChange)] (Text, Text)
 addMig doSql undoSql expectedChanges = do
     existingMigs <- get
@@ -124,6 +138,35 @@ hoistMU
     -> (MU (AddedSqlMigration n), DbChange)
 hoistMU f (MU sqlMig tst, change) =
     (MU (hoistAddedSqlMigration f sqlMig) tst, change)
+
+migrationsForPgDumpRestoreTest
+    :: forall m . (MonadThrow m, EnvVars m) => m [AddedSqlMigration m]
+migrationsForPgDumpRestoreTest = mapM
+    parseMig
+    [ "CREATE FUNCTION test_function_with_whitespace() RETURNS INT AS $$\n\
+\    BEGIN\n\
+\        SELECT 1;\n\
+\\n\
+\\n\
+\        -- White space\n\
+\\n\
+\\n\
+\        \n\
+\              -- More white space\n\
+\        \n\
+\    END\n\
+\$$ LANGUAGE plpgsql;"
+    ]
+  where
+    parseMig sql = do
+        mig <-
+            either (error "Could not parse SQL migration") id
+                <$> parseSqlMigration @m @(PureStream m)
+                        "1900-01-01-00-00-00-migration.sql"
+                        (PureStream $ Streaming.yield sql)
+        pure $ AddedSqlMigration
+            (mig { migrationName = "0-dump-migration.sql" })
+            (getIncreasingTimestamp 99999)
 
 migrationsAndRepChange
     :: forall m
@@ -1433,14 +1476,60 @@ spec = do
             pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
             pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
+        aroundFreshDatabase
+            $ it
+                  "Restoring a pg_dump yields the same schema as applying original migrations"
+            $ \emptyDbInfo -> do
+                  let connInfo = migsConnString emptyDbInfo
+                  pgVersion <- withConnection connInfo
+                                              testConnTimeout
+                                              queryServerMajorVersion
+
+                  -- We also use migrations of the "Accurate and reversible representation changes" test
+                  -- because that's the most complete set of database objects we have in our test codebase.
+                  -- But we append other migrations we know to be problematic to that set.
+                  bunchOfOtherMigs <- map (unMU . fst . hoistMU lift)
+                      <$> migrationsAndRepChange pgVersion
+                  problematicMigs <-
+                      map (hoistAddedSqlMigration lift)
+                          <$> migrationsForPgDumpRestoreTest
+                  let allMigs = bunchOfOtherMigs ++ problematicMigs
+                  expectedSchema <- runStdoutLoggingT $ applyMigrationsNoCheck
+                      emptyDbInfo
+                      (Just allMigs)
+                      testConnTimeout
+                      (readRepresentationsFromDbWithSettings emptyDbInfo)
+
+                  -- Take the pg_dump and drop the database
+                  pg_dump_output <-
+                      finallyDrop (Text.pack $ connectDatabase connInfo) $ do
+                          (pg_dump_exitCode, pg_dump_output) <-
+                              readProcessStdout
+                              $  shell
+                              $  "pg_dump --create -N codd_schema -d \""
+                              ++ connectDatabase connInfo
+                              ++ "\""
+                          pg_dump_exitCode `shouldBe` ExitSuccess
+                          pure pg_dump_output
+
+                  -- Apply the dump with psql and check schemas match
+                  psqlExitCode <-
+                      runProcess
+                      $ setStdin (byteStringInput pg_dump_output)
+                      $ shell "psql -d postgres"
+                  psqlExitCode `shouldBe` ExitSuccess
+                  schemaAfterRestore <-
+                      runStdoutLoggingT
+                      $ withConnection connInfo testConnTimeout
+                      $ readRepsFromDbWithNewTxn emptyDbInfo
+                  schemaAfterRestore `shouldBe` expectedSchema
+
         describe "Schema verification tests" $ do
             modifyMaxSuccess (const 3) -- This is a bit heavy on CI but this test is too important
                 $ aroundFreshDatabase
                 $ it "Accurate and reversible representation changes"
                 $ \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
-                      let -- emptyDbInfo = emptyDbInfo2 { hashedSchemas = False }
-                          -- Use the above definition of emptyDbInfo if it helps debugging
-                          emptyDbInfo = emptyDbInfo2
+                      let emptyDbInfo = emptyDbInfo2
                               { namespacesToCheck = IncludeSchemas
                                   ["public", "codd-extra-mapped-schema"]
                               }
