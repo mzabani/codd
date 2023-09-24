@@ -997,6 +997,11 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
             "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation;"
         $ ChangeEq [("db-settings", DBothButDifferent)]
 
+    -- Session settings don't change the schema
+    addMig_ "SET default_transaction_isolation TO 'serializable';"
+            "RESET default_transaction_isolation;"
+        $ ChangeEq []
+
     -- COLLATIONS
     (createCutf8Coll, dropColl) <-
         addMig "CREATE COLLATION new_collation (locale = 'C.utf8');"
