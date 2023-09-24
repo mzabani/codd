@@ -824,6 +824,11 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
 
     addMig_
+            "ALTER ROLE \"codd-test-user\" SET default_transaction_isolation='repeatable read'"
+            "ALTER ROLE \"codd-test-user\" RESET default_transaction_isolation"
+        $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
+
+    addMig_
             "ALTER ROLE \"codd-test-user\" WITH BYPASSRLS; ALTER ROLE \"codd-test-user\" WITH REPLICATION;"
             "ALTER ROLE \"codd-test-user\" WITH NOBYPASSRLS; ALTER ROLE \"codd-test-user\" WITH NOREPLICATION; "
         $ ChangeEq [("roles/codd-test-user", DBothButDifferent)]
@@ -988,9 +993,14 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
 
     addMig_
-            "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'; SET default_transaction_isolation TO 'serializable';"
-            "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation; RESET default_transaction_isolation;"
+            "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable';"
+            "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation;"
         $ ChangeEq [("db-settings", DBothButDifferent)]
+
+    -- Session settings don't change the schema
+    addMig_ "SET default_transaction_isolation TO 'serializable';"
+            "RESET default_transaction_isolation;"
+        $ ChangeEq []
 
     -- COLLATIONS
     (createCutf8Coll, dropColl) <-
