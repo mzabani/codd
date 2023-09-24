@@ -187,8 +187,7 @@ We recommend following these instructions closely to catch as many possible issu
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- After running `codd up --strict-check` on CI, make sure `codd verify-schema` doesn't error. It might seem redundant because `codd up --strict-check` verifies schemas, but [there are edge cases](docs/DATABASE-EQUALITY.md#delayed-effect-in-pg_catalog).
-- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md#delayed-effect-in-pg_catalog). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
+- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions
 
