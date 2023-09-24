@@ -19,6 +19,7 @@ import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
                                                 , SqlRole
                                                 )
+import qualified Data.List                     as List
 import           Data.Maybe                     ( isJust )
 import qualified Database.PostgreSQL.Simple    as DB
 
@@ -109,6 +110,18 @@ sortArrayExpr :: QueryFrag -> QueryFrag
 sortArrayExpr col =
     "(select array_agg(x.* order by x.*) from unnest(" <> col <> ") x)"
 
+filterSettingsArrayExpr :: QueryFrag -> [QueryFrag] -> QueryFrag
+filterSettingsArrayExpr originalArray settingsToInclude =
+    "(select array_agg(x.*) from unnest("
+        <> originalArray
+        <> ") x(s) where "
+        <> orConditions
+        <> ")"
+  where
+    orConditions = mconcat $ List.intersperse " OR " $ map
+        (\settingName -> "x.s LIKE '" <> settingName <> "=%'")
+        settingsToInclude
+
 -- | Given the alias for a in-context "pg_proc" table, returns an expression
 --   of type text with the function's unambiguous name - one that includes
 --   the names of its input arguments' types.
@@ -197,52 +210,37 @@ objRepQueryFor
     -> ObjectRep
     -> DbObjRepresentationQuery
 objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
-    HDatabaseSettings ->
-        let nonAggCols =
-                [ "pg_encoding_to_char(encoding)"
-                , "datcollate"
-                , "datctype"
-                , "rolname"
-                ]
-        in
-            DbObjRepresentationQuery
-                { objNameCol    = "datname"
-                , repCols       =
-                    [ ("encoding", "LOWER(pg_encoding_to_char(encoding))")
-                    , ("collate" , "LOWER(datcollate)")
-                    , ("ctype"   , "LOWER(datctype)")
-                    , ("owner"   , "rolname")
-                                  -- We check privileges of roles in each role, but we check privileges of public
-                                  -- in db-settings
-                    , ( "public_privileges"
-                      , "_codd_privs.permissions ->> 'public'"
-                      )
-                    , ( "settings"
-                      , sortArrayExpr
-                      $ "ARRAY_AGG(JSONB_BUILD_OBJECT('name', name, 'value', setting, 'min_val', min_val, 'max_val', max_val, 'enum_vals', TO_JSONB("
-                      <> sortArrayExpr "enumvals"
-                      <> "))"
-                                         -- TODO: Should we include pg_settings.reset_val? It is only reflected by `ALTER DATABASE SET ..` in newly opened connections
-                      <> " ORDER BY pg_settings.name)"
-                      )
-                    ]
-                , fromTable     = "pg_catalog.pg_database"
-                , joins = "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
-                          <> "\n LEFT JOIN pg_catalog.pg_settings ON TRUE" -- pg_settings assumes values from the current database
-                          <> "\n LEFT JOIN LATERAL "
-                          <> aclArrayTbl IncludeGrantor
-                                         []
-                                         "'d'"
-                                         "datdba"
-                                         "datacl"
-                          <> " _codd_privs ON TRUE "
-                , nonIdentWhere =
-                    Just
-                        "datname = current_database() AND (pg_settings.name IS NULL OR pg_settings.name IN ('default_transaction_isolation', 'default_transaction_deferrable', 'default_transaction_read_only'))" -- TODO: What other settings matter for correctness?
-                , identWhere    = Nothing
-                , groupByCols   = ["datname", "_codd_privs.permissions"]
-                                      ++ nonAggCols
-                }
+    HDatabaseSettings -> DbObjRepresentationQuery
+        { objNameCol    = "datname"
+        , repCols       =
+            [ ("encoding"         , "LOWER(pg_encoding_to_char(encoding))")
+            , ("collate"          , "LOWER(datcollate)")
+            , ("ctype"            , "LOWER(datctype)")
+            , ("owner"            , "rolname")
+                                -- We check privileges of roles in each role, but we check privileges of public
+                                -- in db-settings
+            , ("public_privileges", "_codd_privs.permissions ->> 'public'")
+            , ( "settings"
+              , sortArrayExpr $ filterSettingsArrayExpr
+                  "pg_db_role_setting.setconfig"
+                  [ "default_transaction_isolation"
+                  , "default_transaction_deferrable"
+                  , "default_transaction_read_only"
+                  , "search_path"
+                  ] -- TODO: What other settings matter for correctness?
+              )
+            ]
+        , fromTable     = "pg_catalog.pg_database"
+        , joins         =
+            "JOIN pg_catalog.pg_roles ON datdba = pg_roles.oid "
+            <> "\n LEFT JOIN pg_catalog.pg_db_role_setting ON setdatabase=pg_database.oid AND setrole=0"
+            <> "\n LEFT JOIN LATERAL "
+            <> aclArrayTbl IncludeGrantor [] "'d'" "datdba" "datacl"
+            <> " _codd_privs ON TRUE "
+        , nonIdentWhere = Just "datname = current_database()"
+        , identWhere    = Nothing
+        , groupByCols   = []
+        }
     HSchema -> DbObjRepresentationQuery
         { objNameCol    = "nspname"
         , repCols       = [ ("owner"     , "nsp_owner.rolname")

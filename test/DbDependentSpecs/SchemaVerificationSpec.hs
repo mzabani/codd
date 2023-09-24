@@ -988,8 +988,8 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         "GRANT CONNECT ON DATABASE \"codd-test-db\" TO \"codd-test-user\""
 
     addMig_
-            "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable'; SET default_transaction_isolation TO 'serializable';"
-            "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation; RESET default_transaction_isolation;"
+            "ALTER DATABASE \"codd-test-db\" SET default_transaction_isolation TO 'serializable';"
+            "ALTER DATABASE \"codd-test-db\" RESET default_transaction_isolation;"
         $ ChangeEq [("db-settings", DBothButDifferent)]
 
     -- COLLATIONS
