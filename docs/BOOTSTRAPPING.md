@@ -1,8 +1,8 @@
 <!-- This file is referenced from error messages codd produces, so don't move it or rename it. -->
 # Bootstrapping
 
-_Codd_ can apply migrations but it needs an existing database to apply them on.
-Custom scripts can help with that initial phase, but _codd_ has its own solution to that, helping save
+Codd can apply migrations but it needs an existing database to apply them on.
+Custom scripts can help with that initial phase, but codd has its own solution to that, helping save
 a few keystrokes and making the entire process more streamlined; it's called bootstrapping.
 
 ## How does it work?
@@ -10,7 +10,7 @@ a few keystrokes and making the entire process more streamlined; it's called boo
 Creating a database usually involves first connecting to an existing database and issuing a `CREATE DATABASE my_database` statement, followed by many other statements that only privileged users can run.
 After that migrations can usually be applied by either the same privileged user or some other role on the target database, but the very first statements must at least run on a non-target database such as `postgres`, or others that already existed.
 
-With that in mind, with _codd_ you just have to add a migration like almost any other, except you want it to have a custom connection string, e.g.:
+With that in mind, with codd you just have to add a migration like almost any other, except you want it to have a custom connection string, e.g.:
 
 
 ````sql
