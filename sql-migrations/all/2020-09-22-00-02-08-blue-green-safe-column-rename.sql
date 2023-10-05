@@ -1,5 +1,9 @@
 -- codd: no-txn
 
+-- DISCLAIMER: this migration is for the purposes of testing and developing codd, and it may refer to features
+-- that no longer exist or practices that are no longer recommended. Do not assume things you find in this file
+-- are representative of codd's current state or that it represents good practices.
+
 -- README:
 -- This is an example of a Migration that renames a column in a Blue-Green-Safe way. Both Old and New Apps
 -- need not be concerned of the new/old column names here. We recommend caution and testing when using this.

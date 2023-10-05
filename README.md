@@ -1,6 +1,18 @@
 # What is Codd?
 
-_Codd_ is a tool to help teams of developers version-control their PostgreSQL databases locally and for deployment. It provides a few main features:
+Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes automatic schema equality checks that
+go from table columns' names and types, to table privileges up to row security policies, database encoding [and more](/docs/DATABASE-EQUALITY.md). No JSON, XML or YAML, just SQL.
+No writing code to ensure schemas in different environments are the same, that's done automatically.
+
+It's also meant to be really simple to use: codd reads SQL files from folders you choose and applies migrations in order. Any special features
+for these migrations are typically special top-level comments in those SQL files, but you won't need them most of the time. Setting your environment up to use codd from scratch [takes 15 minutes](#get-codd-up-and-running-in-15-minutes).
+
+In day to day usage, you will typically run `codd add new-migration.sql` and/or `codd up`, and very likely no other commands.
+
+Compared to other DB tools, codd aims for simplicity and strong automatic schema equality checks, meaning it doesn't have all the features other
+tools do. It also only supports PostgreSQL.
+
+Here you can see its main features in more detail:
 
 <table>
 <tr>
@@ -105,16 +117,16 @@ If you are on x86_64-linux, the easiest thing is to download our self-contained 
 This method will install an executable named `codd` and make it available in your PATH just like installing from a package manager would. It is a bit more cumbersome to install than with docker but easier to use once installed.
 
 1. Install Nix if you don't have it yet by using your package manager or following instructions from https://nixos.org/download.html.
-2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install _codd_. If things are compiling and taking too long, you may want to check if you're a privileged Nix user (otherwise it means our Nix cache is not being used). After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd`.
+2. Run `sh <(curl -L https://raw.githubusercontent.com/mzabani/codd/master/nix/install-codd.sh)` to install codd. If things are compiling and taking too long, you may want to check if you're a privileged Nix user (otherwise it means our Nix cache is not being used). After installed, just run `codd --help` to invoke it for the first time. To uninstall it, run `nix-env --uninstall codd`.
 
 ### 3. Docker
 
-You can find up-to-date images of _codd_ in DockerHub. To run _codd_ through docker just run `docker run --rm mzabani/codd --help`.
-Invoking _codd_ this way will often require mounting volumes, specifying UIDs and thus is more bureaucratic than other installation methods.
+You can find up-to-date images of codd in DockerHub. To run codd through docker just run `docker run --rm mzabani/codd --help`.
+Invoking codd this way will often require mounting volumes, specifying UIDs and thus is more bureaucratic than other installation methods.
 
 ## Get codd up and running in 15 minutes
 
-Here's a super quick way to get a taste of _codd_ if you have postgres running. Let's first define three required environment variables:
+Here's a super quick way to get a taste of codd if you have postgres running. Let's first define three required environment variables:
 
 ````shell
 $ # codd understands URI or keyword value pairs, e.g. dbname=codd_experiments user=postgres host=localhost
@@ -125,7 +137,7 @@ $ export CODD_EXPECTED_SCHEMA_DIR=expected-schema
 
 Make sure you create the `sql-migrations` folder. If you're using docker, it helps to have these environment variables in a _.env_ file.
 
-But the database `codd_experiments` doesn't exist yet, so this connection string will not work. That is not a problem, and we can make _codd_ [create this database](docs/BOOTSTRAPPING.md) for us with a migration that overrides the connection string just for itself.
+But the database `codd_experiments` doesn't exist yet, so this connection string will not work. That is not a problem, and we can make codd [create this database](docs/BOOTSTRAPPING.md) for us with a migration that overrides the connection string just for itself.
 
 Create this file and save it as `bootstrap-db.sql`:
 
@@ -136,12 +148,12 @@ Create this file and save it as `bootstrap-db.sql`:
 CREATE DATABASE codd_experiments;
 ````
 
-That's a lot to take in. _Codd_ handles pure SQL migrations but also has some special header comments defined that can make it do special things.
+That's a lot to take in. codd handles pure SQL migrations but also has some special header comments defined that can make it do special things.
 
 - The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases (plus a few other statements) inside transactions, after all.
 - The `-- codd-connection` header comment specifies that this specific migration will run with its own connection string, not with the default one.
 
-You can find more about the special migration directives that _codd_ understands [here](docs/SQL-MIGRATIONS.md#configurability).
+You can find more about the special migration directives that codd understands [here](docs/SQL-MIGRATIONS.md#configurability).
 
 Now add this migration by running one of the two commands below:
 
@@ -155,7 +167,7 @@ $ docker run --rm -it --env-file .env --network=host --user `id -u`:`id -g` -v "
 
 The file should now have been timestamped and moved to the `sql-migrations` folder. The migration ran and so the `codd_experiments` database was created, and schema representation files were written to the `expected-schema` folder.
 
-Optionally, explore the `expected-schema` folder. You won't find much yet, but all the files in there reflect existing database objects. That's how _codd_ knows if schemas in different environments match and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
+Optionally, explore the `expected-schema` folder. You won't find much yet, but all the files in there reflect existing database objects. That's how codd knows if schemas in different environments match and also how multiple developers can add migrations and get warned by merge conflicts if any two people modify the same database object.
 
 Just for completeness, let's now create a table. Write the following to a `create-employees-table.sql`:
 
@@ -177,8 +189,8 @@ Before we finish this tutorial, some things you might want to do:
 
 ## Start using codd with an existing database
 
-If you already have a database and want to start using _codd_ without losing it, read [START-USING.md](docs/START-USING.md).
-If you're running _codd_ in multiple environments where connection strings can differ between them, [environment variable templating](docs/SQL-MIGRATIONS.md#templating-environment-variables-into-migrations) might be of assistance.
+If you already have a database and want to start using codd without losing it, read [START-USING.md](docs/START-USING.md).
+If you're running codd in multiple environments where connection strings can differ between them, [environment variable templating](docs/SQL-MIGRATIONS.md#templating-environment-variables-into-migrations) might be of assistance.
 
 ## Safety considerations
 
@@ -187,9 +199,9 @@ We recommend following these instructions closely to catch as many possible issu
 - Never merge code that has been tested without `master` merged into it.
   - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
 - Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- Read about what _codd_ **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md). This will also give you another idea about how far _codd_ is willing to go to ensure your schema is the same across environments.  
+- Read about what codd **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md). This will also give you another idea about how far codd is willing to go to ensure your schema is the same across environments.  
 
 ## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my expected codd schema?
-   `pg_dump` does not dump all of the schema state that _codd_ checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more when possible instead. If you've checked with `psql` and everything looks to be the same please report a bug in _codd_.
+   `pg_dump` does not dump all of the schema state that codd checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more when possible instead. If you've checked with `psql` and everything looks to be the same please report a bug in codd.
