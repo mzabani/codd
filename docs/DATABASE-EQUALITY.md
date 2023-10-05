@@ -1,6 +1,6 @@
 # Database schema equality implementation
 
-The goal of verifying schemas is to have the same query yield exactly the same results in two databases whose schemas match and data is the same (except for non-determinism such as no guarantee of order unless `ORDER BY` is specified and other similar things).
+The goal of verifying schema equality is to have the same query yield exactly the same results in two databases whose schemas match and data is the same (except for non-determinism such as no guarantee of order unless `ORDER BY` is specified and other similar things).
 
 This is not currently the case, may not be entirely possible and some decisions made already involve tradeoffs. The rationale behind some decisions isn't always obvious either, so this section discusses some of those.
 

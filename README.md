@@ -1,14 +1,15 @@
 # What is Codd?
 
-Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes automatic schema consistency checks that
-go from table columns and their types to row security policies and more. No JSON, XML or YAML, just SQL. No writing consistency checks, that's done automatically.
+Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes automatic schema equality checks that
+go from table columns' names and types, to table privileges up to row security policies, database encoding [and more](/docs/DATABASE-EQUALITY.md). No JSON, XML or YAML, just SQL.
+No writing code to ensure schemas in different environments are the same, that's done automatically.
 
 It's also meant to be really simple to use: codd reads SQL files from folders you choose and applies migrations in order. Any special features
-for these migrations are typically special top-level comments in those SQL files, but you won't need them most of the time. Setting your environment up to use codd from scratch takes 15 minutes.
+for these migrations are typically special top-level comments in those SQL files, but you won't need them most of the time. Setting your environment up to use codd from scratch [takes 15 minutes](#get-codd-up-and-running-in-15-minutes).
 
-In day to day usage, you will typically run either `codd add new-migration.sql` and/or `codd up`, and likely nothing else.
+In day to day usage, you will typically run `codd add new-migration.sql` and/or `codd up`, and very likely no other commands.
 
-This is not to say codd is perfect. Compared to other DB tools, it aims for simplicity and strong automatic consistency checks, meaning it doesn't have all the features other
+Compared to other DB tools, codd aims for simplicity and strong automatic schema equality checks, meaning it doesn't have all the features other
 tools do. It also only supports PostgreSQL.
 
 Here you can see its main features in more detail:
