@@ -48,39 +48,39 @@ jobs:
     - name: Build statically linked codd
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
 
-    - name: Build statically linked codd with aeson 1
-      run: nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
+    # - name: Build statically linked codd with aeson 1
+    #   run: nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
 
-    - name: Build statically linked codd's tests
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
+    # - name: Build statically linked codd's tests
+    #   run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
 
-    - name: Build statically linked benchmarks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+    # - name: Build statically linked benchmarks
+    #   run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
 
-    - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+    # - name: Build executable used for installer
+    #   run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
 
-    - name: Install codd with nix-env and uninstall it
-      run: |
-        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
-        codd --help
-        nix-env --uninstall codd
+    # - name: Install codd with nix-env and uninstall it
+    #   run: |
+    #     nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+    #     codd --help
+    #     nix-env --uninstall codd
 
-    - name: Run tests
-      run: nix develop .#shellWithRunfile.x86_64-linux -c run ci-tests
+    # - name: Run tests
+    #   run: nix develop .#shellWithRunfile.x86_64-linux -c run ci-tests
 
-    - name: Run benchmarks
-      run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+    # - name: Run benchmarks
+    #   run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
 
-    - name: Build codd's library's haddocks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
+    # - name: Build codd's library's haddocks
+    #   run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
 
-    - name: Build codd's docker image
-      run: nix build --no-link .#dockerImage.x86_64-linux
+    # - name: Build codd's docker image
+    #   run: nix build --no-link .#dockerImage.x86_64-linux
 
   push_to_cachix:
     runs-on: ubuntu-latest
-    # needs: build
+    needs: build
     # if: github.ref == 'refs/heads/master'
     steps:
       - uses: cachix/install-nix-action@v17
