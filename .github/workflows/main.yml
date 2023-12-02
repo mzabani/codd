@@ -33,7 +33,9 @@ jobs:
     - uses: cachix/cachix-action@v12
       with:
         name: mzabani
-        skipPush: true
+        skipPush: false
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
     # Wish this could be done, but there's a permissions problem. See https://github.com/actions/cache/issues/133
     # - name: Nix Store Caching
@@ -77,10 +79,4 @@ jobs:
 
     # - name: Build codd's docker image
     #   run: nix build --no-link .#dockerImage.x86_64-linux
-    - uses: cachix/cachix-action@v12
-      with:
-        name: mzabani
-        skipPush: false
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 

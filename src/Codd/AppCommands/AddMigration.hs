@@ -77,7 +77,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
         onDiskRepsDir <- either
             pure
             (error
-                "This functionality needs a directory to write the expected representations to. Report this as a bug."
+                "This    functionality needs a directory to write the expected representations to. Report this as a bug."
             )
             onDiskReps
 
