@@ -116,8 +116,8 @@ jobs:
     - name: uname
       run: uname -a
 
-    - name: Build codd
-      run: nix build --no-link ".#codd:exe:codd"
+    - name: Build executable used for installer with tests
+      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A coddWithCheck
 
     - name: Build executable used for installer
       run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
