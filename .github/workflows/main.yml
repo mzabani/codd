@@ -18,7 +18,7 @@ env:
   CI: 1
 
 jobs:
-  build-linux:
+  build-x86_64-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -47,9 +47,6 @@ jobs:
     #   with:
     #     path: /nix/
     #     key: ${{ runner.os }}-build
-
-    # - name: Print nix.conf file
-    #   run: cat ~/.config/nix/nix.conf
 
     - name: Build statically linked codd
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
@@ -84,7 +81,8 @@ jobs:
     - name: Build codd's docker image
       run: nix build --no-link .#dockerImage.x86_64-linux
 
-  build-macos:
+  build-x86_64-macos:
+    # This job's purpose is to check the installer works for macos and push to cachix, but nothing else
     runs-on: macos-latest
 
     steps:
@@ -106,22 +104,6 @@ jobs:
         skipPush: false
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
-
-    # Wish this could be done, but there's a permissions problem. See https://github.com/actions/cache/issues/133
-    # - name: Nix Store Caching
-    #   uses: actions/cache@v2
-    #   with:
-    #     path: /nix/
-    #     key: ${{ runner.os }}-build
-
-    # - name: Print nix.conf file
-    #   run: cat ~/.config/nix/nix.conf
-
-    - name: uname
-      run: uname -a
-
-    # - name: Build executable used for installer with tests
-    #   run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A coddWithCheck
 
     - name: Build executable used for installer
       run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
