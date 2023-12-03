@@ -14,9 +14,6 @@ defaults:
   run:
     shell: bash # Implies `set -eo pipefail`, among other things. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsshell
 
-env:
-  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-
 jobs:
   deploy-x86_64-linux:
     runs-on: ubuntu-latest
@@ -37,50 +34,15 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - name: Get built artifacts from cachix
-      run: |
-        echo Deployment!
-        echo "$GITHUB_SHA"
-        echo "$GITHUB_REF_NAME"
-        echo "$DOCKERHUB_USERNAME"
-        echo ${{ vars.DOCKERHUB_USERNAME }}
-        # We don't want to build things all over again, so make sure they're in the cache
-        nix build -j0 --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
-        nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
-
     - uses: docker/login-action@v3
       with:
-        username: ${{ env.DOCKERHUB_USERNAME }}
+        username: ${{ vars.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Push to DockerHub
+    - name: Get docker image from cachix and push to DockerHub
       run: |
-        echo "$GITHUB_REF_NAME"
+        # We don't want to build things all over again, so make sure they're in the cache with -j0
+        nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
         docker load -i results/codd-docker
         docker tag codd:latest "mzabani/codd:$GITHUB_REF_NAME"
         docker push "mzabani/codd:$GITHUB_REF_NAME"
-        
-
-  deploy-x86_64-macos:
-    runs-on: macos-latest
-    # environment: release
-
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - uses: cachix/install-nix-action@v24
-      with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
-        nix_path: nixpkgs=channel:nixos-unstable
-        extra_nix_config: |
-          substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
-          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-    
-    - name: Deploy macos!
-      run: |
-        echo Mac os deployment!
-        echo "$GITHUB_SHA"
-        echo "$GITHUB_REF_NAME"
-        nix-build -j0 --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
