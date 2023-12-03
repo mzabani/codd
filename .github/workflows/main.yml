@@ -49,7 +49,9 @@ jobs:
     #     key: ${{ runner.os }}-build
 
     - name: Build statically linked codd
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
+      run: |
+        mkdir -p results
+        nix build -o results/linux-x86_64-codd ".#x86_64-unknown-linux-musl:codd:exe:codd"
 
     - name: Build statically linked codd with aeson 1
       run: nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
@@ -79,7 +81,17 @@ jobs:
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
 
     - name: Build codd's docker image
-      run: nix build --no-link .#dockerImage.x86_64-linux
+      run: nix build -o results/docker-img-codd .#dockerImage.x86_64-linux
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: results/linux-x86_64-linux
+        path: results/linux-x86_64-linux
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: results/docker-img-codd
+        path: results/docker-img-codd
 
   build-x86_64-macos:
     # This job's purpose is to check the installer works for macos and push to cachix, but nothing else
@@ -106,7 +118,9 @@ jobs:
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
     - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+      run: |
+        mkdir -p results
+        nix-build -o results/macos-x86_64-codd ./nix/install-codd-nixpkgs.nix -A codd
 
     - name: Install codd with nix-env and uninstall it
       run: |
@@ -114,3 +128,7 @@ jobs:
         codd --help
         nix-env --uninstall codd
 
+    - uses: actions/upload-artifact@v3
+      with:
+        name: results/macos-x86_64-codd
+        path: results/macos-x86_64-codd

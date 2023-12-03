@@ -1,5 +1,9 @@
 name: Release
 
+# TODO:
+# - Run on workflow_dispatch
+# - Run on environment 'release'
+
 # on: workflow_dispatch
 on:
   push:
@@ -16,7 +20,7 @@ defaults:
 jobs:
   deploy-x86_64-linux:
     runs-on: ubuntu-latest
-    environment: release
+    # environment: release
 
     steps:
     - uses: actions/checkout@v4
@@ -30,7 +34,7 @@ jobs:
 
   deploy-x86_64-macos:
     runs-on: macos-latest
-    environment: release
+    # environment: release
 
     steps:
     - uses: actions/checkout@v4
