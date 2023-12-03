@@ -45,4 +45,6 @@ jobs:
         nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
         docker load -i results/codd-docker
         docker tag codd:latest "mzabani/codd:$GITHUB_REF_NAME"
+        docker tag codd:latest mzabani/codd:latest
         docker push "mzabani/codd:$GITHUB_REF_NAME"
+        docker push mzabani/codd:latest
