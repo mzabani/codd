@@ -14,8 +14,8 @@ defaults:
   run:
     shell: bash # Implies `set -eo pipefail`, among other things. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsshell
 
-# env:
-#   GITHUB_REF: GITHUB_REF
+env:
+  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
 
 jobs:
   deploy-x86_64-linux:
@@ -42,18 +42,21 @@ jobs:
         echo Deployment!
         echo "$GITHUB_SHA"
         echo "$GITHUB_REF_NAME"
+        echo "$DOCKERHUB_USERNAME"
+        echo ${{ vars.DOCKERHUB_USERNAME }}
         # We don't want to build things all over again, so make sure they're in the cache
         nix build -j0 --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
         nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
 
     - uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ env.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Push to DockerHub
       run: |
         echo "$GITHUB_REF_NAME"
+        docker load -i results/codd-docker
         docker tag codd:latest "mzabani/codd:$GITHUB_REF_NAME"
         docker push "mzabani/codd:$GITHUB_REF_NAME"
         
@@ -80,4 +83,4 @@ jobs:
         echo Mac os deployment!
         echo "$GITHUB_SHA"
         echo "$GITHUB_REF_NAME"
-        nix build -j0 --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+        nix-build -j0 --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
