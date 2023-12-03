@@ -1,0 +1,42 @@
+name: Release
+
+# on: workflow_dispatch
+on:
+  push:
+    branches:
+      - initial-release-workflow
+
+defaults:
+  run:
+    shell: bash # Implies `set -eo pipefail`, among other things. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsshell
+
+# env:
+#   GITHUB_REF: GITHUB_REF
+
+jobs:
+  deploy-x86_64-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Print some stuff
+      run: |
+        echo Deployment!
+        echo "$GITHUB_SHA"
+
+  deploy-x86_64-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Deploy macos!
+      run: |
+        echo Mac os deployment!
+        echo "$GITHUB_SHA"
+
