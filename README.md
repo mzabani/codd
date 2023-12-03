@@ -1,3 +1,5 @@
+[![CI](https://github.com/mzabani/codd/actions/workflows/main.yml/badge.svg)](https://github.com/mzabani/codd/actions/workflows/main.yml)
+
 # What is Codd?
 
 Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes automatic schema equality checks that
