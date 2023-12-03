@@ -63,39 +63,42 @@
                       # in codd.cabal
                       packages.codd.components.tests.codd-test.build-tools =
                         [ proj.hsPkgs.hspec-discover ];
+                      }] ++ (if final.lib.traceVal final.stdenv.isDarwin then [] else [
+                        {
+                          packages.codd.components.exes.codd = {
+                            dontStrip = false;
+                            configureFlags = [
+                              # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                              # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
+                              # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
+                              # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
+                              # dynamically linked glibc builds.
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                              "--ghc-option=-optl=-lssl"
+                              "--ghc-option=-optl=-lcrypto"
 
-                      packages.codd.components.exes.codd = {
-                        dontStrip = false;
-                        configureFlags = [
-                          # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
-                          # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
-                          # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
-                          # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
-                          # dynamically linked glibc builds.
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                          "--ghc-option=-optl=-lssl"
-                          "--ghc-option=-optl=-lcrypto"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              "--ghc-option=-optl=-lpgcommon"
+                              "--ghc-option=-optl=-lpgport"
+                            ];
+                          };
 
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                          "--ghc-option=-optl=-lpgcommon"
-                          "--ghc-option=-optl=-lpgport"
-                        ];
-                      };
+                          packages.codd.components.tests.codd-test = {
+                            dontStrip = false;
+                            configureFlags = [
+                              # Same as for the executable here
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                              "--ghc-option=-optl=-lssl"
+                              "--ghc-option=-optl=-lcrypto"
 
-                      packages.codd.components.tests.codd-test = {
-                        dontStrip = false;
-                        configureFlags = [
-                          # Same as for the executable here
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                          "--ghc-option=-optl=-lssl"
-                          "--ghc-option=-optl=-lcrypto"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              "--ghc-option=-optl=-lpgcommon"
+                              "--ghc-option=-optl=-lpgport"
+                            ];
+                          };
+                        }
+                      ]);
 
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                          "--ghc-option=-optl=-lpgcommon"
-                          "--ghc-option=-optl=-lpgport"
-                        ];
-                      };
-                    }];
 
                     # This is used by `nix develop .` to open a shell for use with
                     # `cabal`, `hlint` and `haskell-language-server`
