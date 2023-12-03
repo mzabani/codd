@@ -37,12 +37,24 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - name: Print some stuff
+    - name: Get built artifacts from cachix
       run: |
         echo Deployment!
         echo "$GITHUB_SHA"
+        echo "$GITHUB_REF"
+        # We don't want to build things all over again, so make sure they're in the cache
         nix build -j0 --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
-        nix build -j0 --no-link .#dockerImage.x86_64-linux
+        nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
+
+    - uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Push to DockerHub
+      run: |
+        echo "$GITHUB_REF"
+        
 
   deploy-x86_64-macos:
     runs-on: macos-latest
@@ -57,4 +69,5 @@ jobs:
       run: |
         echo Mac os deployment!
         echo "$GITHUB_SHA"
-        nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+        echo "$GITHUB_REF"
+        nix build -j0 --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
