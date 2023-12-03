@@ -1,14 +1,6 @@
 name: Release
 
-# TODO:
-# - Run on workflow_dispatch
-# - Run on environment 'release'
-
-# on: workflow_dispatch
-on:
-  push:
-    branches:
-      - initial-release-workflow
+on: workflow_dispatch
 
 defaults:
   run:
@@ -17,7 +9,7 @@ defaults:
 jobs:
   deploy-x86_64-linux:
     runs-on: ubuntu-latest
-    # environment: release
+    environment: release
 
     steps:
     - uses: actions/checkout@v4
@@ -44,6 +36,7 @@ jobs:
         # We don't want to build things all over again, so make sure they're in the cache with -j0
         nix build -j0 -o results/codd-docker .#dockerImage.x86_64-linux
         docker load -i results/codd-docker
+        # Push both to the ref (tag name) and latest
         docker tag codd:latest "mzabani/codd:$GITHUB_REF_NAME"
         docker tag codd:latest mzabani/codd:latest
         docker push "mzabani/codd:$GITHUB_REF_NAME"
