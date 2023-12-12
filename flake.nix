@@ -1,10 +1,10 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/eb98796446a42551bc685065b296dba8f9241ca7";
+    "github:input-output-hk/haskell.nix/2a1000b835ea4f8186b79e5926c99a80f9e354fc";
   # When switching away from nixpkgs-unstable, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -105,7 +105,7 @@
                     shell.tools = {
                       cabal = "latest";
                       hlint = "3.4.1"; # latest was failing cabal deps bounds
-                      haskell-language-server = "latest";
+                      haskell-language-server = "2.4.0.0";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
