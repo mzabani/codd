@@ -27,7 +27,7 @@
         };
 
         postgres-service = import ./nix/postgres-service.nix {
-          postgres = pkgs.postgresql;
+          postgres = pkgs.postgresql_16;
           inherit pkgs;
           initializePostgres = false;
           wipeCluster = false;
@@ -38,8 +38,8 @@
             # We only really need libpq, and we have our tests running with
             # statically linked executables, so it's probably fine to ignore
             # this.
-            postgresql =
-              prev.postgresql.overrideAttrs (_: { doCheck = false; });
+            postgresql_16 =
+              prev.postgresql_16.overrideAttrs (_: { doCheck = false; });
           });
         overlays = [
           libpqOverlay
@@ -75,7 +75,7 @@
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql_16.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -89,7 +89,7 @@
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql_16.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -112,8 +112,8 @@
                       glibcLocales
                       # haskellPackages.brittany # Brittany from the LTS is older than this
                       proj.hsPkgs.brittany.components.exes.brittany
-                      postgresql
                       postgres-service
+                      postgresql_16
                       run
                     ];
                     shell.shellHook = ''
@@ -124,10 +124,11 @@
                       init-postgres
 
                       echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
-                      echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
                       echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-                      export PATH="$PATH:scripts/path"
+                      # Postgres 15 insists in appearing in PATH before postgres 16.
+                      # So we add postgres 16 _again_ to the beginning of the PATH, and also some useful scripts
+                      export PATH="${pkgs.postgresql_16}/bin:$PATH:scripts/path"
                     '';
                     # This adds `js-unknown-linux-musl` to the shell.
                     # shell.crossPlatforms = p: [ p.musl64 ];
@@ -169,6 +170,7 @@
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
+          pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
         };
 
         shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run ]; };

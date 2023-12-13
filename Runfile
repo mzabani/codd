@@ -15,9 +15,10 @@ ci-tests:
     # We test the last version with the vanilla nixpkgs-built derivation,
     # not the IOHK one. We assume differences in the codebase regarding different
     # postgres versions aren't enough to make it worth testing every version here too.
-    echo "Running all tests on Postgres 15 with nixpkgs's cabal2nix derivation of codd"
+    echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
     nix-build ./nix/install-codd-nixpkgs.nix -A coddWithCheck
 
+    run test-with-db --nix --pg 15
     run test-with-db --nix --pg 14
     run test-with-db --nix --pg 13
     run test-with-db --nix --pg 12
@@ -79,12 +80,12 @@ test-no-db:
 ## 
 # Runs a test in an environment where there is a postgresql DB listening. If no extra arguments are passed, special cases to running
 # all tests that _do_ require a database.
-# OPTION PG --pg <pg> The version of the postgresql instance to start or 'all'. Defaults to 15 if unspecified.
+# OPTION PG --pg <pg> The version of the postgresql instance to start or 'all'. Defaults to 16 if unspecified.
 # OPTION NIX --nix Use a Nix-built test executable in a pure Nix shell instead of compiling with cabal in the user's shell.
 test-with-db:
     set -eo pipefail
-    [ -z "$PG" ] && PG=(15)
-    [ "${PG[0]}" = "all" ] && PG=(11 12 13 14 15)
+    [ -z "$PG" ] && PG=(16)
+    [ "${PG[0]}" = "all" ] && PG=(11 12 13 14 15 16)
 
     # Build the test executable only once with Nix
     if [ -n "$NIX" ]; then
