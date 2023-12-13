@@ -164,8 +164,6 @@
         };
 
         testShells = {
-          pg10 = import ./nix/test-shell-pg10.nix { inherit pkgs; };
-          pg11 = import ./nix/test-shell-pg11.nix { inherit pkgs; };
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };

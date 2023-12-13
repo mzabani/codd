@@ -22,7 +22,6 @@ ci-tests:
     run test-with-db --nix --pg 14
     run test-with-db --nix --pg 13
     run test-with-db --nix --pg 12
-    run test-with-db --nix --pg 11
 
 ##
 # Formats all Haskell files with brittany.
@@ -85,7 +84,7 @@ test-no-db:
 test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(16)
-    [ "${PG[0]}" = "all" ] && PG=(11 12 13 14 15 16)
+    [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
 
     # Build the test executable only once with Nix
     if [ -n "$NIX" ]; then
