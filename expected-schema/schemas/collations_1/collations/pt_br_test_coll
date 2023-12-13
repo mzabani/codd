@@ -4,6 +4,7 @@
     "deterministic": true,
     "encoding": "",
     "iculocale": "pt-u-co-phonebk",
+    "icurules": null,
     "owner": "codd_admin",
     "provider": "i"
 }

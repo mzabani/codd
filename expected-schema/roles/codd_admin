@@ -8,7 +8,16 @@
     "createrole": true,
     "db_privileges": "[[\"cCT\", \"codd_admin\"]]",
     "inherit": true,
-    "membership": [],
+    "membership": [
+        {
+            "admin_option": true,
+            "role": "codd-user"
+        },
+        {
+            "admin_option": true,
+            "role": "codd_low_privilege_user"
+        }
+    ],
     "replication": false,
     "superuser": false
 }
