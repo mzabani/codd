@@ -32,18 +32,7 @@
           initializePostgres = false;
           wipeCluster = false;
         };
-        libpqOverlay = final: prev:
-          prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
-            # Postgres builds are failing tests for some reason :(
-            # We only really need libpq, and we have our tests running with
-            # statically linked executables, so it's probably fine to ignore
-            # this.
-            postgresql_16 =
-              prev.postgresql_16.overrideAttrs (_: { doCheck = false; });
-          });
         overlays = [
-          libpqOverlay
-
           haskellNix.overlay
           (final: prev:
             let
@@ -71,11 +60,15 @@
                               # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
                               # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
                               # dynamically linked glibc builds.
+                              # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
+                              # https://github.com/NixOS/nixpkgs/issues/191920
+                              # This doesn't seem like a big issue since we only need libpq and we do run tests against
+                              # postgresql-16-the-server.
                               "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql_16.out}/lib"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -89,7 +82,7 @@
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql_16.out}/lib"
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
