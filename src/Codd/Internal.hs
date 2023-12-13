@@ -74,7 +74,6 @@ import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
-import qualified System.IO                     as IO
 import           UnliftIO                       ( MonadUnliftIO
                                                 , hClose
                                                 )
@@ -382,15 +381,11 @@ streamingReadFile filePath = do
     pure $ FileStream { filePath, releaseKey, fileStream = go handle }
   where
     go h = do
-        eof <- liftIO $ IO.hIsEOF h
-        unless eof $ do
-            str  <- liftIO $ Text.hGetLine h
-            eof2 <- liftIO $ IO.hIsEOF h
-            if eof2
-                then Streaming.yield str
-                else do
-                    Streaming.each [str, "\n"]
-                    go h
+        str  <- liftIO $ Text.hGetChunk h
+        when (str /= "") $
+            do
+                Streaming.yield str
+                go h
 
 closeFileStream :: MonadResource m => FileStream m -> m ()
 closeFileStream (FileStream _ releaseKey _) = release releaseKey
