@@ -616,7 +616,7 @@
         "haskellNix": "haskellNix",
         "nixpkgs": [
           "haskellNix",
-          "nixpkgs-2311"
+          "nixpkgs-unstable"
         ]
       }
     },

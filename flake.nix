@@ -4,7 +4,7 @@
     "github:input-output-hk/haskell.nix/2a1000b835ea4f8186b79e5926c99a80f9e354fc";
   # When switching away from nixpkgs-unstable, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
