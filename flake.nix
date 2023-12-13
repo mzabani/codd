@@ -32,7 +32,6 @@
           initializePostgres = false;
           wipeCluster = false;
         };
-        postgres15Overlay = import ./nix/postgres15Overlay.nix;
         libpqOverlay = final: prev:
           prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
             # Postgres builds are failing tests for some reason :(
@@ -43,7 +42,6 @@
               prev.postgresql.overrideAttrs (_: { doCheck = false; });
           });
         overlays = [
-          postgres15Overlay
           libpqOverlay
 
           haskellNix.overlay
