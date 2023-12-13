@@ -1,9 +1,10 @@
 {
-    "collate": "pt_br.utf8",
-    "ctype": "pt_br.utf8",
+    "collate": "en_us.utf8",
+    "ctype": "en_us.utf8",
     "deterministic": true,
     "encoding": "utf8",
     "iculocale": null,
+    "icurules": null,
     "owner": "codd_admin",
     "provider": "c"
 }

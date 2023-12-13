@@ -7,8 +7,10 @@ module Codd.Representations.Database
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Query                     ( InTxn
+                                                , InTxnT
                                                 , NotInTxn
-                                                , unsafeQuery1, InTxnT, withTransaction
+                                                , unsafeQuery1
+                                                , withTransaction
                                                 )
 import           Codd.Representations.Database.Model
                                                 ( DbObjRepresentationQuery(..)
@@ -27,6 +29,8 @@ import qualified Codd.Representations.Database.Pg14
                                                as Pg14
 import qualified Codd.Representations.Database.Pg15
                                                as Pg15
+import qualified Codd.Representations.Database.Pg16
+                                               as Pg16
 import           Codd.Representations.Database.SqlGen
                                                 ( interspBy
                                                 , parens
@@ -36,7 +40,6 @@ import           Codd.Types                     ( SchemaAlgo
                                                 , SchemaSelection
                                                 , SqlRole(..)
                                                 )
-
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
@@ -61,7 +64,8 @@ import           Data.Typeable
 import qualified Database.PostgreSQL.Simple    as DB
 import           GHC.Stack                      ( HasCallStack )
 import           Haxl.Core
-import           UnliftIO                       ( MonadIO(..), MonadUnliftIO
+import           UnliftIO                       ( MonadIO(..)
+                                                , MonadUnliftIO
                                                 )
 
 data RepresentationReq a where
@@ -283,7 +287,8 @@ queryServerMajorVersion conn = do
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
-    :: forall m. (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
+    :: forall m
+     . (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -329,6 +334,11 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                                          rolesToCheck
                                          schemaAlgoOpts
             15 -> readSchemaFromDatabase Pg15.objRepQueryFor
+                                         conn
+                                         namespacesToCheck
+                                         rolesToCheck
+                                         schemaAlgoOpts
+            16 -> readSchemaFromDatabase Pg16.objRepQueryFor
                                          conn
                                          namespacesToCheck
                                          rolesToCheck

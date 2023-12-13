@@ -3,7 +3,6 @@
 # than a haskell.nix provided one, so it's useful as an installation option.
 # The downside is that library versions are likely not the same as the ones from Stackage LTS.
 let
-  postgres15Overlay = import ./postgres15Overlay.nix;
   haskellPatchesOverlay = final: prev: {
     haskellPackages = prev.haskellPackages.override {
       overrides = hsSelf: hsSuper: {
@@ -18,10 +17,10 @@ let
       url =
         "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-unstable.locked.rev}.tar.gz";
       sha256 = lock.nodes.nixpkgs-unstable.locked.narHash;
-    }) { overlays = [ postgres15Overlay haskellPatchesOverlay ]; };
+    }) { overlays = [ haskellPatchesOverlay ]; };
   pgService = import ./postgres-service.nix {
     pkgs = nixpkgs;
-    postgres = nixpkgs.postgresql;
+    postgres = nixpkgs.postgresql_16;
     initializePostgres = true;
     wipeCluster = true;
   };
@@ -38,7 +37,7 @@ in rec {
       export PGPORT="5434"
       export PGHOST="127.0.0.1"
       export PGUSER="postgres"
-      export PATH="$PATH:${nixpkgs.postgresql}/bin" # Some tests require pg_dump in PATH
+      export PATH="$PATH:${nixpkgs.postgresql_16}/bin" # Some tests require pg_dump in PATH
       ${pgService}/bin/init-postgres
     '' + self.checkPhase;
   });

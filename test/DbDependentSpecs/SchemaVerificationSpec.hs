@@ -1011,10 +1011,10 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
                     , DExpectedButNotFound
                     )
                   ]
-    (dropCreatePtBRColl, _) <-
+    (dropCreateEnUSColl, _) <-
         addMig
                 (  dropColl
-                <> " CREATE COLLATION new_collation (locale = 'pt_BR.utf8');"
+                <> " CREATE COLLATION new_collation (locale = 'en_US.utf8');"
                 )
                 (dropColl <> createCutf8Coll)
             $ ChangeEq
@@ -1026,7 +1026,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
             (dropColl
             <> " CREATE COLLATION new_collation (provider = icu, locale = 'de-u-co-phonebk');"
             )
-            dropCreatePtBRColl
+            dropCreateEnUSColl
         $ ChangeEq
               [("schemas/public/collations/new_collation", DBothButDifferent)]
 

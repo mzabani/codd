@@ -1,5 +1,4 @@
 { pkgs, codd-exe }:
-let
   # Currently, there seems to be no way to map the host's UID and GID to bind-mounts,
   # so there's no way to modify files and folders while giving them the host's user and group
   # permissions..
@@ -9,7 +8,7 @@ let
   # which should hopefully cover most use cases
 
   # Using dockerTools from musl64 throws linking errors
-in pkgs.dockerTools.buildImage {
+pkgs.dockerTools.buildImage {
   name = "codd";
   tag = "latest";
 
@@ -22,8 +21,8 @@ in pkgs.dockerTools.buildImage {
     #!${pkgs.runtimeShell}
     export PATH="/bin/"
     ${pkgs.pkgsCross.musl64.dockerTools.shadowSetup}
-    mkdir /tmp /working-dir
-    chmod a+rwx /tmp /working-dir
+    mkdir /working-dir
+    chmod a+rwx /working-dir
 
     for i in {1000..2001}
     do

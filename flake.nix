@@ -1,7 +1,7 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/eb98796446a42551bc685065b296dba8f9241ca7";
+    "github:input-output-hk/haskell.nix/2a1000b835ea4f8186b79e5926c99a80f9e354fc";
   # When switching away from nixpkgs-unstable, make sure to change
   # install-codd-nixpkgs.nix accordingly!
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
@@ -27,25 +27,12 @@
         };
 
         postgres-service = import ./nix/postgres-service.nix {
-          postgres = pkgs.postgresql;
+          postgres = pkgs.postgresql_16;
           inherit pkgs;
           initializePostgres = false;
           wipeCluster = false;
         };
-        postgres15Overlay = import ./nix/postgres15Overlay.nix;
-        libpqOverlay = final: prev:
-          prev // (prev.lib.optionalAttrs prev.stdenv.hostPlatform.isMusl {
-            # Postgres builds are failing tests for some reason :(
-            # We only really need libpq, and we have our tests running with
-            # statically linked executables, so it's probably fine to ignore
-            # this.
-            postgresql =
-              prev.postgresql.overrideAttrs (_: { doCheck = false; });
-          });
         overlays = [
-          postgres15Overlay
-          libpqOverlay
-
           haskellNix.overlay
           (final: prev:
             let
@@ -73,6 +60,10 @@
                               # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
                               # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
                               # dynamically linked glibc builds.
+                              # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
+                              # https://github.com/NixOS/nixpkgs/issues/191920
+                              # This doesn't seem like a big issue since we only need libpq and we do run tests against
+                              # postgresql-16-the-server.
                               "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
@@ -105,7 +96,7 @@
                     shell.tools = {
                       cabal = "latest";
                       hlint = "3.4.1"; # latest was failing cabal deps bounds
-                      haskell-language-server = "latest";
+                      haskell-language-server = "2.4.0.0";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
@@ -114,8 +105,8 @@
                       glibcLocales
                       # haskellPackages.brittany # Brittany from the LTS is older than this
                       proj.hsPkgs.brittany.components.exes.brittany
-                      postgresql
                       postgres-service
+                      postgresql_16
                       run
                     ];
                     shell.shellHook = ''
@@ -126,10 +117,11 @@
                       init-postgres
 
                       echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
-                      echo You just might have to run ./scripts/create-dev-db.sh and then 'codd.sh up' first to create database $PGDATABASE.
                       echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-                      export PATH="$PATH:scripts/path"
+                      # Postgres 15 insists in appearing in PATH before postgres 16.
+                      # So we add postgres 16 _again_ to the beginning of the PATH, and also some useful scripts
+                      export PATH="${pkgs.postgresql_16}/bin:$PATH:scripts/path"
                     '';
                     # This adds `js-unknown-linux-musl` to the shell.
                     # shell.crossPlatforms = p: [ p.musl64 ];
@@ -165,12 +157,11 @@
         };
 
         testShells = {
-          pg10 = import ./nix/test-shell-pg10.nix { inherit pkgs; };
-          pg11 = import ./nix/test-shell-pg11.nix { inherit pkgs; };
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
+          pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
         };
 
         shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run ]; };
