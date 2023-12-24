@@ -21,16 +21,15 @@ then
     exit 1
 fi
 
-rm -rf /tmp/codd-checkout-Y6fRwa_23x
-git clone --depth 1 https://github.com/mzabani/codd.git /tmp/codd-checkout-Y6fRwa_23x
+SRCDIR=$(mktemp -d || echo /tmp/codd-checkout-Y6fRwa_23x)
+git clone --depth 1 -b v0.1.2 https://github.com/mzabani/codd.git "$SRCDIR"
 
 nix-env -f "/tmp/codd-checkout-Y6fRwa_23x/nix/install-codd-nixpkgs.nix" \
     --option trusted-substituters 'https://cache.nixos.org https://cache.iog.io https://mzabani.cachix.org' \
     --option trusted-public-keys  'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=' \
     -iA codd
 
-rm -rf /tmp/codd-checkout-Y6fRwa_23x
-
 echo "---------------------------------------------------------------"
 echo "Codd successfully installed. Run 'codd --help' to view options."
 echo "Run 'nix-env --uninstall codd' to uninstall"
+rm -rf "$SRCDIR"
