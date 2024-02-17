@@ -114,7 +114,8 @@ import           Streaming                      ( MFunctor(hoist)
                                                 )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
-import           UnliftIO                       ( MonadIO
+import           UnliftIO                       ( IORef
+                                                , MonadIO
                                                 , liftIO
                                                 )
 import           UnliftIO.Environment           ( lookupEnv )
@@ -152,7 +153,7 @@ data AppliedMigration = AppliedMigration
 
 data FileStream m = FileStream
     { filePath   :: FilePath
-    , releaseKey :: ReleaseKey
+    , releaseKey :: IORef (Maybe ReleaseKey)
     , fileStream :: Stream (Of Text) m ()
     }
 

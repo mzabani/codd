@@ -75,7 +75,7 @@ import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
 import           UnliftIO                       ( MonadUnliftIO
-                                                , hClose
+                                                , hClose, newIORef, writeIORef, readIORef
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -366,9 +366,6 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
         logInfoN "Parse-checking headers of all pending SQL Migrations..."
         parseMigrationFiles migsAlreadyApplied sqlMigrations
 
-
-
-
 -- | Opens a UTF-8 file allowing it to be read in streaming fashion.
 -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
 -- reads, but does not append '\n' to the Strings it returns, making it impossible to know 
@@ -377,9 +374,14 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
 -- So we copied streaming's implementation and modified it slightly.
 streamingReadFile :: MonadResource m => FilePath -> m (FileStream m)
 streamingReadFile filePath = do
-    (releaseKey, handle) <- allocate (openFile filePath ReadMode) hClose
-    pure $ FileStream { filePath, releaseKey, fileStream = go handle }
+    releaseKey <- newIORef Nothing
+    pure $ FileStream { filePath, releaseKey, fileStream = lazyStream releaseKey }
   where
+    -- | Lazy stream because it waits until the file is demanded to open it in the first place
+    lazyStream releaseKeyIORef = do
+        (releaseKey, handle) <- lift $ allocate (openFile filePath ReadMode) hClose
+        writeIORef releaseKeyIORef (Just releaseKey)
+        go handle
     go h = do
         str  <- liftIO $ Text.hGetChunk h
         when (str /= "") $
@@ -388,13 +390,15 @@ streamingReadFile filePath = do
                 go h
 
 closeFileStream :: MonadResource m => FileStream m -> m ()
-closeFileStream (FileStream _ releaseKey _) = release releaseKey
+closeFileStream (FileStream _ releaseKey _) = do
+    mrkey <- readIORef releaseKey
+    forM_ mrkey release
 
 -- | Returns all migrations on the supplied folders (including possibly already applied ones)
 -- except for the explicitly supplied ones.
 listMigrationsFromDisk :: MonadIO m => [FilePath]
     -- ^ The folders where to look for migrations.
-     -> [FilePath] 
+     -> [FilePath]
     -- ^ Migration filenames (without their directories) to exclude from returned list.
     -> m [FilePath]
 listMigrationsFromDisk sqlDirs excludeList = do

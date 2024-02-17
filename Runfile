@@ -114,3 +114,8 @@ test-with-db-internal:
     else
         run test-no-db "${NIXA[@]}" --nonixbuild -- "$@"
     fi
+
+##
+# Still experimental. Test that codd does not open more than one migration file simultaneously.
+strace-test:
+    dropdb --if-exists $PGDATABASE && strace -e openat,close ./dist-newstyle/build/x86_64-linux/ghc-9.0.2/codd-0.1.2/x/codd/noopt/build/codd/codd up 2>&1 | less
