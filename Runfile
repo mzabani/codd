@@ -118,4 +118,5 @@ test-with-db-internal:
 ##
 # Still experimental. Test that codd does not open more than one migration file simultaneously.
 strace-test:
+    cabal build -O0 codd:exe:codd
     dropdb --if-exists $PGDATABASE && strace -e openat,close ./dist-newstyle/build/x86_64-linux/ghc-9.0.2/codd-0.1.2/x/codd/noopt/build/codd/codd up 2>&1 | less

@@ -381,13 +381,16 @@ streamingReadFile filePath = do
     lazyStream releaseKeyIORef = do
         (releaseKey, handle) <- lift $ allocate (openFile filePath ReadMode) hClose
         writeIORef releaseKeyIORef (Just releaseKey)
-        go handle
-    go h = do
+        go releaseKeyIORef handle
+    go rkioref h = do
         str  <- liftIO $ Text.hGetChunk h
-        when (str /= "") $
-            do
+        case str of
+          "" -> do
+            hClose h
+            lift $ writeIORef rkioref Nothing
+          _ -> do
                 Streaming.yield str
-                go h
+                go rkioref h
 
 closeFileStream :: MonadResource m => FileStream m -> m ()
 closeFileStream (FileStream _ releaseKey _) = do
