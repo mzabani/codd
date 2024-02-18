@@ -26,7 +26,8 @@ import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 , TxnIsolationLvl(..)
                                                 )
-import           Control.Monad                  ( foldM_
+import           Control.Applicative            ( (<|>) )
+import           Control.Monad                  ( foldM
                                                 , forM_
                                                 , void
                                                 , when
@@ -123,20 +124,26 @@ spec = do
                                                       `Text.isInfixOf` l
                                               )
                                           $ Text.lines contents
-                              forM_ openAndCloseLines Text.putStrLn
                               openFilesAtEnd <- foldM
                                   (\openFiles line -> do
                                       case P.parseOnly openatParser line of
                                           Right (fp, fd) ->
-                                              if Map.size openFiles > 1
-                                                  then
+                                              if Map.size openFiles > 0
+                                                  then do
+                                                      putStrLn
+                                                          "More than one simultaneously open migrations! Here's the strace log:"
+                                                      forM_
+                                                          openAndCloseLines
+                                                          Text.putStrLn
                                                       error
-                                                          "More than one open migration!"
-                                                  else pure $ Map.insert
-                                                      fd
-                                                      fp
-                                                      openFiles
-                                          Left _ ->
+                                                          "More than one migration open simultaneously. Test failed."
+                                                  else do
+                                                      -- print (fp, fd)
+                                                      pure $ Map.insert
+                                                          fd
+                                                          fp
+                                                          openFiles
+                                          Left _ -> do
                                               case
                                                       P.parseOnly
                                                           closeParser
@@ -153,17 +160,22 @@ spec = do
                               Map.size openFilesAtEnd `shouldBe` 0
                       pure ()
 
+-- | Parses an `openat` strace output line and returns the opened file and file descriptor.
+-- This is tailed to codd's current behaviour, e.g. that the file is opened in non-blocking and
+-- read-only mode. If this changes or the output of strace changes, this will fail. It sounds fragile,
+-- but it's sort of a good golden test when you think about it.
 openatParser :: P.Parser (FilePath, Int)
 openatParser = do
     void $ P.string "[pid "
     void P.decimal
     void $ P.string "] openat(AT_FDCWD, \""
-    fp <- P.takeTill ('"' ==)
-    void $ P.string ", O_RDONLY|O_NOCTTY|O_NONBLOCK) = "
+    fp <- P.takeWhile1 ('"' /=)
+    void $ P.string "\", O_RDONLY|O_NOCTTY|O_NONBLOCK) = "
     fd <- P.decimal
     pure (Text.unpack fp, fd)
 
 
+-- | Parses a `close` strace output line and returns the closed file descriptor.
 closeParser :: P.Parser Int
 closeParser = do
     void $ P.string "[pid "

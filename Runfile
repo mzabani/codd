@@ -118,6 +118,7 @@ test-with-db-internal:
 ##
 # Still experimental. Test that codd does not open more than one migration file simultaneously.
 strace-test:
+    set -eo pipefail
     cabal build -O0 codd-test
     TESTEXE=$(cabal list-bin -O0 codd-test)
     rm -f /tmp/strace.log

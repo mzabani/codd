@@ -55,7 +55,8 @@ module Codd.Parsing
 import           Control.Applicative            ( (<|>)
                                                 , optional
                                                 )
-import           Control.Monad                  ( guard
+import           Control.Monad                  ( forM_
+                                                , guard
                                                 , void
                                                 , when
                                                 )
@@ -118,10 +119,12 @@ import           Streaming.Prelude              ( Stream )
 import           UnliftIO                       ( IORef
                                                 , MonadIO
                                                 , liftIO
+                                                , readIORef
                                                 )
 import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
 import           UnliftIO.Resource              ( ReleaseKey )
+import           UnliftIO.Resource              ( release )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -179,7 +182,11 @@ instance Monad m => MigrationStream m (PureStream m) where
 instance MonadIO m => MigrationStream m (FileStream m) where
     -- | Reads entire file from disk again as so to
     -- be immune to the state of the Stream.
-    readFullContents FileStream { filePath } = liftIO $ Text.readFile filePath
+    readFullContents FileStream { filePath, releaseKey } = liftIO $ do
+        -- This contains a copy of `closeFileStream`, but importing that would introduce circular dependencies :(
+        mrkey <- readIORef releaseKey
+        forM_ mrkey release
+        Text.readFile filePath
     migStream FileStream { fileStream } = fileStream
 
 -- TODO: This should probably not be in Parsing.hs
