@@ -124,40 +124,53 @@ spec = do
                                                       `Text.isInfixOf` l
                                               )
                                           $ Text.lines contents
-                              openFilesAtEnd <- foldM
-                                  (\openFiles line -> do
-                                      case P.parseOnly openatParser line of
-                                          Right (fp, fd) ->
-                                              if Map.size openFiles > 0
-                                                  then do
-                                                      putStrLn
-                                                          "More than one simultaneously open migrations! Here's the strace log:"
-                                                      forM_
-                                                          openAndCloseLines
-                                                          Text.putStrLn
-                                                      error
-                                                          "More than one migration open simultaneously. Test failed."
-                                                  else do
-                                                      -- print (fp, fd)
-                                                      pure $ Map.insert
-                                                          fd
-                                                          fp
-                                                          openFiles
-                                          Left _ -> do
-                                              case
-                                                      P.parseOnly
-                                                          closeParser
-                                                          line
-                                                  of
-                                                      Left _ -> pure openFiles
-                                                      Right fd ->
-                                                          pure $ Map.delete
-                                                              fd
-                                                              openFiles
-                                  )
-                                  (Map.empty :: Map.Map Int FilePath)
-                                  openAndCloseLines
-                              Map.size openFilesAtEnd `shouldBe` 0
+                              -- forM_ openAndCloseLines Text.putStrLn
+                              (openFilesAtEnd, atLeastOneMigrationWasOpened) <-
+                                  foldM
+                                      (\(openFiles, atLeastOneMig) line -> do
+                                          case P.parseOnly openatParser line of
+                                              Right (fp, fd) ->
+                                                  if Map.size openFiles > 0
+                                                      then do
+                                                          putStrLn
+                                                              "More than one simultaneously open migrations! Here's the strace log:"
+                                                          forM_
+                                                              openAndCloseLines
+                                                              Text.putStrLn
+                                                          error
+                                                              "More than one migration open simultaneously. Test failed."
+                                                      else do
+                                                          -- print (fp, fd)
+                                                          pure
+                                                              ( Map.insert
+                                                                  fd
+                                                                  fp
+                                                                  openFiles
+                                                              , True
+                                                              )
+                                              Left _ -> do
+                                                  case
+                                                          P.parseOnly
+                                                              closeParser
+                                                              line
+                                                      of
+                                                          Left _ ->
+                                                              pure
+                                                                  ( openFiles
+                                                                  , atLeastOneMig
+                                                                  )
+                                                          Right fd ->
+                                                              pure
+                                                                  ( Map.delete
+                                                                      fd
+                                                                      openFiles
+                                                                  , atLeastOneMig
+                                                                  )
+                                      )
+                                      (Map.empty :: Map.Map Int FilePath, False)
+                                      openAndCloseLines
+                              openFilesAtEnd `shouldBe` Map.empty
+                              atLeastOneMigrationWasOpened `shouldBe` True -- Otherwise we might be stracing different processes. This is a good sanity check.
                       pure ()
 
 -- | Parses an `openat` strace output line and returns the opened file and file descriptor.

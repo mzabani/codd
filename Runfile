@@ -116,11 +116,13 @@ test-with-db-internal:
     fi
 
 ##
-# Still experimental. Test that codd does not open more than one migration file simultaneously.
-strace-test:
+# Test that codd does not open more than one migration file simultaneously, so that it won't fail in shells or OS's with tight open file limits.
+# OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+test-system-resources:
     set -eo pipefail
-    cabal build -O0 codd-test
-    TESTEXE=$(cabal list-bin -O0 codd-test)
+
     rm -f /tmp/strace.log
     trap "rm -f /tmp/strace.log" ERR EXIT
-    strace -f -e openat,close "$TESTEXE" --match SystemResource 2>/tmp/strace.log
+    # TODO: The command below is calling strace for the entire nix process, which might even include the postgres server! We should call it from within the nix-shell,
+    # possibly using test-with-db-internal or something new.
+    strace -f -e openat,close run test-with-db -- --match SystemResource 2>/tmp/strace.log
