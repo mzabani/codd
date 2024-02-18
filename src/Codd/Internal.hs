@@ -366,14 +366,16 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
         logInfoN "Parse-checking headers of all pending SQL Migrations..."
         parseMigrationFiles migsAlreadyApplied sqlMigrations
 
--- | Opens a UTF-8 file allowing it to be read in streaming fashion.
--- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
--- reads, but does not append '\n' to the Strings it returns, making it impossible to know 
--- whether the last line had a '\n' after it.
--- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
--- So we copied streaming's implementation and modified it slightly.
-streamingReadFile :: MonadResource m => FilePath -> m (FileStream m)
-streamingReadFile filePath = do
+-- | Opens a UTF-8 file allowing it to be read in streaming fashion. This function delays opening the file
+-- until the returned Stream's first chunk is forced, and closes the file immediately after the returned Stream
+-- is fully consumed.
+delayedOpenStreamFile :: MonadResource m => FilePath -> m (FileStream m)
+delayedOpenStreamFile filePath = do
+    -- We can't use Streaming.fromHandle because it uses hGetLine, which removes '\n' from lines it
+    -- reads, but does not append '\n' to the Strings it returns, making it impossible to know 
+    -- whether the last line had a '\n' after it.
+    -- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
+    -- So we copied streaming's implementation and modified it slightly.
     releaseKey <- newIORef Nothing
     pure $ FileStream { filePath, releaseKey, fileStream = lazyStream releaseKey }
   where
@@ -478,7 +480,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
         -> m (t (Either String (FileStream m), AddedSqlMigration m))
     readFromDisk pendingSqlMigrationFiles =
         forM pendingSqlMigrationFiles $ \pendingMigrationPath -> do
-            fs :: FileStream m <- streamingReadFile pendingMigrationPath
+            fs :: FileStream m <- delayedOpenStreamFile pendingMigrationPath
             let fn = takeFileName $ filePath fs
             parsedMig <- parseAddedSqlMigration fn fs
             case parsedMig of
@@ -502,8 +504,10 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                         _ -> do
                             -- Close the file so we don't crash due to the shell's open files limit. The handle will be opened again
                             -- when the stream is forced next time.
+                            -- This isn't terribly pretty and assumes the file won't change in between now and the moment it'll be opened again for SQL to be effectivelly applied,
+                            -- but that assumption is probably fine and unavoidable if we want to report errors in any pending migrations before we start applying their SQL.
                             closeFileStream fs
-                            fileStreamAgain :: FileStream m <- streamingReadFile pendingMigrationPath
+                            fileStreamAgain :: FileStream m <- delayedOpenStreamFile pendingMigrationPath
                             let sqlPiecesStreamAgain = substituteEnvVarsInSqlPiecesStream (migrationEnvVars $ addedSqlMig asqlmig) $ parseSqlPiecesStreaming $ fileStream fileStreamAgain
                                 asqlmigAgain = asqlmig {
                                 addedSqlMig = (addedSqlMig asqlmig) {

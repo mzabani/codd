@@ -11,8 +11,8 @@ import           Codd.Analysis                  ( MigrationCheck(..)
 import           Codd.AppCommands               ( timestampAndMoveMigrationFile
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( listMigrationsFromDisk
-                                                , streamingReadFile
+import           Codd.Internal                  ( delayedOpenStreamFile
+                                                , listMigrationsFromDisk
                                                 )
 import           Codd.Parsing                   ( EnvVars
                                                 , parseSqlMigration
@@ -107,7 +107,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
         isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
         runResourceT $ do
-            migStream     <- streamingReadFile fp
+            migStream     <- delayedOpenStreamFile fp
             parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
             case parsedSqlMigE of
                 Left err -> liftIO $ do
