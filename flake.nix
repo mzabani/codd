@@ -108,6 +108,7 @@
                       postgres-service
                       postgresql_16
                       run
+                      strace # TODO: Only for Linux machines
                     ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
