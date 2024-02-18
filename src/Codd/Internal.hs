@@ -18,7 +18,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
-                                                , parseAddedSqlMigration
+                                                , parseAddedSqlMigration, parseSqlPiecesStreaming, substituteEnvVarsInSqlPiecesStream
                                                 )
 import           Codd.Query                     ( CanStartTxn
                                                 , InTxn
@@ -476,13 +476,11 @@ parseMigrationFiles migsCompleted sqlMigrations = do
          . Traversable t
         => t FilePath
         -> m (t (Either String (FileStream m), AddedSqlMigration m))
-    readFromDisk pendingSqlMigrationFiles = do
-        sqlMigrationsContents :: t (FileStream m) <-
-            pendingSqlMigrationFiles `forM` streamingReadFile
-
-        forM sqlMigrationsContents $ \fileStream -> do
-            let fn = takeFileName $ filePath fileStream
-            parsedMig <- parseAddedSqlMigration fn fileStream
+    readFromDisk pendingSqlMigrationFiles =
+        forM pendingSqlMigrationFiles $ \pendingMigrationPath -> do
+            fs :: FileStream m <- streamingReadFile pendingMigrationPath
+            let fn = takeFileName $ filePath fs
+            parsedMig <- parseAddedSqlMigration fn fs
             case parsedMig of
                 Left err -> do
                     throwIO
@@ -493,12 +491,26 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                         <> err
                 Right asqlmig@(AddedSqlMigration mig _) -> do
                     case migrationSql mig of
-                        UnparsedSql _ ->
+                        UnparsedSql _ -> do
                             logWarnN
                                 $ Text.pack fn
                                 <> " is not to be parsed and thus will be considered in is entirety as in-txn, without support for COPY."
-                        _ -> pure ()
-                    pure (Right fileStream, asqlmig)
+                            -- We can close the file with peace of mind in this case, as it has been read into memory in its entirety. In fact,
+                            -- it's already closed because the stream was consumed completely, but let's be explicit.
+                            closeFileStream fs
+                            pure (Right fs, asqlmig) 
+                        _ -> do
+                            -- Close the file so we don't crash due to the shell's open files limit. The handle will be opened again
+                            -- when the stream is forced next time.
+                            closeFileStream fs
+                            fileStreamAgain :: FileStream m <- streamingReadFile pendingMigrationPath
+                            let sqlPiecesStreamAgain = substituteEnvVarsInSqlPiecesStream (migrationEnvVars $ addedSqlMig asqlmig) $ parseSqlPiecesStreaming $ fileStream fileStreamAgain
+                                asqlmigAgain = asqlmig {
+                                addedSqlMig = (addedSqlMig asqlmig) {
+                                    migrationSql = WellParsedSql sqlPiecesStreamAgain
+                                }
+                            }
+                            pure (Right fileStreamAgain, asqlmigAgain)
 
 data ApplyMigsResult a = ApplyMigsResult
     { migsAppliedAt     :: [AppliedMigration]

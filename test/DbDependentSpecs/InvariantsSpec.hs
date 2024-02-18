@@ -47,6 +47,7 @@ timestampsMig = AddedSqlMigration
                 "CREATE TABLE timestamps (seq_number int not null, tm1 timestamptz not null, tm2 timestamptz not null, UNIQUE (seq_number), UNIQUE(tm1), UNIQUE(tm2));"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 0)
 lotsOfObjectsMigration = AddedSqlMigration
@@ -60,6 +61,7 @@ lotsOfObjectsMigration = AddedSqlMigration
  -- <> "CREATE UNIQUE INDEX something_idx ON other_table (a1) WHERE (a1 > 50);"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 0)
 

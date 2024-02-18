@@ -46,6 +46,7 @@ migThatWontRun = AddedSqlMigration
                                     <> "CREATE SCHEMA schema_that_wont_exist;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 99999)
 
