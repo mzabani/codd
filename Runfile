@@ -16,7 +16,7 @@ ci-tests:
     # not the IOHK one. We assume differences in the codebase regarding different
     # postgres versions aren't enough to make it worth testing every version here too.
     echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
-    nix-build ./nix/install-codd-nixpkgs.nix -A coddWithCheck
+    nix-build ./nix/install-codd-nixpkgs.nix --no-link -A coddWithCheck
 
     run test-with-db --nix --pg 15
     run test-with-db --nix --pg 14

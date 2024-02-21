@@ -38,6 +38,7 @@ in rec {
       export PGHOST="127.0.0.1"
       export PGUSER="postgres"
       export PATH="$PATH:${nixpkgs.postgresql_16}/bin" # Some tests require pg_dump in PATH
+      export HSPEC_SKIP="/SystemResourcesSpecs/" # This test requires strace-wrapping, and I don't expect different libs would make it fail anyway
       ${pgService}/bin/init-postgres
     '' + self.checkPhase;
   });
