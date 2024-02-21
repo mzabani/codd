@@ -23,6 +23,9 @@ ci-tests:
     run test-with-db --nix --pg 13
     run test-with-db --nix --pg 12
 
+    echo "Running system-resources test"
+    run test-system-resources --nix
+
 ##
 # Formats all Haskell files with brittany.
 format-hs:
