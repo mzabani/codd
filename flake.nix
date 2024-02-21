@@ -108,7 +108,7 @@
                       postgres-service
                       postgresql_16
                       run
-                    ];
+                    ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
 

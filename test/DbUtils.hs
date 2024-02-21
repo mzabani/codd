@@ -176,6 +176,7 @@ createTestUserMigPol = do
                                             { connectUser     = "postgres"
                                             , connectDatabase = "postgres"
                                             }
+            , migrationEnvVars        = mempty
             }
         migTimestamp
 

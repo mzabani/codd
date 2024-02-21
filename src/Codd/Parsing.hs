@@ -43,6 +43,7 @@ module Codd.Parsing
     , parseAndClassifyMigration
     , parseMigrationTimestamp
     , parseSqlPiecesStreaming
+    , substituteEnvVarsInSqlPiecesStream
     , toMigrationTimestamp
 
   -- Exported for tests
@@ -54,7 +55,8 @@ module Codd.Parsing
 import           Control.Applicative            ( (<|>)
                                                 , optional
                                                 )
-import           Control.Monad                  ( guard
+import           Control.Monad                  ( forM_
+                                                , guard
                                                 , void
                                                 , when
                                                 )
@@ -114,12 +116,15 @@ import           Streaming                      ( MFunctor(hoist)
                                                 )
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
-import           UnliftIO                       ( MonadIO
+import           UnliftIO                       ( IORef
+                                                , MonadIO
                                                 , liftIO
+                                                , readIORef
                                                 )
 import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
 import           UnliftIO.Resource              ( ReleaseKey )
+import           UnliftIO.Resource              ( release )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -135,6 +140,7 @@ data SqlMigration m = SqlMigration
     , migrationSql            :: ParsedSql m
     , migrationInTxn          :: Bool
     , migrationCustomConnInfo :: Maybe ConnectInfo
+    , migrationEnvVars        :: Map Text Text
     }
 
 data AddedSqlMigration m = AddedSqlMigration
@@ -152,7 +158,7 @@ data AppliedMigration = AppliedMigration
 
 data FileStream m = FileStream
     { filePath   :: FilePath
-    , releaseKey :: ReleaseKey
+    , releaseKey :: IORef (Maybe ReleaseKey)
     , fileStream :: Stream (Of Text) m ()
     }
 
@@ -176,7 +182,11 @@ instance Monad m => MigrationStream m (PureStream m) where
 instance MonadIO m => MigrationStream m (FileStream m) where
     -- | Reads entire file from disk again as so to
     -- be immune to the state of the Stream.
-    readFullContents FileStream { filePath } = liftIO $ Text.readFile filePath
+    readFullContents FileStream { filePath, releaseKey } = liftIO $ do
+        -- This contains a copy of `closeFileStream`, but importing that would introduce circular dependencies :(
+        mrkey <- readIORef releaseKey
+        forM_ mrkey release
+        Text.readFile filePath
     migStream FileStream { fileStream } = fileStream
 
 -- TODO: This should probably not be in Parsing.hs
@@ -988,6 +998,21 @@ isTransactionEndingPiece (RollbackTransaction _) = True
 isTransactionEndingPiece (CommitTransaction   _) = True
 isTransactionEndingPiece _                       = False
 
+-- | Replaces arbitrary strings with env vars by direct text substition of ${ENVVARNAME}
+textReplaceEnvVars :: Map Text Text -> Text -> Text
+textReplaceEnvVars = Map.foldlWithKey'
+    (\accF var val -> Text.replace ("${" <> var <> "}") val . accF)
+    id
+
+substituteEnvVarsInSqlPiecesStream
+    :: Monad m
+    => Map Text Text -- ^ Names and values of env vars to query from environment and substitute
+    -> Stream (Of SqlPiece) m r
+    -> Stream (Of SqlPiece) m r
+substituteEnvVarsInSqlPiecesStream envVars s =
+    let subsfunc = textReplaceEnvVars envVars
+    in  Streaming.map (mapSqlPiece subsfunc) s
+
 {-# INLINE parseAndClassifyMigration #-} -- See Note [Inlining and specialization]
 -- | Parses only comments and white-space that precede the first SQL statement and
 -- extracts from them custom options and a custom connection string when
@@ -995,7 +1020,15 @@ isTransactionEndingPiece _                       = False
 parseAndClassifyMigration
     :: (MonadThrow m, MigrationStream m s, EnvVars m)
     => s
-    -> m (Either String ([SectionOption], Maybe ConnectInfo, ParsedSql m))
+    -> m
+           ( Either
+                 String
+                 ( Map Text Text
+                 , [SectionOption]
+                 , Maybe ConnectInfo
+                 , ParsedSql m
+                 )
+           )
 parseAndClassifyMigration sqlStream = do
   -- There is no easy way to avoid parsing at least up until and including
   -- the first sql statement.
@@ -1028,23 +1061,17 @@ parseAndClassifyMigration sqlStream = do
                 $ "Malformed -- codd-env-vars comment. Make sure there is at least one environment variable, that they are separated by a comma and that they only contain letters, numbers and underscore. Original comment: "
                 <> Text.unpack badLine
         Nothing -> do
-            envVars <-
-                getEnvVars $ mconcat
+            let
+                envVarNames = mconcat
                     [ vars | CoddCommentSuccess vars <- envVarParseResults ]
-            let textReplaceEnvVars :: Text -> Text
-                textReplaceEnvVars = Map.foldlWithKey'
-                    (\accF var val ->
-                        Text.replace ("${" <> var <> "}") val . accF
-                    )
-                    id
-                    envVars
-                allOptSections = mapMaybe
+            envVars <- getEnvVars envVarNames
+            let allOptSections = mapMaybe
                     ( (\case
                           Left  _    -> Nothing
                           Right opts -> Just opts
                       )
                     . ( parseOnly (coddCommentParser <* endOfInput)
-                      . textReplaceEnvVars
+                      . textReplaceEnvVars envVars
                       . sqlPieceText
                       )
                     )
@@ -1055,7 +1082,7 @@ parseAndClassifyMigration sqlStream = do
                           Right connInfo -> Just connInfo
                       )
                     . ( parseOnly (coddConnStringCommentParser <* endOfInput)
-                      . textReplaceEnvVars
+                      . textReplaceEnvVars envVars
                       . sqlPieceText
                       )
                     )
@@ -1106,17 +1133,19 @@ parseAndClassifyMigration sqlStream = do
                         fullMigContents <- readFullContents sqlStream
                         pure
                             $ Right
-                                  ( opts
+                                  ( envVars
+                                  , opts
                                   , customConnStr
                                   , UnparsedSql fullMigContents
                                   )
                     | otherwise -> pure $ Right
-                        ( opts
+                        ( envVars
+                        , opts
                         , customConnStr
                     -- Prepend consumedPieces to preserve the property that SqlMigration objects
                     -- will hold the full original SQL.
                         , WellParsedSql
-                        $  Streaming.map (mapSqlPiece textReplaceEnvVars)
+                        $  substituteEnvVarsInSqlPiecesStream envVars
                         $  Streaming.each consumedPieces
                         <> sqlPiecesBodyStream
                         )
@@ -1149,18 +1178,20 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
     noTxn opts = OptInTxn False `elem` opts
 
     mkMig
-        :: ([SectionOption], Maybe ConnectInfo, ParsedSql m) -> SqlMigration m
-    mkMig (opts, customConnString, sql) = SqlMigration
+        :: (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m)
+        -> SqlMigration m
+    mkMig (migrationEnvVars, opts, customConnString, sql) = SqlMigration
         { migrationName           = name
         , migrationSql            = sql
         , migrationInTxn          = inTxn opts
         , migrationCustomConnInfo = customConnString
+        , migrationEnvVars
         }
 
     toMig
-        :: ([SectionOption], Maybe ConnectInfo, ParsedSql m)
+        :: (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m)
         -> Either String (SqlMigration m)
-    toMig x@(ops, _, _) = case checkOpts ops of
+    toMig x@(_, ops, _, _) = case checkOpts ops of
         Just err -> Left err
         _        -> Right $ mkMig x
 

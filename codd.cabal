@@ -216,6 +216,7 @@ test-suite codd-test
       LiftedExpectations
       ParsingSpec
       Paths_codd
+      SystemResourcesSpecs.OpenFilesSpec
       TypesGen
       TxnConstraintsSpecs.ValidConstructsSpec
       WritingReadingRepresentationsSpec

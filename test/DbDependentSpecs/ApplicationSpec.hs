@@ -87,6 +87,7 @@ placeHoldersMig = AddedSqlMigration
                                         "CREATE TABLE any_table();\n-- ? $1 $2 ? ? ?"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 0)
 selectMig = AddedSqlMigration
@@ -94,6 +95,7 @@ selectMig = AddedSqlMigration
                  , migrationSql            = mkValidSql "SELECT 1, 3"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
                  }
     (getIncreasingTimestamp 1)
 copyMig = AddedSqlMigration
@@ -109,6 +111,7 @@ copyMig = AddedSqlMigration
                 "CREATE TABLE x(name TEXT); COPY x (name) FROM STDIN WITH (FORMAT CSV);\nSome name\n\\.\n COPY x FROM STDIN WITH (FORMAT CSV);\n\\.\n COPY x FROM stdin;\nLine\\nbreak\\r\n\\.\n"
         , migrationInTxn          = False
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 2)
 
@@ -125,6 +128,7 @@ createTableNewTableMig tableName inTxn migOrder = AddedSqlMigration
                                     <> "()"
         , migrationInTxn          = inTxn
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp (fromIntegral migOrder))
 
@@ -140,6 +144,7 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
                                 <> ");"
     , migrationInTxn          = False
     , migrationCustomConnInfo = Just customConnInfo
+    , migrationEnvVars        = mempty
     }
 
 createCountCheckingMig :: MonadThrow m => Int -> String -> SqlMigration m
@@ -159,6 +164,7 @@ createCountCheckingMig expectedCount migName = SqlMigration
 \\n$do$;"
     , migrationInTxn          = False
     , migrationCustomConnInfo = Nothing
+    , migrationEnvVars        = mempty
     }
 
 -- | A migration that uses many different ways of inputting strings in postgres. In theory we'd only need to
@@ -205,6 +211,7 @@ stdConfStringsMig = AddedSqlMigration
 \;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 0)
 
@@ -228,6 +235,7 @@ notStdConfStringsMig = AddedSqlMigration
 \;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 0)
 
@@ -539,6 +547,7 @@ spec = do
                                                 , migrationInTxn          = True
                                                 , migrationCustomConnInfo =
                                                     Nothing
+                                                , migrationEnvVars = mempty
                                                 }
                                             (getIncreasingTimestamp 0)
                                         , AddedSqlMigration
@@ -553,13 +562,14 @@ spec = do
                                                 , migrationInTxn          = True
                                                 , migrationCustomConnInfo =
                                                     Nothing
+                                                , migrationEnvVars = mempty
                                                 }
                                             (getIncreasingTimestamp 1)
                                         , AddedSqlMigration
                                             SqlMigration
-                                                { migrationName           =
+                                                { migrationName =
                                                     "0002-no-txn-mig.sql"
-                                                , migrationSql            =
+                                                , migrationSql =
                                                     mkValidSql
                                                     $ "CREATE TYPE experience AS ENUM ('junior', 'senior');"
                                                     <> "\nALTER TABLE any_table ADD COLUMN experience experience;"
@@ -571,6 +581,7 @@ spec = do
                                                 , migrationInTxn = False
                                                 , migrationCustomConnInfo =
                                                     Nothing
+                                                , migrationEnvVars = mempty
                                                 }
                                             (getIncreasingTimestamp 2)
                                         , AddedSqlMigration
@@ -585,6 +596,7 @@ spec = do
                                                 , migrationInTxn          = True
                                                 , migrationCustomConnInfo =
                                                     Nothing
+                                                , migrationEnvVars = mempty
                                                 }
                                             (getIncreasingTimestamp 3)
                                         , AddedSqlMigration
@@ -599,6 +611,7 @@ spec = do
                                                 , migrationInTxn          = True
                                                 , migrationCustomConnInfo =
                                                     Nothing
+                                                , migrationEnvVars = mempty
                                                 }
                                             (getIncreasingTimestamp 4)
                                         ]

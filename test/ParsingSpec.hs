@@ -652,9 +652,9 @@ spec = do
                             $ Streaming.yield sqlWithVars
                         case res of
                             Left err -> error err
-                            Right (_, _, UnparsedSql _) ->
+                            Right (_, _, _, UnparsedSql _) ->
                                 error "Got UnparsedSql"
-                            Right (_, _, WellParsedSql pieces) ->
+                            Right (_, _, _, WellParsedSql pieces) ->
                                 mconcat
                                     .   map sqlPieceText
                                     <$> Streaming.toList_ pieces

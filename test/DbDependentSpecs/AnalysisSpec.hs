@@ -31,6 +31,7 @@ createTableMig = AddedSqlMigration
                  , migrationSql = mkValidSql "CREATE TABLE anytable ();"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
                  }
     (getIncreasingTimestamp 1)
 addColumnMig = AddedSqlMigration
@@ -40,6 +41,7 @@ addColumnMig = AddedSqlMigration
                                         "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 2)
 dropColumnMig = AddedSqlMigration
@@ -49,6 +51,7 @@ dropColumnMig = AddedSqlMigration
                                         "ALTER TABLE anytable DROP COLUMN anycolumn;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
         }
     (getIncreasingTimestamp 3)
 dropTableMig = AddedSqlMigration
@@ -56,6 +59,7 @@ dropTableMig = AddedSqlMigration
                  , migrationSql            = mkValidSql "DROP TABLE anytable;"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
                  }
     (getIncreasingTimestamp 4)
 
@@ -74,6 +78,7 @@ spec = do
                                     , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
+                                    , migrationEnvVars        = mempty
                                     }
                                 )
                                 ["BEGIN", "BEGIN; BEGIN; SELECT 1;"]
@@ -84,6 +89,7 @@ spec = do
                                     , migrationSql            = mkValidSql c
                                     , migrationInTxn          = False
                                     , migrationCustomConnInfo = Nothing
+                                    , migrationEnvVars        = mempty
                                     }
                                 )
                                 [ "BEGIN;ROLLBACK"
@@ -114,6 +120,7 @@ spec = do
                           , migrationSql            = mkValidSql "COMMIT;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
+                          , migrationEnvVars        = mempty
                           }
                   checkMigration commitTxnMig
                       >>= (`shouldSatisfy` \case
@@ -126,6 +133,7 @@ spec = do
                           , migrationSql            = mkValidSql "ROLLBACK;"
                           , migrationInTxn          = True
                           , migrationCustomConnInfo = Nothing
+                          , migrationEnvVars        = mempty
                           }
                   checkMigration rollbackTxnMig
                       >>= (`shouldSatisfy` \case
