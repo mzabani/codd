@@ -2,89 +2,28 @@ module SystemResourcesSpecs.OpenFilesSpec where
 
 import           Codd                           ( VerifySchemas(..)
                                                 , applyMigrations
-                                                , applyMigrationsNoCheck
-                                                )
-import           Codd.Analysis                  ( MigrationCheck(..)
-                                                , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( baseApplyMigsBlock
-                                                , collectAndApplyMigrations
-                                                , withConnection
-                                                )
-import           Codd.Internal.MultiQueryStatement
-                                                ( SqlStatementException )
-import           Codd.Parsing                   ( AddedSqlMigration(..)
-                                                , SqlMigration(..)
-                                                , hoistAddedSqlMigration
-                                                )
-import           Codd.Query                     ( unsafeQuery1 )
-import           Codd.Representations           ( readRepresentationsFromDbWithSettings
-                                                )
-import           Codd.Representations.Types     ( DbRep(..) )
-import           Codd.Types                     ( RetryBackoffPolicy(..)
-                                                , RetryPolicy(..)
-                                                , TxnIsolationLvl(..)
-                                                )
 import           Control.Applicative            ( (<|>) )
 import           Control.Monad                  ( foldM
                                                 , forM_
                                                 , void
-                                                , when
                                                 )
-import           Control.Monad.Logger           ( LogStr
-                                                , LoggingT(runLoggingT)
-                                                , fromLogStr
-                                                , runStdoutLoggingT
-                                                )
-import           Control.Monad.Trans            ( lift )
+import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
-import qualified Data.Aeson                    as Aeson
 import qualified Data.Attoparsec.Text          as P
 import qualified Data.Char                     as Char
-import           Data.Functor                   ( (<&>) )
-import qualified Data.HashMap.Strict           as HM
-import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
-import           Data.Text                      ( Text
-                                                , unpack
-                                                )
+import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
-import           Data.Time                      ( UTCTime
-                                                , diffUTCTime
-                                                , secondsToDiffTime
-                                                , secondsToNominalDiffTime
-                                                )
-import qualified Database.PostgreSQL.Simple    as DB
-import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
-                                                , createTestUserMig
-                                                , createTestUserMigPol
-                                                , finallyDrop
-                                                , fixMigsOrder
-                                                , getIncreasingTimestamp
-                                                , mkValidSql
-                                                , shouldBeStrictlySortedOn
-                                                , testCoddSettings
-                                                , testConnInfo
                                                 , testConnTimeout
                                                 )
 import           Test.Hspec
 import           Test.Hspec.Expectations
-import           Test.QuickCheck
-import qualified Test.QuickCheck               as QC
-import           UnliftIO                       ( MonadIO
-                                                , SomeException
-                                                , liftIO
-                                                , stdout
+import           UnliftIO                       ( SomeException
                                                 , try
-                                                )
-import           UnliftIO.Concurrent            ( MVar
-                                                , modifyMVar_
-                                                , newMVar
-                                                , readMVar
                                                 )
 
 spec :: Spec
@@ -162,10 +101,6 @@ spec = do
                                                                   ++ show e
                                                                   ++ "': "
                                                                   ++ show line
-                                                              -- pure
-                                                              --     ( openFiles
-                                                              --     , atLeastOneMig
-                                                              --     )
                                                           Right fd ->
                                                               pure
                                                                   ( Map.delete
