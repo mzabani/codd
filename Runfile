@@ -57,7 +57,7 @@ format-hs:
 test-no-db:
     set -eo pipefail
     TARGS=( "$@" ) && [ -z "$1" ] && TARGS=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/)
-    STRACECMD=() && [ -n "$STRACE" ] && STRACECMD=(strace -f -e openat,open,close -o /tmp/strace.log)
+    STRACECMD=() && [ -n "$STRACE" ] && STRACECMD=(strace -f -e openat,open,close -o /tmp/strace-codd-system-resources-test.log)
     if [ -n "$NIX" ]; then
         # This Run command is used insire pure Nix shells where `nix` is not available. That's why
         # this option is useful.
@@ -118,8 +118,8 @@ test-system-resources:
         exit 1
     fi
 
-    rm -f /tmp/strace.log
-    trap "rm -f /tmp/strace.log" ERR EXIT
+    rm -f /tmp/strace-codd-system-resources-test.log
+    trap "rm -f /tmp/strace-codd-system-resources-test.log" ERR EXIT
 
     if [ -n "$NIX" ]; then
         nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test

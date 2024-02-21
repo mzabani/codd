@@ -103,11 +103,13 @@ spec = do
                           Nothing
                           testConnTimeout
                           (const $ pure ())
-                      contentsE <- try $ Text.readFile "/tmp/strace.log"
+                      contentsE <-
+                          try $ Text.readFile
+                              "/tmp/strace-codd-system-resources-test.log"
                       case contentsE of
                           Left (ex :: SomeException) -> do
                               putStrLn
-                                  "Error reading /tmp/strace.log. Are you running this with the runfile target or are you running this test directly? This test needs to run under a very specific `strace` command that you'll find in our Runfile test targets, or it doesn't work."
+                                  "Error reading /tmp/strace-codd-system-resources-test.log. Are you running this with the runfile target or are you running this test directly? This test needs to run under a very specific `strace` command that you'll find in our Runfile test targets, or it doesn't work."
                               throwM ex
                           Right contents -> do
                               -- TODO: also test on-disk representations
