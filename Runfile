@@ -53,27 +53,22 @@ format-hs:
 # all tests that don't require a database.
 # OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
 # OPTION NONIXBUILD --nonixbuild Assume the test executable has already been build with Nix. Option used mostly internally.
+# OPTION STRACE --strace Wrap test execution with strace. Useful for a very specific test or for debugging.
 test-no-db:
     set -eo pipefail
+    TARGS=( "$@" ) && [ -z "$1" ] && TARGS=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/)
+    STRACECMD=() && [ -n "$STRACE" ] && STRACECMD=(strace -f -e openat,open,close -o /tmp/strace.log)
     if [ -n "$NIX" ]; then
-
         # This Run command is used insire pure Nix shells where `nix` is not available. That's why
         # this option is useful.
         if [ -z "$NONIXBUILD" ]; then
             nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
         fi
 
-        if [ -n "$1" ]; then
-            ./local/codd-test/bin/codd-test "$@"
-        else
-            ./local/codd-test/bin/codd-test --skip "/DbDependentSpecs/"
-        fi
+        "${STRACECMD[@]}" ./local/codd-test/bin/codd-test "${TARGS[@]}"
     else
-        if [ -n "$1" ]; then
-            cabal run -O0 codd-test -- "$@"
-        else
-            cabal run -O0 codd-test -- --skip "/DbDependentSpecs/"
-        fi
+        cabal build -O0 codd-test
+        "${STRACECMD[@]}" `cabal list-bin -O0 codd-test` "${TARGS[@]}"
     fi
 
 ## 
@@ -85,6 +80,8 @@ test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(16)
     [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
+    NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
+    NIXDEVARGS=() && [ -n "$NIX" ] && NIXDEVARGS=(-i)
 
     # Build the test executable only once with Nix
     if [ -n "$NIX" ]; then
@@ -93,27 +90,21 @@ test-with-db:
     
     for pg in "${PG[@]}"; do
         echo "Running tests on Postgres $pg"
-        if [ -n "$NIX" ]; then
-            nix develop ".#testShells.x86_64-linux.pg${pg}" -i -c run test-with-db-internal --nix -- "$@"
-        else
-            nix develop ".#testShells.x86_64-linux.pg${pg}" -c run test-with-db-internal -- "$@"
-        fi
+        nix develop ".#testShells.x86_64-linux.pg${pg}" "${NIXDEVARGS[@]}" -c run test-with-db-internal "${NIXA[@]}" -- "$@"
     done
 
 ##
 # Do not use this. Use the `test-with-db` command instead.
 # OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+# OPTION STRACE --strace Wrap test execution with strace. Useful for a very specific test or for debugging.
 test-with-db-internal:
     set -eo pipefail
     trap "echo Stopping postgres && pg_ctl stop" EXIT
-    NIXA=()
-    [ -n "$NIX" ] && NIXA=("--nix")
+    NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
+    STRACEA=() && [ -n "$STRACE" ] && STRACEA=(--strace)
+    TARGS=(/DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
 
-    if [ -z "$1" ]; then
-        run test-no-db "${NIXA[@]}" --nonixbuild -- --match "/DbDependentSpecs/"
-    else
-        run test-no-db "${NIXA[@]}" --nonixbuild -- "$@"
-    fi
+    run test-no-db "${NIXA[@]}" "${STRACEA[@]}" --nonixbuild -- "${TARGS[@]}"
 
 ##
 # Test that codd does not open more than one migration file simultaneously, so that it won't fail in shells or OS's with tight open file limits.
@@ -123,6 +114,10 @@ test-system-resources:
 
     rm -f /tmp/strace.log
     trap "rm -f /tmp/strace.log" ERR EXIT
-    # TODO: The command below is calling strace for the entire nix process, which might even include the postgres server! We should call it from within the nix-shell,
-    # possibly using test-with-db-internal or something new.
-    strace -f -e openat,close run test-with-db -- --match SystemResource 2>/tmp/strace.log
+
+    if [ -n "$NIX" ]; then
+        nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
+        nix develop ".#testShells.x86_64-linux.pg16" -i -c run test-with-db-internal --strace --nix -- --match "/SystemResourcesSpecs/"
+    else
+        nix develop ".#testShells.x86_64-linux.pg16" -c run test-with-db-internal --strace -- --match "/SystemResourcesSpecs/"
+    fi

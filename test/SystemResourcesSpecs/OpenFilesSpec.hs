@@ -41,6 +41,7 @@ import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
 import qualified Data.Aeson                    as Aeson
 import qualified Data.Attoparsec.Text          as P
+import qualified Data.Char                     as Char
 import           Data.Functor                   ( (<&>) )
 import qualified Data.HashMap.Strict           as HM
 import qualified Data.List                     as List
@@ -85,7 +86,6 @@ import           UnliftIO.Concurrent            ( MVar
                                                 , newMVar
                                                 , readMVar
                                                 )
-import           UnliftIO.Directory             ( removeFile )
 
 spec :: Spec
 spec = do
@@ -110,25 +110,22 @@ spec = do
                                   "Error reading /tmp/strace.log. Are you running this with the runfile target or are you running this test directly? This test needs to run under a very specific `strace` command that you'll find in our Runfile test targets, or it doesn't work."
                               throwM ex
                           Right contents -> do
-                              removeFile "/tmp/strace.log"
                               -- TODO: also test on-disk representations
                               let
                                   openAndCloseLines =
                                       filter
                                               (\l ->
-                                                  "openat("
-                                                      `Text.isInfixOf` l
-                                                      && "migrations/open-files-limit"
+                                                  "migrations/open-files-limit"
                                                       `Text.isInfixOf` l
                                                       ||               "close("
                                                       `Text.isInfixOf` l
                                               )
                                           $ Text.lines contents
-                              -- forM_ openAndCloseLines Text.putStrLn
+                              -- forM_ (Text.lines contents) Text.putStrLn
                               (openFilesAtEnd, atLeastOneMigrationWasOpened) <-
                                   foldM
                                       (\(openFiles, atLeastOneMig) line -> do
-                                          case P.parseOnly openatParser line of
+                                          case P.parseOnly openParser line of
                                               Right (fp, fd) ->
                                                   if Map.size openFiles > 0
                                                       then do
@@ -171,19 +168,19 @@ spec = do
                                       openAndCloseLines
                               openFilesAtEnd `shouldBe` Map.empty
                               atLeastOneMigrationWasOpened `shouldBe` True -- Otherwise we might be stracing different processes. This is a good sanity check.
-                      pure ()
 
--- | Parses an `openat` strace output line and returns the opened file and file descriptor.
+-- | Parses both glibcs `openat` and musl's `open` syscalls from a `strace -f -o` output line and returns the opened file and file descriptor.
 -- This is tailed to codd's current behaviour, e.g. that the file is opened in non-blocking and
 -- read-only mode. If this changes or the output of strace changes, this will fail. It sounds fragile,
 -- but it's sort of a good golden test when you think about it.
-openatParser :: P.Parser (FilePath, Int)
-openatParser = do
-    void $ P.string "[pid "
+openParser :: P.Parser (FilePath, Int)
+openParser = do
     void P.decimal
-    void $ P.string "] openat(AT_FDCWD, \""
+    P.skipWhile Char.isSpace
+    void $ P.string "openat(AT_FDCWD, \"" <|> P.string "open(\"" -- glibc and musl use different syscalls. The former is glibc's and the latter is musl's.
     fp <- P.takeWhile1 ('"' /=)
-    void $ P.string "\", O_RDONLY|O_NOCTTY|O_NONBLOCK) = "
+    void $ P.string "\", O_RDONLY|O_NOCTTY|O_NONBLOCK) = " <|> P.string
+        "\", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_LARGEFILE) = " -- Also glibc and musl, respectively
     fd <- P.decimal
     pure (Text.unpack fp, fd)
 
@@ -191,9 +188,9 @@ openatParser = do
 -- | Parses a `close` strace output line and returns the closed file descriptor.
 closeParser :: P.Parser Int
 closeParser = do
-    void $ P.string "[pid "
     void P.decimal
-    void $ P.string "] close("
+    P.skipWhile Char.isSpace
+    void $ P.string "close("
     fd <- P.decimal
     void $ P.string ")"
     pure fd
