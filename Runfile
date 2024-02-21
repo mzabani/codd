@@ -112,6 +112,12 @@ test-with-db-internal:
 test-system-resources:
     set -eo pipefail
 
+    if ! command -v strace &> /dev/null
+    then
+        echo strace could not be found. You need strace installed for this test.
+        exit 1
+    fi
+
     rm -f /tmp/strace.log
     trap "rm -f /tmp/strace.log" ERR EXIT
 

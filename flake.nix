@@ -108,8 +108,7 @@
                       postgres-service
                       postgresql_16
                       run
-                      strace # TODO: Only for Linux machines
-                    ];
+                    ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
 
