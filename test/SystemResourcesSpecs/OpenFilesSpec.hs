@@ -91,18 +91,20 @@ spec :: Spec
 spec = do
     describe "SystemResourcesSpecs" $ do
         describe "Open files limit" $ aroundFreshDatabase $ do
-            it "At most one .sql migration file open at a time"
+            it
+                    "At most one .sql migration file and one on-disk representation file open at a time"
                 $ \emptyTestDbInfo -> do
-                      -- This test doesn't assert anything. It must run with `strace` and then the output of that
-                      -- will inspect the number of concurrently open .sql files
-                      void @IO $ runStdoutLoggingT $ applyMigrationsNoCheck
+                      void @IO $ runStdoutLoggingT $ applyMigrations
                           emptyTestDbInfo
                               { sqlMigrations =
                                   ["test/migrations/open-files-limit/"]
+                              , onDiskReps    = Left "./expected-schema"
                               }
                           Nothing
                           testConnTimeout
-                          (const $ pure ())
+                          LaxCheck -- This will output an error but will not throw. What matters is that on-disk reps are read
+                      -- This test must run wrapped in a specific strace incantation as it'll read the output log of that
+                      -- to assert that at most one migration file is opened at a time
                       contentsE <-
                           try $ Text.readFile
                               "/tmp/strace-codd-system-resources-test.log"
@@ -112,12 +114,14 @@ spec = do
                                   "Error reading /tmp/strace-codd-system-resources-test.log. Are you running this with the runfile target or are you running this test directly? This test needs to run under a very specific `strace` command that you'll find in our Runfile test targets, or it doesn't work."
                               throwM ex
                           Right contents -> do
-                              -- TODO: also test on-disk representations
                               let
                                   openAndCloseLines =
                                       filter
                                               (\l ->
+                                                  -- We test both migrations and on-disk representations
                                                   "migrations/open-files-limit"
+                                                      `Text.isInfixOf` l
+                                                      || "expected-schema/"
                                                       `Text.isInfixOf` l
                                                       ||               "close("
                                                       `Text.isInfixOf` l
@@ -132,14 +136,13 @@ spec = do
                                                   if Map.size openFiles > 0
                                                       then do
                                                           putStrLn
-                                                              "More than one simultaneously open migrations! Here's the strace log:"
+                                                              "More than one simultaneously open migration or on-disk representation! Here's the strace log:"
                                                           forM_
                                                               openAndCloseLines
                                                               Text.putStrLn
                                                           error
-                                                              "More than one migration open simultaneously. Test failed."
+                                                              "More than one file open simultaneously. Test failed."
                                                       else do
-                                                          -- print (fp, fd)
                                                           pure
                                                               ( Map.insert
                                                                   fd
@@ -153,11 +156,16 @@ spec = do
                                                               closeParser
                                                               line
                                                       of
-                                                          Left _ ->
-                                                              pure
-                                                                  ( openFiles
-                                                                  , atLeastOneMig
-                                                                  )
+                                                          Left e ->
+                                                              error
+                                                                  $ "Found strace line that could not be parsed due to '"
+                                                                  ++ show e
+                                                                  ++ "': "
+                                                                  ++ show line
+                                                              -- pure
+                                                              --     ( openFiles
+                                                              --     , atLeastOneMig
+                                                              --     )
                                                           Right fd ->
                                                               pure
                                                                   ( Map.delete
@@ -171,18 +179,20 @@ spec = do
                               openFilesAtEnd `shouldBe` Map.empty
                               atLeastOneMigrationWasOpened `shouldBe` True -- Otherwise we might be stracing different processes. This is a good sanity check.
 
--- | Parses both glibcs `openat` and musl's `open` syscalls from a `strace -f -o` output line and returns the opened file and file descriptor.
--- This is tailed to codd's current behaviour, e.g. that the file is opened in non-blocking and
--- read-only mode. If this changes or the output of strace changes, this will fail. It sounds fragile,
--- but it's sort of a good golden test when you think about it.
+-- | Parses both glibc's `openat` and musl's `open` syscalls from a `strace -f -o` output line and returns the opened file and file descriptor.
 openParser :: P.Parser (FilePath, Int)
 openParser = do
     void P.decimal
     P.skipWhile Char.isSpace
     void $ P.string "openat(AT_FDCWD, \"" <|> P.string "open(\"" -- glibc and musl use different syscalls. The former is glibc's and the latter is musl's.
     fp <- P.takeWhile1 ('"' /=)
-    void $ P.string "\", O_RDONLY|O_NOCTTY|O_NONBLOCK) = " <|> P.string
-        "\", O_RDONLY|O_NOCTTY|O_NONBLOCK|O_LARGEFILE) = " -- Also glibc and musl, respectively
+    void $ P.string "\","
+    P.skipWhile Char.isSpace
+    P.skipWhile (')' /=) -- Skip all flags, such as O_RDONLY|O_NOCTTY|O_NONBLOCK and others
+    void $ P.string ")"
+    P.skipWhile Char.isSpace
+    void $ P.string "="
+    P.skipWhile Char.isSpace
     fd <- P.decimal
     pure (Text.unpack fp, fd)
 

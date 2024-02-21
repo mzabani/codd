@@ -110,7 +110,7 @@ test-with-db-internal:
     run test-no-db "${NIXA[@]}" "${STRACEA[@]}" --nonixbuild -- "${TARGS[@]}"
 
 ##
-# Test that codd does not open more than one migration file simultaneously, so that it won't fail in shells or OS's with tight open file limits.
+# Test that codd does not open more than one migration file or on-disk representation file simultaneously, so that it won't fail in shells or OS's with tight open file limits.
 # OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
 test-system-resources:
     set -eo pipefail
