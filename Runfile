@@ -85,6 +85,7 @@ test-with-db:
     [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
     NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
     NIXDEVARGS=() && [ -n "$NIX" ] && NIXDEVARGS=(-i)
+    TARGS=(--match /DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
 
     # Build the test executable only once with Nix
     if [ -n "$NIX" ]; then
@@ -93,7 +94,7 @@ test-with-db:
     
     for pg in "${PG[@]}"; do
         echo "Running tests on Postgres $pg"
-        nix develop ".#testShells.x86_64-linux.pg${pg}" "${NIXDEVARGS[@]}" -c run test-with-db-internal "${NIXA[@]}" -- "$@"
+        nix develop ".#testShells.x86_64-linux.pg${pg}" "${NIXDEVARGS[@]}" -c run test-with-db-internal "${NIXA[@]}" -- "${TARGS[@]}"
     done
 
 ##
@@ -105,7 +106,7 @@ test-with-db-internal:
     trap "echo Stopping postgres && pg_ctl stop" EXIT
     NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
     STRACEA=() && [ -n "$STRACE" ] && STRACEA=(--strace)
-    TARGS=(/DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
+    TARGS=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/) && [ -n "$1" ] && TARGS=("$@")
 
     run test-no-db "${NIXA[@]}" "${STRACEA[@]}" --nonixbuild -- "${TARGS[@]}"
 
