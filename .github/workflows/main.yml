@@ -107,7 +107,16 @@ jobs:
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
     - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+      run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
+
+    - name: Check which libs the executable is linked against
+      run: otool -L codd/bin/codd || ldd codd/bin/codd
+
+    - name: Try to build statically linked codd
+      run: nix build -o static-codd ".#x86_64-unknown-darwin-musl:codd:exe:codd"
+
+    - name: Check which libs the executable is linked against part 2
+      run: otool -L static-codd/bin/codd || ldd static-codd/bin/codd
 
     - name: Install codd with nix-env and uninstall it
       run: |
