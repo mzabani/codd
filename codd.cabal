@@ -1,13 +1,13 @@
 cabal-version: 2.0
 
 name:           codd
-version:        0.1.2
+version:        0.1.3
 description:    Multi-environment postgres database version control. README at <https://github.com/mzabani/codd#readme>
 homepage:       https://github.com/mzabani/codd#readme
 bug-reports:    https://github.com/mzabani/codd/issues
 author:         Marcelo Zabani
 maintainer:     mzabani@gmail.com
-copyright:      2022 Marcelo Zabani
+copyright:      2024 Marcelo Zabani
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
