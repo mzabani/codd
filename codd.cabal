@@ -237,6 +237,7 @@ test-suite codd-test
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       NamedFieldPuns
+      NumericUnderscores
       OverloadedStrings
       RankNTypes
       RecordWildCards

@@ -5,6 +5,7 @@ import           Codd                           ( VerifySchemas(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Control.Applicative            ( (<|>) )
+import           Control.Concurrent             ( threadDelay )
 import           Control.Monad                  ( foldM
                                                 , forM_
                                                 , void
@@ -44,6 +45,8 @@ spec = do
                           LaxCheck -- This will output an error but will not throw. What matters is that on-disk reps are read
                       -- This test must run wrapped in a specific strace incantation as it'll read the output log of that
                       -- to assert that at most one migration file is opened at a time
+                      -- It seems it's possible for the writes of strace to not have been flushed yet, so wait a second just in case.
+                      threadDelay 1_000_000
                       contentsE <-
                           try $ Text.readFile
                               "/tmp/strace-codd-system-resources-test.log"
