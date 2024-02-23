@@ -138,9 +138,9 @@
         flakeAeson2 = pkgs.coddProjectAeson2.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
-          # Check nixpkgs.lib.systems for more.
+          # Check nixpkgs.lib.systems.examples for more.
           # The mingwW64 build still fails, IIRC.
-          crossPlatforms = p: [ p.musl64 p.mingwW64 ];
+          crossPlatforms = p: [ p.musl64 p.mingwW64 p.aarch64-multiplatform-musl p.aarch64-darwin];
         };
         flakeAeson1 =
           pkgs.coddProjectAeson1.flake { crossPlatforms = p: [ p.musl64 ]; };

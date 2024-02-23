@@ -112,7 +112,7 @@ jobs:
       run: otool -L codd/bin/codd || ldd codd/bin/codd
 
     - name: Try to build statically linked codd
-      run: nix build -o static-codd ".#x86_64-unknown-darwin-musl:codd:exe:codd"
+      run: nix build -o static-codd ".#x86_64-darwin-musl:codd:exe:codd"
 
     - name: Check which libs the executable is linked against part 2
       run: otool -L static-codd/bin/codd || ldd static-codd/bin/codd
