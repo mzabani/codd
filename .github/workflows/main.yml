@@ -48,9 +48,6 @@ jobs:
     #     path: /nix/
     #     key: ${{ runner.os }}-build
 
-    - name: Check install script for Posix compatibility
-      run: shellcheck --shell=sh nix/install-codd.sh
-
     - name: Build statically linked codd
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
 

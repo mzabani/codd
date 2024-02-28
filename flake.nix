@@ -108,6 +108,7 @@
                       postgres-service
                       postgresql_16
                       run
+                      shellcheck
                     ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
@@ -164,7 +165,7 @@
           pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
         };
 
-        shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run ]; };
+        shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
 
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
         # build musl packages statically to see if their "normal" builds pass
