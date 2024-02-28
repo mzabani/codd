@@ -5,6 +5,9 @@
 ci-tests:
     set -eo pipefail
 
+    echo "Testing install script posix compatibility"
+    shellcheck --shell=sh nix/install-codd.sh
+
     echo "Building codd with aeson 1"
     nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
 
