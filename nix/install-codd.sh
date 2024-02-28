@@ -9,13 +9,13 @@ set -e
 #    "If the argument starts with http:// or https://, it is interpreted as the URL of a tarball that will be downloaded and unpacked
 #     to a temporary location"
 
-if ! command -v git > /dev/null 2>&1
+if ! command -v git > /dev/null
 then
     echo "git executable not found, but is necessary to install codd"
     exit 1
 fi
 
-if ! command -v nix-env > /dev/null 2>&1
+if ! command -v nix-env &> /dev/null
 then
     echo "nix-env executable not found, but is necessary to install codd. Please install Nix by visiting https://nixos.org/download.html"
     exit 1
