@@ -50,7 +50,7 @@
                       # in codd.cabal
                       packages.codd.components.tests.codd-test.build-tools =
                         [ proj.hsPkgs.hspec-discover ];
-                      }] ++ (if final.stdenv.isDarwin then [] else [
+                      }] ++ ([
                         {
                           packages.codd.components.exes.codd = {
                             dontStrip = false;
