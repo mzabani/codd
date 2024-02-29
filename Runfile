@@ -130,7 +130,9 @@ test-system-resources:
 
     if [ -n "$NIX" ]; then
         nix build ".#x86_64-unknown-linux-musl:codd:test:codd-test" -o local/codd-test
-        nix develop ".#testShells.x86_64-linux.pg16" -i -c run test-with-db-internal --strace --nix -- --match "/SystemResourcesSpecs/"
+        nix develop ".#testShells.x86_64-linux.pg16" -i -c run test-with-db-internal --strace --nix -- --match "/SystemResourcesSpecs/RUNNING"
+        nix develop ".#testShells.x86_64-linux.pg16" -i -c run test-with-db-internal --nix -- --match "/SystemResourcesSpecs/CHECKING"
     else
-        nix develop ".#testShells.x86_64-linux.pg16" -c run test-with-db-internal --strace -- --match "/SystemResourcesSpecs/"
+        nix develop ".#testShells.x86_64-linux.pg16" -c run test-with-db-internal --strace -- --match "/SystemResourcesSpecs/RUNNING"
+        nix develop ".#testShells.x86_64-linux.pg16" -c run test-with-db-internal -- --match "/SystemResourcesSpecs/CHECKING"
     fi
