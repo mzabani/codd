@@ -46,8 +46,13 @@ import           Data.Text                      ( Text
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
-import           Data.Time                      ( UTCTime
+import           Data.Time                      ( CalendarDiffTime(ctTime)
+                                                , DiffTime
+                                                , NominalDiffTime
+                                                , UTCTime
+                                                , calendarTimeTime
                                                 , diffUTCTime
+                                                , picosecondsToDiffTime
                                                 , secondsToDiffTime
                                                 , secondsToNominalDiffTime
                                                 )
@@ -713,7 +718,7 @@ spec = do
 
             describe "Custom connection-string migrations" $ do
                 it
-                        "applied_at registered properly for migrations running before codd_schema is available"
+                        "applied_at and application_duration registered properly for migrations running before codd_schema is available"
                     $ do
                           defaultConnInfo      <- testConnInfo
                           testSettings         <- testCoddSettings
@@ -778,12 +783,16 @@ spec = do
 
                                               -- 2. Check applied_at is not the time we insert into codd_schema.sql_migrations,
                                               -- but the time when migrations are effectively applied.
-                                              runMigs :: [(FilePath, UTCTime)] <-
+                                              runMigs :: [ ( FilePath
+                                                    , UTCTime
+                                                    , CalendarDiffTime
+                                                    )
+                                                  ]                           <-
                                                   DB.query
                                                       conn
-                                                      "SELECT name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                      "SET intervalstyle TO 'iso_8601'; SELECT name, applied_at, application_duration FROM codd_schema.sql_migrations ORDER BY applied_at, id"
                                                       ()
-                                              map fst runMigs
+                                              map (\(f, _, _) -> f) runMigs
                                                   `shouldBe` map
                                                                  ( migrationName
                                                                  . addedSqlMig
@@ -795,14 +804,14 @@ spec = do
                                                       secondsToNominalDiffTime
                                                           0.5
                                                   migsWithSleep = filter
-                                                      (\(n, _) ->
+                                                      (\(n, _, _) ->
                                                           "-create-database-mig.sql"
                                                               `Text.isSuffixOf` Text.pack
                                                                                     n
                                                       )
                                                       runMigs
                                               zipWith
-                                                      (\(_, time1 :: UTCTime) (_, time2) ->
+                                                      (\(_, time1 :: UTCTime, _) (_, time2, _) ->
                                                           diffUTCTime time2
                                                                       time1
                                                       )
@@ -811,6 +820,13 @@ spec = do
                                                   `shouldSatisfy` all
                                                                       (> minTimeBetweenMigs
                                                                       )
+                                              migsWithSleep `shouldSatisfy` all
+                                                  (\(_, _, applicationDuration) ->
+                                                      ctTime applicationDuration
+                                                          > secondsToNominalDiffTime
+                                                                0.7
+                                                                 -- 700ms is a conservative value given each duration should be ~ 1 sec
+                                                  )
 
                 it "Diverse order of different types of migrations"
                     $ ioProperty
