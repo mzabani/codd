@@ -626,12 +626,12 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                   case mDefaultConn of
                       Nothing ->
                           pure
-                              ( \_ _ _ ->
+                              ( \_ _ appliedAt _ ->
                                   DB.fromOnly
                                       <$> unsafeQuery1
                                               conn
-                                              "SELECT now()"
-                                              ()
+                                              "SELECT COALESCE(?, now())"
+                                              (DB.Only appliedAt)
                               , bootCheck
                               )
                       Just defaultConn -> do
@@ -653,7 +653,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                           }
                               else
                                   pure bootCheck
-                          registerPendingMigrations
+                          registerPendingMigrations @txn
                               defaultConn
                               previouslyAppliedMigs
                           pure
@@ -685,18 +685,18 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
           ([], bootstrapCheck, Nothing)
           blocksOfMigs
 
-  -- It is possible to have only non-default-connection-string migrations.
-  -- In that case, we assume the default-connection-string will be valid after those migrations
-  -- and use that to register all applied migrations and then run "actionAfter".
   actAfterResult <- case singleInTxnBlockResult of
     Just result -> pure result
     Nothing -> do
+      -- It is possible to have only non-default-connection-string migrations.
+      -- In that case, we assume the default-connection-string will be valid after those migrations
+      -- and use that to register all applied migrations and then run "actionAfter".
       (_, defaultConn) <- openConn defaultConnInfo
-      unless (coddSchemaVersion finalBootCheck == maxBound) $ do
+      when (coddSchemaVersion finalBootCheck /= maxBound) $ do
           logInfoN "Creating or updating codd_schema..."
           createCoddSchema @txn isolLvl defaultConn
       withTransaction @txn isolLvl defaultConn
-          $ registerPendingMigrations defaultConn appliedMigs
+          $ registerPendingMigrations @txn defaultConn appliedMigs
       withTransaction isolLvl defaultConn
                   $ actionAfter hoistedBlocks defaultConn
 
@@ -704,29 +704,20 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
 
   where
     registerPendingMigrations
-        :: MonadIO n
+        :: forall x n. (MonadUnliftIO n, MonadIO x, CanStartTxn n x)
         => DB.Connection
         -> [(AppliedMigration, MigrationRegistered)]
         -> n ()
     registerPendingMigrations defaultConn appliedMigs =
-        liftIO
-            $ forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
-            $ \AppliedMigration {..} -> DB.execute
-                  defaultConn
-                  "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
-                                \                            VALUES (?, ?, ?, ?)"
-                  ( appliedMigrationTimestamp
-                  , appliedMigrationName
-                  , appliedMigrationAt
-                  , appliedMigrationDuration
-                  )
+        forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
+            $ \AppliedMigration {..} -> registerRanMigration @x defaultConn isolLvl appliedMigrationName appliedMigrationTimestamp (Just appliedMigrationAt) appliedMigrationDuration
 
     runMigs
         :: (MonadUnliftIO n, MonadLogger n, CanStartTxn n txn)
         => DB.Connection
         -> RetryPolicy
         -> NonEmpty (AddedSqlMigration n)
-        -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
         -> n [AppliedMigration]
     runMigs conn withRetryPolicy migs runAfterMig =
         fmap NE.toList $ forM migs $ applySingleMigration conn
@@ -737,7 +728,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         :: (DB.Connection -> txn b)
         -> DB.Connection
         -> BlockOfMigrations m
-        -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
         -> m (ApplyMigsResult b)
     runBlock act conn migBlock registerMig = do
         if blockInTxn migBlock
@@ -777,8 +768,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                         conn
                         retryPol
                         (allMigs migBlock)
-                        (\fp ts duration ->
-                            withTransaction isolLvl conn $ registerMig fp ts duration
+                        (\fp ts appliedAt duration ->
+                            withTransaction isolLvl conn $ registerMig fp ts appliedAt duration
                         )
                 <*> withTransaction isolLvl conn (act conn)
 
@@ -848,7 +839,7 @@ applySingleMigration
      . (MonadUnliftIO m, MonadLogger m, CanStartTxn m txn)
     => DB.Connection
     -> RetryPolicy
-    -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
+    -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
     -> TxnIsolationLvl
     -> AddedSqlMigration m
     -> m AppliedMigration
@@ -862,7 +853,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
 
         appliedMigrationDuration <- timeAction $ multiQueryStatement_ inTxn conn $ migrationSql sqlMig
-        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp appliedMigrationDuration
+        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp
@@ -878,7 +869,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 
 -- | Registers in the DB that a migration with supplied name and timestamp
---   has been applied and returns the DB's now() value (used for the "applied_at" column).
+--   has been applied and returns the value used for the "applied_at" column.
 --   Fails if the codd_schema hasn't yet been created.
 registerRanMigration
     :: forall txn m
@@ -888,12 +879,13 @@ registerRanMigration
     -> TxnIsolationLvl
     -> FilePath
     -> DB.UTCTimestamp
+    -> Maybe UTCTime -- ^ The time the migration finished being applied. If not supplied, pg's now() will be used
     -> NominalDiffTime
     -> m UTCTime
-registerRanMigration conn isolLvl fn migTimestamp appliedMigrationDuration =
+registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration =
     withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
         conn
         "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
-            \                            VALUES (?, ?, now(), ?) \
+            \                            VALUES (?, ?, COALESCE(?, now()), ?) \
             \                            RETURNING applied_at"
-        (migTimestamp, fn, appliedMigrationDuration)
+        (migTimestamp, fn, appliedAt, appliedMigrationDuration)
