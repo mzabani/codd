@@ -42,7 +42,7 @@ import           Control.Monad                  ( (>=>)
                                                 , forM
                                                 , forM_
                                                 , unless
-                                                , when
+                                                , when, void
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Logger           ( MonadLogger
@@ -64,7 +64,7 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( DiffTime
-                                                , UTCTime, diffTimeToPicoseconds
+                                                , UTCTime, diffTimeToPicoseconds, diffUTCTime, getCurrentTime, NominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
@@ -626,7 +626,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                   case mDefaultConn of
                       Nothing ->
                           pure
-                              ( \_ _ ->
+                              ( \_ _ _ ->
                                   DB.fromOnly
                                       <$> unsafeQuery1
                                               conn
@@ -713,11 +713,12 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
             $ forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
             $ \AppliedMigration {..} -> DB.execute
                   defaultConn
-                  "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
-                                \                            VALUES (?, ?, ?)"
+                  "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
+                                \                            VALUES (?, ?, ?, ?)"
                   ( appliedMigrationTimestamp
                   , appliedMigrationName
                   , appliedMigrationAt
+                  , appliedMigrationDuration
                   )
 
     runMigs
@@ -725,7 +726,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         => DB.Connection
         -> RetryPolicy
         -> NonEmpty (AddedSqlMigration n)
-        -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
         -> n [AppliedMigration]
     runMigs conn withRetryPolicy migs runAfterMig =
         fmap NE.toList $ forM migs $ applySingleMigration conn
@@ -736,7 +737,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         :: (DB.Connection -> txn b)
         -> DB.Connection
         -> BlockOfMigrations m
-        -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
         -> m (ApplyMigsResult b)
     runBlock act conn migBlock registerMig = do
         if blockInTxn migBlock
@@ -776,8 +777,8 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                         conn
                         retryPol
                         (allMigs migBlock)
-                        (\fp ts ->
-                            withTransaction isolLvl conn $ registerMig fp ts
+                        (\fp ts duration ->
+                            withTransaction isolLvl conn $ registerMig fp ts duration
                         )
                 <*> withTransaction isolLvl conn (act conn)
 
@@ -847,7 +848,7 @@ applySingleMigration
      . (MonadUnliftIO m, MonadLogger m, CanStartTxn m txn)
     => DB.Connection
     -> RetryPolicy
-    -> (FilePath -> DB.UTCTimestamp -> txn UTCTime)
+    -> (FilePath -> DB.UTCTimestamp -> NominalDiffTime -> txn UTCTime)
     -> TxnIsolationLvl
     -> AddedSqlMigration m
     -> m AppliedMigration
@@ -860,12 +861,19 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 then InTransaction
                 else NotInTransaction statementRetryPol
 
-        multiQueryStatement_ inTxn conn $ migrationSql sqlMig
-        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp
+        appliedMigrationDuration <- timeAction $ multiQueryStatement_ inTxn conn $ migrationSql sqlMig
+        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp appliedMigrationDuration
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp
+                              , appliedMigrationDuration
                               }
+    where
+      timeAction f = do
+        before <- liftIO getCurrentTime
+        void f
+        after <- liftIO getCurrentTime
+        pure $ after `diffUTCTime` before
 
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 
@@ -880,11 +888,12 @@ registerRanMigration
     -> TxnIsolationLvl
     -> FilePath
     -> DB.UTCTimestamp
+    -> NominalDiffTime
     -> m UTCTime
-registerRanMigration conn isolLvl fn migTimestamp =
+registerRanMigration conn isolLvl fn migTimestamp appliedMigrationDuration =
     withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
         conn
-        "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at) \
-            \                            VALUES (?, ?, now()) \
+        "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
+            \                            VALUES (?, ?, now(), ?) \
             \                            RETURNING applied_at"
-        (migTimestamp, fn)
+        (migTimestamp, fn, appliedMigrationDuration)

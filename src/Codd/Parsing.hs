@@ -98,7 +98,9 @@ import           Data.Maybe                     ( listToMaybe
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
-import           Data.Time                      ( fromGregorianValid
+import           Data.Time                      ( DiffTime
+                                                , NominalDiffTime
+                                                , fromGregorianValid
                                                 , secondsToDiffTime
                                                 )
 import           Data.Time.Clock                ( UTCTime(..) )
@@ -123,8 +125,9 @@ import           UnliftIO                       ( IORef
                                                 )
 import           UnliftIO.Environment           ( lookupEnv )
 import           UnliftIO.Exception             ( Exception )
-import           UnliftIO.Resource              ( ReleaseKey )
-import           UnliftIO.Resource              ( release )
+import           UnliftIO.Resource              ( ReleaseKey
+                                                , release
+                                                )
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -154,6 +157,7 @@ data AppliedMigration = AppliedMigration
     -- ^ The migration's timestamp as extracted from its file name.
     , appliedMigrationAt        :: UTCTime
     -- ^ When the migration was effectively applied.
+    , appliedMigrationDuration  :: NominalDiffTime
     }
 
 data FileStream m = FileStream
