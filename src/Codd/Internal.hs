@@ -297,10 +297,12 @@ detectCoddSchema conn = do
 createCoddSchema
     :: forall txn m
      . (MonadUnliftIO m, NotInTxn m, txn ~ InTxnT m)
-    => TxnIsolationLvl
+    => CoddSchemaVersion
+    -- ^ Desired schema version. This should always be `maxBound` in the app; it's meant to assume other values only in tests
+    -> TxnIsolationLvl
     -> DB.Connection
     -> m ()
-createCoddSchema txnIsolationLvl conn = withTransaction @txn txnIsolationLvl conn $ do
+createCoddSchema targetVersion txnIsolationLvl conn = withTransaction @txn txnIsolationLvl conn $ do
     currentSchemaVersion <- detectCoddSchema conn
     catchJust
         (\e -> if isPermissionDeniedError e then Just () else Nothing)
@@ -311,28 +313,31 @@ createCoddSchema txnIsolationLvl conn = withTransaction @txn txnIsolationLvl con
                       "Not enough permissions to create or update codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions."
         )
   where
-    go currentSchemaVersion = do
-        case currentSchemaVersion of
-            CoddSchemaDoesNotExist -> do
-                execvoid_
-                    conn
-                    "CREATE SCHEMA codd_schema; GRANT USAGE ON SCHEMA codd_schema TO PUBLIC;"
-                execvoid_ conn
-                    $ "CREATE TABLE codd_schema.sql_migrations ( \
-                    \  id SERIAL PRIMARY KEY\
-                    \, migration_timestamp timestamptz not null\
-                    \, applied_at timestamptz not null \
-                    \, name text not null \
-                    \, unique (name), unique (migration_timestamp));"
-                    <> -- It is not necessary to grant SELECT on the table, but it helps _a lot_ with a test and shouldn't hurt.
-                       -- SELECT on the sequence enables dumps by unprivileged users
-                       "GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
-                       \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
-            CoddSchemaV1 -> execvoid_ conn "ALTER TABLE codd_schema.sql_migrations ADD COLUMN application_duration INTERVAL"
-            CoddSchemaV2 -> pure ()
+    go currentSchemaVersion
+        | targetVersion < currentSchemaVersion = error "Cannot migrate newer codd_schema version to an older version. Please report this as a bug in codd."
+        | targetVersion == currentSchemaVersion = pure ()
+        | otherwise = do
+            case currentSchemaVersion of
+                CoddSchemaDoesNotExist -> do
+                    execvoid_
+                        conn
+                        "CREATE SCHEMA codd_schema; GRANT USAGE ON SCHEMA codd_schema TO PUBLIC;"
+                    execvoid_ conn
+                        $ "CREATE TABLE codd_schema.sql_migrations ( \
+                        \  id SERIAL PRIMARY KEY\
+                        \, migration_timestamp timestamptz not null\
+                        \, applied_at timestamptz not null \
+                        \, name text not null \
+                        \, unique (name), unique (migration_timestamp));"
+                        <> -- It is not necessary to grant SELECT on the table, but it helps _a lot_ with a test and shouldn't hurt.
+                           -- SELECT on the sequence enables dumps by unprivileged users
+                           "GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
+                           \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
+                CoddSchemaV1 -> execvoid_ conn "ALTER TABLE codd_schema.sql_migrations ADD COLUMN application_duration INTERVAL"
+                CoddSchemaV2 -> pure ()
 
-        -- `succ` is a partial function, so be careful..
-        when (currentSchemaVersion < maxBound) $ go (succ currentSchemaVersion)
+            -- `succ` is a partial function, but it should never throw in this context
+            go (succ currentSchemaVersion)
 
 -- | Collects pending migrations and separates them according to being bootstrap
 --   or not.
@@ -643,6 +648,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                       logInfoN
                                           "Creating or updating codd_schema..."
                                       createCoddSchema @txn
+                                          maxBound
                                           isolLvl
                                           defaultConn
                                       pure bootCheck
@@ -694,7 +700,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
       (_, defaultConn) <- openConn defaultConnInfo
       when (coddSchemaVersion finalBootCheck /= maxBound) $ do
           logInfoN "Creating or updating codd_schema..."
-          createCoddSchema @txn isolLvl defaultConn
+          createCoddSchema @txn maxBound isolLvl defaultConn
       withTransaction @txn isolLvl defaultConn
           $ registerPendingMigrations @txn defaultConn appliedMigs
       withTransaction isolLvl defaultConn

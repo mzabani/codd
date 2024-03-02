@@ -8,8 +8,11 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( baseApplyMigsBlock
+import           Codd.Internal                  ( CoddSchemaVersion(..)
+                                                , baseApplyMigsBlock
                                                 , collectAndApplyMigrations
+                                                , createCoddSchema
+                                                , detectCoddSchema
                                                 , withConnection
                                                 )
 import           Codd.Internal.MultiQueryStatement
@@ -50,10 +53,7 @@ import           Data.Time                      ( CalendarDiffTime(ctTime)
                                                 , DiffTime
                                                 , NominalDiffTime
                                                 , UTCTime
-                                                , calendarTimeTime
                                                 , diffUTCTime
-                                                , picosecondsToDiffTime
-                                                , secondsToDiffTime
                                                 , secondsToNominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -248,6 +248,39 @@ spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Application tests" $ do
+            describe "codd_schema version migrations"
+                $ aroundFreshDatabase
+                $ forM_ [CoddSchemaDoesNotExist .. maxBound]
+                $ \vIntermediary ->
+                      it
+                              (  "codd_schema version migration succeeds from "
+                              ++ show CoddSchemaDoesNotExist
+                              ++ " to "
+                              ++ show vIntermediary
+                              ++ " and then to "
+                              ++ show (maxBound @CoddSchemaVersion)
+                              )
+                          $ \emptyTestDbInfo ->
+                                void @IO
+                                    $ withConnection
+                                          (migsConnString emptyTestDbInfo)
+                                          testConnTimeout
+                                    $ \conn -> do
+                                          -- Drop the codd_schema that was created by `aroundFreshDatabase`
+                                          DB.execute_
+                                              conn
+                                              "DROP SCHEMA codd_schema CASCADE"
+                                          createCoddSchema vIntermediary
+                                                           Serializable
+                                                           conn
+                                          detectCoddSchema conn
+                                              `shouldReturn` vIntermediary
+                                          createCoddSchema maxBound
+                                                           Serializable
+                                                           conn
+                                          detectCoddSchema conn
+                                              `shouldReturn` maxBound
+
             describe "With the default database available"
                 $ aroundFreshDatabase
                 $ do
