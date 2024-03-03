@@ -64,7 +64,7 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( DiffTime
-                                                , UTCTime, diffTimeToPicoseconds, diffUTCTime, getCurrentTime, NominalDiffTime
+                                                , UTCTime, diffTimeToPicoseconds, picosecondsToDiffTime, NominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
@@ -100,6 +100,8 @@ import           UnliftIO.Resource              ( MonadResource
                                                 , release
                                                 , runResourceT
                                                 )
+import System.Clock (getTime, Clock (Monotonic), TimeSpec (..))
+import qualified Formatting as Fmt
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -723,7 +725,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         => DB.Connection
         -> RetryPolicy
         -> NonEmpty (AddedSqlMigration n)
-        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
         -> n [AppliedMigration]
     runMigs conn withRetryPolicy migs runAfterMig =
         fmap NE.toList $ forM migs $ applySingleMigration conn
@@ -734,7 +736,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
         :: (DB.Connection -> txn b)
         -> DB.Connection
         -> BlockOfMigrations m
-        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
+        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
         -> m (ApplyMigsResult b)
     runBlock act conn migBlock registerMig = do
         if blockInTxn migBlock
@@ -845,7 +847,7 @@ applySingleMigration
      . (MonadUnliftIO m, MonadLogger m, CanStartTxn m txn)
     => DB.Connection
     -> RetryPolicy
-    -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> NominalDiffTime -> txn UTCTime)
+    -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
     -> TxnIsolationLvl
     -> AddedSqlMigration m
     -> m AppliedMigration
@@ -860,17 +862,26 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
 
         appliedMigrationDuration <- timeAction $ multiQueryStatement_ inTxn conn $ migrationSql sqlMig
         timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
+        logInfoN $ "Applied  " <> Text.pack fn <> " (" <> prettyPrintDuration appliedMigrationDuration <> ")"
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp
                               , appliedMigrationDuration
                               }
     where
+      pico_1ns = 1_000
+      pico_1ms = 1_000_000_000
+      pico_1s :: forall a. Num a => a
+      pico_1s = 1_000_000_000_000
+      prettyPrintDuration (fromIntegral @Integer @Double . diffTimeToPicoseconds -> dps)
+        | dps < pico_1ms = Fmt.sformat (Fmt.fixed @Double 2) (fromIntegral @Integer (round (100 * dps / pico_1ms)) / 100) <> "ms" -- e.g. 0.23ms
+        | dps < pico_1s = Fmt.sformat (Fmt.int @Integer) (round $ dps / pico_1ms) <> "ms" -- e.g. 671ms
+        | otherwise = Fmt.sformat (Fmt.fixed @Double 1) (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10) <> "s" -- e.g. 10.5s
       timeAction f = do
-        before <- liftIO getCurrentTime
+        before <- liftIO $ getTime Monotonic
         void f
-        after <- liftIO getCurrentTime
-        pure $ after `diffUTCTime` before
+        after <- liftIO $ getTime Monotonic
+        pure $ picosecondsToDiffTime $ (pico_1s :: Integer) * fromIntegral (sec after - sec before) + (pico_1ns :: Integer) * fromIntegral (nsec after - nsec before)
 
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 
@@ -886,7 +897,7 @@ registerRanMigration
     -> FilePath
     -> DB.UTCTimestamp
     -> Maybe UTCTime -- ^ The time the migration finished being applied. If not supplied, pg's now() will be used
-    -> NominalDiffTime
+    -> DiffTime
     -> m UTCTime
 registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration =
     withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
@@ -894,4 +905,6 @@ registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDura
         "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
             \                            VALUES (?, ?, COALESCE(?, now()), ?) \
             \                            RETURNING applied_at"
-        (migTimestamp, fn, appliedAt, appliedMigrationDuration)
+        (migTimestamp, fn, appliedAt,
+                -- postgresql-simple does not have a `ToField DiffTime` instance :(
+                realToFrac @Double @NominalDiffTime $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration) / 1_000_000_000_000)

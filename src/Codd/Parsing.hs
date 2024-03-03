@@ -99,7 +99,6 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( DiffTime
-                                                , NominalDiffTime
                                                 , fromGregorianValid
                                                 , secondsToDiffTime
                                                 )
@@ -157,7 +156,7 @@ data AppliedMigration = AppliedMigration
     -- ^ The migration's timestamp as extracted from its file name.
     , appliedMigrationAt        :: UTCTime
     -- ^ When the migration was effectively applied.
-    , appliedMigrationDuration  :: NominalDiffTime
+    , appliedMigrationDuration  :: DiffTime
     }
 
 data FileStream m = FileStream

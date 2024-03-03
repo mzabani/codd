@@ -88,8 +88,10 @@ library
     , attoparsec
     , base
     , bytestring
+    , clock
     , containers
     , filepath
+    , formatting
     , hashable
     , haxl
     , monad-logger

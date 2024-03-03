@@ -113,7 +113,7 @@ addParser =
                        "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'CODD_MIGRATION_DIRS' environment variable will be used"
                 <> metavar "DESTFOLDER"
                 )
-        <*> verbositySwitch
+        <*> quietSwitch
         <*> argument
                 sqlFilePathReader
                 (  metavar "SQL-MIGRATION-PATH"
@@ -162,16 +162,6 @@ optionalSecondsOption defaultValue optFields = realToFrac
     <$> option intParser (optFields <> value defaultValue)
   -- Watch out: DiffTime's Read instance reads value with an "s" suffixed!
     where intParser = maybeReader (Text.readMaybe @Int)
-
-verbositySwitch :: Parser Verbosity
-verbositySwitch =
-    switch
-            (long "verbose" <> short 'v' <> help
-                "Prints detailed execution information to stdout."
-            )
-        <&> \case
-                True  -> Verbose
-                False -> NonVerbose
 
 quietSwitch :: Parser Verbosity
 quietSwitch =
