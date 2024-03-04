@@ -6,6 +6,9 @@ import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(WriteToStdout)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
@@ -13,9 +16,7 @@ import           Codd.Query                     ( execvoid_
                                                 , unsafeQuery1
                                                 )
 import           Codd.Representations           ( DbRep(..) )
-import           Control.Monad.Logger           ( LoggingT
-                                                , runStdoutLoggingT
-                                                )
+import           Control.Monad.Logger           ( LoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
 import           Data.List                      ( isInfixOf )
@@ -59,7 +60,7 @@ doesNotCreateDB act = do
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
             }
-    runStdoutLoggingT $ do
+    runCoddLogger Verbose $ do
         -- libpq's fatal connection error is an IOException
         verifySchema testSettings False
             `shouldThrow` (\(e :: IOException) ->
@@ -109,7 +110,7 @@ doesNotModifyExistingDb act assert = do
               execvoid_ conn "CREATE DATABASE new_checksums_test_db"
 
     countsBefore <- getCounts
-    assert $ runStdoutLoggingT $ act testSettings
+    assert $ runCoddLogger Verbose $ act testSettings
     countsAfter <- getCounts
     countsAfter `shouldBe` countsBefore
 

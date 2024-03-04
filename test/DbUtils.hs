@@ -10,6 +10,9 @@ import           Codd.Internal                  ( PendingMigrations
                                                 , dbIdentifier
                                                 , withConnection
                                                 )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
                                                 , ParsedSql(..)
@@ -32,7 +35,6 @@ import           Control.Monad                  ( forM_
                                                 )
 import           Control.Monad.Logger           ( LoggingT
                                                 , MonadLogger
-                                                , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.String                    ( fromString )
@@ -213,7 +215,8 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     connInfo <- testConnInfo
 
     -- TODO: Reuse withCoddDbAndDrop!
-    runStdoutLoggingT
+    runCoddLogger
+            Verbose
             (do
                 bootstrapMig <- createTestUserMig
                 applyMigrationsNoCheck coddSettings

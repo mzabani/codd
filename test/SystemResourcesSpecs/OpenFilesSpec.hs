@@ -4,12 +4,14 @@ import           Codd                           ( VerifySchemas(..)
                                                 , applyMigrations
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Control.Applicative            ( (<|>) )
 import           Control.Monad                  ( foldM
                                                 , forM_
                                                 , void
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
 import qualified Data.Attoparsec.Text          as P
 import qualified Data.Char                     as Char
@@ -33,7 +35,7 @@ spec = do
             $ it
                   "RUNNING - At most one .sql migration file and one on-disk representation file open at a time"
             $ \emptyTestDbInfo -> do
-                  void @IO $ runStdoutLoggingT $ applyMigrations
+                  void @IO $ runCoddLogger Verbose $ applyMigrations
                       emptyTestDbInfo
                           { sqlMigrations =
                               ["test/migrations/open-files-limit/"]

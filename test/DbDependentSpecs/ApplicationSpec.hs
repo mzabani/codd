@@ -17,6 +17,9 @@ import           Codd.Internal                  ( CoddSchemaVersion(..)
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -36,7 +39,6 @@ import           Control.Monad                  ( forM_
 import           Control.Monad.Logger           ( LogStr
                                                 , LoggingT(runLoggingT)
                                                 , fromLogStr
-                                                , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
@@ -288,7 +290,7 @@ spec = do
                               "SQL containing characters typical to placeholders does not throw"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger Verbose
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [placeHoldersMig])
@@ -298,7 +300,7 @@ spec = do
                       it "Rows-returning function works for no-txn migrations"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger Verbose
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [selectMig])
@@ -312,7 +314,7 @@ spec = do
                                         mig { migrationInTxn = True }
                                         t
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger Verbose
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [inTxnMig])
@@ -323,15 +325,16 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=on"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
-                                        emptyTestDbInfo
-                                        (Just [stdConfStringsMig])
-                                        testConnTimeout
-                                        (\conn -> liftIO $ DB.query
-                                            conn
-                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
-                                            ()
-                                        )
+                                    runCoddLogger Verbose
+                                        $ applyMigrationsNoCheck
+                                              emptyTestDbInfo
+                                              (Just [stdConfStringsMig])
+                                              testConnTimeout
+                                              (\conn -> liftIO $ DB.query
+                                                  conn
+                                                  "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                                  ()
+                                              )
 
                                 map snd stringsAndIds
                                     `shouldBe` [ "bc\\def"
@@ -349,21 +352,23 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=off"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
-                                        emptyTestDbInfo
-                                        (Just [notStdConfStringsMig])
-                                        testConnTimeout
-                                        (\conn -> liftIO $ DB.query
-                                            conn
-                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
-                                            ()
-                                        )
+                                    runCoddLogger Verbose
+                                        $ applyMigrationsNoCheck
+                                              emptyTestDbInfo
+                                              (Just [notStdConfStringsMig])
+                                              testConnTimeout
+                                              (\conn -> liftIO $ DB.query
+                                                  conn
+                                                  "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                                  ()
+                                              )
 
                                 map snd stringsAndIds
                                     `shouldBe` ["bcdef", "abc\\de'f"]
 
                       it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
-                          runStdoutLoggingT
+                          runCoddLogger
+                                  Verbose
                                   (applyMigrationsNoCheck
                                       emptyTestDbInfo
                                       (Just [copyMig])
@@ -403,7 +408,7 @@ spec = do
                                           -- us to run an after-migrations action that queries the transaction isolation level
                                           (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
                                                   String) <-
-                                              runStdoutLoggingT @IO
+                                              runCoddLogger @IO Verbose
                                                   $ applyMigrationsNoCheck
                                                         modifiedSettings
                                                         -- One in-txn migration is just what we need to make the last action
@@ -457,7 +462,8 @@ spec = do
                                                                      Int
                                                                ]
                                                              )
-                                          runStdoutLoggingT
+                                          runCoddLogger
+                                                  Verbose
                                                   (applyMigrations
                                                       (emptyTestDbInfo
                                                           { onDiskReps = Right
@@ -484,7 +490,8 @@ spec = do
                                                              )
 
                                           -- Lax checking will apply the migration and will not throw an exception
-                                          runStdoutLoggingT
+                                          runCoddLogger
+                                              Verbose
                                               (applyMigrations
                                                   (emptyTestDbInfo
                                                       { onDiskReps = Right
@@ -534,7 +541,8 @@ spec = do
                                                         )
                                                         testConnTimeout
                                                   $ \conn -> do
-                                                        runStdoutLoggingT
+                                                        runCoddLogger
+                                                                Verbose
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
                                                                         { onDiskReps =
@@ -655,7 +663,7 @@ spec = do
                                         ]
 
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger Verbose
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just migs)
@@ -793,11 +801,12 @@ spec = do
                               $ finallyDrop "new_database_3"
                               $ void @IO
                               $ do
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
-                                        testSettings
-                                        (Just allMigs)
-                                        testConnTimeout
-                                        (const $ pure ())
+                                    runCoddLogger Verbose
+                                        $ applyMigrationsNoCheck
+                                              testSettings
+                                              (Just allMigs)
+                                              testConnTimeout
+                                              (const $ pure ())
                                     withConnection defaultConnInfo
                                                    testConnTimeout
                                         $ \conn -> do
@@ -883,7 +892,7 @@ spec = do
                                         $ finallyDrop "new_database_3"
                                         $ void
                                         $ do
-                                              runStdoutLoggingT
+                                              runCoddLogger Verbose
                                                   $ applyMigrationsNoCheck
                                                         testSettings
                                                         (Just $ map

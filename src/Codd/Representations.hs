@@ -20,13 +20,6 @@ import           Data.List                      ( sortOn )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
-import qualified Data.Text                     as Text
-import           System.Console.ANSI            ( Color(..)
-                                                , ColorIntensity(..)
-                                                , ConsoleLayer(..)
-                                                , SGR(..)
-                                                , setSGRCode
-                                                )
 
 -- | Takes the DB and the expected schemas and logErrorN's the differences, if any,
 -- or logInfoN that they match otherwise.

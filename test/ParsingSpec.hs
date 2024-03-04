@@ -4,6 +4,9 @@ module ParsingSpec where
 import           Codd.Internal                  ( BlockOfMigrations(..)
                                                 , parseMigrationFiles
                                                 )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars(..)
                                                 , ParsedSql(..)
@@ -29,7 +32,6 @@ import           Control.Monad                  ( (>=>)
                                                 , when
                                                 )
 import           Control.Monad.Identity         ( Identity(runIdentity) )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.Reader           ( ReaderT(..)
                                                 , ask
                                                 )
@@ -552,7 +554,7 @@ spec = do
 
             it "Sql Migration parsed from disk with full contents"
                 $ runResourceT @IO
-                $ runStdoutLoggingT
+                $ runCoddLogger Verbose
                 $ do
                       [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
                           parseMigrationFiles []
@@ -580,7 +582,7 @@ spec = do
 
             it "--codd: no-parse preserves all of migrations file contents"
                 $ runResourceT @IO
-                $ runStdoutLoggingT
+                $ runCoddLogger Verbose
                 $ do
                       [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
                           parseMigrationFiles []

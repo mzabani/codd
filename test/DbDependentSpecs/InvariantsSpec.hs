@@ -5,6 +5,9 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Logging                   ( Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , toMigrationTimestamp
@@ -15,7 +18,6 @@ import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )
 import           Control.Monad                  ( void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( nubBy )
 import           Data.Text                      ( unpack )
@@ -159,13 +161,13 @@ spec = do
                     -- One possible impurity is the time certain objects are added to the Database. So we apply our migrations with a few seconds
                     -- in between and check the hashes match
                 dbInfo    <- testCoddSettings
-                dbHashes1 <- runStdoutLoggingT $ withCoddDbAndDrop
+                dbHashes1 <- runCoddLogger Verbose $ withCoddDbAndDrop
                     [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readRepsFromDbWithNewTxn dbInfo
                     )
                 threadDelay (5 * 1000 * 1000)
-                dbHashes2 <- runStdoutLoggingT $ withCoddDbAndDrop
+                dbHashes2 <- runCoddLogger Verbose $ withCoddDbAndDrop
                     [lotsOfObjectsMigration]
                     (\cinfo -> withConnection cinfo testConnTimeout
                         $ readRepsFromDbWithNewTxn dbInfo
