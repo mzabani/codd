@@ -85,6 +85,7 @@ library
   build-depends:
       aeson
     , aeson-pretty
+    , ansi-terminal
     , attoparsec
     , base
     , bytestring

@@ -11,11 +11,10 @@ import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(..)
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
 import           Codd.Logging                   ( Verbosity(..)
-                                                , runVerbosityLogger
+                                                , runCoddLogger
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( void )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
 import           Data.String                    ( IsString )
@@ -182,7 +181,7 @@ main = do
 
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckSchemas connectTimeout) =
-    runStdoutLoggingT $ case mCheckSchemas of
+    runCoddLogger Verbose $ case mCheckSchemas of
         Nothing -> Codd.applyMigrationsNoCheck dbInfo
                                                Nothing
                                                connectTimeout
@@ -192,7 +191,7 @@ doWork dbInfo (Up mCheckSchemas connectTimeout) =
                                                          connectTimeout
                                                          checkSchemas
 doWork dbInfo (Add addOpts destFolder verbosity fp) =
-    runVerbosityLogger verbosity $ addMigration dbInfo addOpts destFolder fp
+    runCoddLogger verbosity $ addMigration dbInfo addOpts destFolder fp
 doWork dbInfo (VerifySchema verbosity fromStdin) =
-    runVerbosityLogger verbosity $ verifySchema dbInfo fromStdin
+    runCoddLogger verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts

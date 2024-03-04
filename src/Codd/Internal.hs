@@ -102,6 +102,7 @@ import           UnliftIO.Resource              ( MonadResource
                                                 )
 import System.Clock (getTime, Clock (Monotonic), TimeSpec (..))
 import qualified Formatting as Fmt
+import Codd.Logging (logInfoNoNewline)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -230,11 +231,11 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         let waitTimeInSecs :: Double = realToFrac connectTimeout
         logInfoN
-            $  "Checking if database '"
+            $  "Checking if database <MAGENTA>"
             <> dbName
-            <> "' is accessible with the configured connection string... (waiting up to "
+            <> "</MAGENTA> is accessible with the configured connection string... (waiting up to <CYAN>"
             <> Text.pack (show @Int $ truncate waitTimeInSecs)
-            <> "sec)"
+            <> "sec</CYAN>)"
 
         runResourceT $ do
             let migsToUse = maybe
@@ -275,11 +276,8 @@ applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, 
             bootstrapCheck
             pendingMigs
 
-        logInfoN $ "All migrations applied to " <> dbName <> " successfully"
+        logInfoN $ "<GREEN>All migrations applied to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA><GREEN> successfully</GREEN>"
         return actionAfterResult
-
-isSingleTrue :: [DB.Only Bool] -> Bool
-isSingleTrue v = v == [DB.Only True]
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
   deriving stock (Bounded, Enum, Eq, Ord, Show)
@@ -754,7 +752,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                             )
                             migBlock
                         $ \blockFinal -> do
-                              logInfoN "BEGINning transaction"
+                              logInfoN "<MAGENTA>BEGIN</MAGENTA>ning transaction"
                               withTransaction isolLvl conn
                                   $   ApplyMigsResult
                                   <$> runMigs
@@ -768,7 +766,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                           )
                                           registerMig -- We retry entire transactions, not individual statements
                                   <*> act conn
-                logInfoN "COMMITed transaction"
+                logInfoN "<MAGENTA>COMMIT</MAGENTA>ed transaction"
                 pure res
             else
                 ApplyMigsResult
@@ -854,15 +852,15 @@ applySingleMigration
 applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigration sqlMig migTimestamp)
     = do
         let fn = migrationName sqlMig
-        logInfoN $ "Applying " <> Text.pack fn
-
-        let inTxn = if migrationInTxn sqlMig
+            inTxn = if migrationInTxn sqlMig
                 then InTransaction
                 else NotInTransaction statementRetryPol
+        logInfoNoNewline $ "Applying " <> Text.pack fn
 
         appliedMigrationDuration <- timeAction $ multiQueryStatement_ inTxn conn $ migrationSql sqlMig
         timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
-        logInfoN $ "Applied  " <> Text.pack fn <> " (" <> prettyPrintDuration appliedMigrationDuration <> ")"
+        logInfoN $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)" 
+
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp

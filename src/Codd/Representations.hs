@@ -20,6 +20,13 @@ import           Data.List                      ( sortOn )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
+import qualified Data.Text                     as Text
+import           System.Console.ANSI            ( Color(..)
+                                                , ColorIntensity(..)
+                                                , ConsoleLayer(..)
+                                                , SGR(..)
+                                                , setSGRCode
+                                                )
 
 -- | Takes the DB and the expected schemas and logErrorN's the differences, if any,
 -- or logInfoN that they match otherwise.
@@ -35,7 +42,7 @@ logSchemasComparison dbSchema expectedSchemas = if dbSchema /= expectedSchemas
         logErrorN
         $ "DB and expected schemas do not match. Differing objects and their current DB schemas are: "
         <> detEncodeSingleLineJSON (schemaDifferences dbSchema expectedSchemas)
-    else logInfoN "Database and expected schemas match."
+    else logInfoN "<GREEN>Database and expected schemas match</GREEN>"
 
 schemaDifferences :: DbRep -> DbRep -> Map FilePath DiffType
 schemaDifferences l r =
