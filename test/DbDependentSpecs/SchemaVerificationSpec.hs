@@ -18,6 +18,7 @@ import           Codd.Internal.MultiQueryStatement
                                                     )
                                                 , multiQueryStatement_
                                                 )
+import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
                                                 , PureStream(..)
@@ -50,7 +51,6 @@ import           Control.Monad                  ( foldM
                                                 , when
                                                 , zipWithM
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.State            ( MonadState(put)
                                                 , State
                                                 , execState
@@ -1251,7 +1251,7 @@ spec = do
                                     "SELECT set_config('search_path', ?, false)"
                                     (DB.Only sp)
                   (reps1, reps2, reps3, reps4) <-
-                      runStdoutLoggingT $ applyMigrationsNoCheck
+                      runCoddLogger $ applyMigrationsNoCheck
                           emptyTestDbInfo
                           (Just [hoistAddedSqlMigration lift createStuffMig])
                           testConnTimeout
@@ -1303,7 +1303,7 @@ spec = do
                           )
                       <*> pure (getIncreasingTimestamp 0)
                   (laxCollHashes, strictCollHashes) <-
-                      runStdoutLoggingT $ applyMigrationsNoCheck
+                      runCoddLogger $ applyMigrationsNoCheck
                           emptyTestDbInfo
                           (Just [hoistAddedSqlMigration lift createCollMig])
                           testConnTimeout
@@ -1345,7 +1345,7 @@ spec = do
                       testConnTimeout
                       queryServerMajorVersion
                   (laxRangeHashes, strictRangeHashes) <-
-                      runStdoutLoggingT $ applyMigrationsNoCheck
+                      runCoddLogger $ applyMigrationsNoCheck
                           emptyTestDbInfo
                           (Just [hoistAddedSqlMigration lift createMig])
                           testConnTimeout
@@ -1411,7 +1411,7 @@ spec = do
                                                  , ignoreColumnOrder    = True
                                                  }
                           }
-                  initialHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
+                  initialHashes <- runCoddLogger $ applyMigrationsNoCheck
                       ignColOrderDbInfo
                       (Just [hoistAddedSqlMigration lift createMig])
                       testConnTimeout
@@ -1428,7 +1428,7 @@ spec = do
                           )
                       <*> pure (getIncreasingTimestamp 1)
 
-                  afterDropHashes <- runStdoutLoggingT $ applyMigrationsNoCheck
+                  afterDropHashes <- runCoddLogger $ applyMigrationsNoCheck
                       ignColOrderDbInfo
                       (Just $ map (hoistAddedSqlMigration lift)
                                   [createMig, dropCol1Mig]
@@ -1462,12 +1462,11 @@ spec = do
                         ["non-existing-schema", "pg_catalog"]
                     }
                 getSchemaHashes dbinfo = do
-                    DbRep _ hashes _ <-
-                        runStdoutLoggingT $ applyMigrationsNoCheck
-                            dbinfo
-                            Nothing
-                            testConnTimeout
-                            (readRepresentationsFromDbWithSettings dbinfo)
+                    DbRep _ hashes _ <- runCoddLogger $ applyMigrationsNoCheck
+                        dbinfo
+                        Nothing
+                        testConnTimeout
+                        (readRepresentationsFromDbWithSettings dbinfo)
                     pure $ Map.keys hashes
 
             -- 1. We should not see pg_catalog in any verified object, but "public"
@@ -1504,7 +1503,7 @@ spec = do
                       map (hoistAddedSqlMigration lift)
                           <$> migrationsForPgDumpRestoreTest
                   let allMigs = bunchOfOtherMigs ++ problematicMigs
-                  expectedSchema <- runStdoutLoggingT $ applyMigrationsNoCheck
+                  expectedSchema <- runCoddLogger $ applyMigrationsNoCheck
                       emptyDbInfo
                       (Just allMigs)
                       testConnTimeout
@@ -1529,7 +1528,7 @@ spec = do
                       $ shell "psql -d postgres"
                   psqlExitCode `shouldBe` ExitSuccess
                   schemaAfterRestore <-
-                      runStdoutLoggingT
+                      runCoddLogger
                       $ withConnection connInfo testConnTimeout
                       $ readRepsFromDbWithNewTxn emptyDbInfo
                   schemaAfterRestore `shouldBe` expectedSchema
@@ -1544,7 +1543,7 @@ spec = do
                                   ["public", "codd-extra-mapped-schema"]
                               }
                           connInfo = migsConnString emptyDbInfo
-                          getHashes sett = runStdoutLoggingT $ withConnection
+                          getHashes sett = runCoddLogger $ withConnection
                               connInfo
                               testConnTimeout
                               (readRepsFromDbWithNewTxn sett)
@@ -1583,7 +1582,7 @@ spec = do
                                     case mUndoSql of
                                         Nothing -> pure expectedHashesAfterUndo
                                         Just undoSql -> do
-                                            runStdoutLoggingT
+                                            runCoddLogger
                                                 $ withConnection
                                                       connInfo
                                                       testConnTimeout
@@ -1640,12 +1639,11 @@ spec = do
                 do
                     let appliedMigs = map (fst . fst) appliedMigsAndCksums
                         newMigs     = appliedMigs ++ [nextMig]
-                    dbHashesAfterMig <-
-                        runStdoutLoggingT $ applyMigrationsNoCheck
-                            dbInfo
-                            (Just newMigs)
-                            testConnTimeout
-                            (readRepresentationsFromDbWithSettings dbInfo)
+                    dbHashesAfterMig <- runCoddLogger $ applyMigrationsNoCheck
+                        dbInfo
+                        (Just newMigs)
+                        testConnTimeout
+                        (readRepresentationsFromDbWithSettings dbInfo)
                     -- migText <- parsedSqlText <$> migrationSql (addedSqlMig nextMig)
                     let diff = schemaDifferences hashSoFar dbHashesAfterMig
                     case expectedChanges of

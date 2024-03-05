@@ -12,7 +12,6 @@ import           Control.Monad                  ( (>=>)
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Maybe                     ( isJust )
 import           Data.Text                      ( unpack )

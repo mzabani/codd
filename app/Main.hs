@@ -10,12 +10,12 @@ import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
-import           Codd.Logging                   ( Verbosity(..)
-                                                , runVerbosityLogger
+import           Codd.Logging                   ( LogLevel(..)
+                                                , runCoddLogger
+                                                , runCoddLoggerLevelFilter
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( void )
-import           Control.Monad.Logger           ( runStdoutLoggingT )
 import           Data.Functor                   ( (<&>) )
 import qualified Data.List                     as List
 import           Data.String                    ( IsString )
@@ -24,7 +24,7 @@ import           Options.Applicative
 import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
 
-data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema Verbosity Bool
+data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -41,7 +41,7 @@ cmdParser = hsubparser
            (info
                addParser
                (progDesc
-                   "Adds and applies a SQL migration (and all pending migrations as well), then updates on-disk schema files."
+                   "Adds and applies a SQL migration (and all pending migrations as well), then updates expected db schema on-disk."
                )
            )
     <> command
@@ -113,7 +113,7 @@ addParser =
                        "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'CODD_MIGRATION_DIRS' environment variable will be used"
                 <> metavar "DESTFOLDER"
                 )
-        <*> verbositySwitch
+        <*> quietSwitch
         <*> argument
                 sqlFilePathReader
                 (  metavar "SQL-MIGRATION-PATH"
@@ -163,22 +163,12 @@ optionalSecondsOption defaultValue optFields = realToFrac
   -- Watch out: DiffTime's Read instance reads value with an "s" suffixed!
     where intParser = maybeReader (Text.readMaybe @Int)
 
-verbositySwitch :: Parser Verbosity
-verbositySwitch =
-    switch
-            (long "verbose" <> short 'v' <> help
-                "Prints detailed execution information to stdout."
-            )
-        <&> \case
-                True  -> Verbose
-                False -> NonVerbose
-
-quietSwitch :: Parser Verbosity
+quietSwitch :: Parser (LogLevel -> Bool)
 quietSwitch =
     switch (long "quiet" <> short 'q' <> help "Hides some of the output.")
         <&> \case
-                True  -> NonVerbose
-                False -> Verbose
+                True  -> (> LevelInfo)
+                False -> const True
 
 main :: IO ()
 main = do
@@ -192,7 +182,7 @@ main = do
 
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckSchemas connectTimeout) =
-    runStdoutLoggingT $ case mCheckSchemas of
+    runCoddLogger $ case mCheckSchemas of
         Nothing -> Codd.applyMigrationsNoCheck dbInfo
                                                Nothing
                                                connectTimeout
@@ -202,7 +192,8 @@ doWork dbInfo (Up mCheckSchemas connectTimeout) =
                                                          connectTimeout
                                                          checkSchemas
 doWork dbInfo (Add addOpts destFolder verbosity fp) =
-    runVerbosityLogger verbosity $ addMigration dbInfo addOpts destFolder fp
+    runCoddLoggerLevelFilter verbosity
+        $ addMigration dbInfo addOpts destFolder fp
 doWork dbInfo (VerifySchema verbosity fromStdin) =
-    runVerbosityLogger verbosity $ verifySchema dbInfo fromStdin
+    runCoddLoggerLevelFilter verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts

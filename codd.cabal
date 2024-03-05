@@ -68,6 +68,7 @@ library
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       NamedFieldPuns
+      NumericUnderscores
       OverloadedStrings
       RankNTypes
       RecordWildCards
@@ -84,14 +85,16 @@ library
   build-depends:
       aeson
     , aeson-pretty
+    , ansi-terminal
     , attoparsec
     , base
     , bytestring
+    , clock
     , containers
     , filepath
+    , formatting
     , hashable
     , haxl
-    , monad-logger
     , mtl
     , network-uri
     , postgresql-libpq
@@ -147,7 +150,6 @@ executable codd
   build-depends:
       base
     , codd
-    , monad-logger
     , optparse-applicative
     , postgresql-simple
     , text
@@ -266,7 +268,6 @@ test-suite codd-test
     , hspec
     , hspec-core
     , hspec-expectations
-    , monad-logger
     , mtl
     , network-uri
     , postgresql-simple

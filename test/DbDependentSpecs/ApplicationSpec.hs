@@ -8,12 +8,19 @@ import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( baseApplyMigsBlock
+import           Codd.Internal                  ( CoddSchemaVersion(..)
+                                                , baseApplyMigsBlock
                                                 , collectAndApplyMigrations
+                                                , createCoddSchema
+                                                , detectCoddSchema
                                                 , withConnection
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
+import           Codd.Logging                   ( LoggingT(runLoggingT)
+                                                , Newline(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -30,11 +37,7 @@ import           Control.Monad                  ( forM_
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( LogStr
-                                                , LoggingT(runLoggingT)
-                                                , fromLogStr
-                                                , runStdoutLoggingT
-                                                )
+import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
@@ -46,9 +49,11 @@ import           Data.Text                      ( Text
 import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
-import           Data.Time                      ( UTCTime
+import           Data.Time                      ( CalendarDiffTime(ctTime)
+                                                , DiffTime
+                                                , NominalDiffTime
+                                                , UTCTime
                                                 , diffUTCTime
-                                                , secondsToDiffTime
                                                 , secondsToNominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
@@ -70,6 +75,7 @@ import           Test.Hspec.Expectations
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
+                                                , hFlush
                                                 , liftIO
                                                 , stdout
                                                 )
@@ -243,6 +249,39 @@ spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Application tests" $ do
+            describe "codd_schema version migrations"
+                $ aroundFreshDatabase
+                $ forM_ [CoddSchemaDoesNotExist .. maxBound]
+                $ \vIntermediary ->
+                      it
+                              (  "codd_schema version migration succeeds from "
+                              ++ show CoddSchemaDoesNotExist
+                              ++ " to "
+                              ++ show vIntermediary
+                              ++ " and then to "
+                              ++ show (maxBound @CoddSchemaVersion)
+                              )
+                          $ \emptyTestDbInfo ->
+                                void @IO
+                                    $ withConnection
+                                          (migsConnString emptyTestDbInfo)
+                                          testConnTimeout
+                                    $ \conn -> do
+                                          -- Drop the codd_schema that was created by `aroundFreshDatabase`
+                                          DB.execute_
+                                              conn
+                                              "DROP SCHEMA codd_schema CASCADE"
+                                          createCoddSchema vIntermediary
+                                                           Serializable
+                                                           conn
+                                          detectCoddSchema conn
+                                              `shouldReturn` vIntermediary
+                                          createCoddSchema maxBound
+                                                           Serializable
+                                                           conn
+                                          detectCoddSchema conn
+                                              `shouldReturn` maxBound
+
             describe "With the default database available"
                 $ aroundFreshDatabase
                 $ do
@@ -250,7 +289,7 @@ spec = do
                               "SQL containing characters typical to placeholders does not throw"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [placeHoldersMig])
@@ -260,7 +299,7 @@ spec = do
                       it "Rows-returning function works for no-txn migrations"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [selectMig])
@@ -274,7 +313,7 @@ spec = do
                                         mig { migrationInTxn = True }
                                         t
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [inTxnMig])
@@ -285,7 +324,7 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=on"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
+                                    runCoddLogger $ applyMigrationsNoCheck
                                         emptyTestDbInfo
                                         (Just [stdConfStringsMig])
                                         testConnTimeout
@@ -311,7 +350,7 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=off"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
+                                    runCoddLogger $ applyMigrationsNoCheck
                                         emptyTestDbInfo
                                         (Just [notStdConfStringsMig])
                                         testConnTimeout
@@ -325,7 +364,8 @@ spec = do
                                     `shouldBe` ["bcdef", "abc\\de'f"]
 
                       it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
-                          runStdoutLoggingT
+                          runCoddLogger
+
                                   (applyMigrationsNoCheck
                                       emptyTestDbInfo
                                       (Just [copyMig])
@@ -365,7 +405,7 @@ spec = do
                                           -- us to run an after-migrations action that queries the transaction isolation level
                                           (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
                                                   String) <-
-                                              runStdoutLoggingT @IO
+                                              runCoddLogger @IO
                                                   $ applyMigrationsNoCheck
                                                         modifiedSettings
                                                         -- One in-txn migration is just what we need to make the last action
@@ -419,7 +459,8 @@ spec = do
                                                                      Int
                                                                ]
                                                              )
-                                          runStdoutLoggingT
+                                          runCoddLogger
+
                                                   (applyMigrations
                                                       (emptyTestDbInfo
                                                           { onDiskReps = Right
@@ -446,7 +487,8 @@ spec = do
                                                              )
 
                                           -- Lax checking will apply the migration and will not throw an exception
-                                          runStdoutLoggingT
+                                          runCoddLogger
+
                                               (applyMigrations
                                                   (emptyTestDbInfo
                                                       { onDiskReps = Right
@@ -496,7 +538,8 @@ spec = do
                                                         )
                                                         testConnTimeout
                                                   $ \conn -> do
-                                                        runStdoutLoggingT
+                                                        runCoddLogger
+
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
                                                                         { onDiskReps =
@@ -617,7 +660,7 @@ spec = do
                                         ]
 
                                 void @IO
-                                    $ runStdoutLoggingT
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just migs)
@@ -680,7 +723,7 @@ spec = do
                                         logs <- readMVar logsmv
                                         length
                                                 (filter
-                                                    ("Retrying" `Text.isInfixOf`
+                                                    ("before next try" `Text.isInfixOf`
                                                     )
                                                     logs
                                                 )
@@ -713,7 +756,7 @@ spec = do
 
             describe "Custom connection-string migrations" $ do
                 it
-                        "applied_at registered properly for migrations running before codd_schema is available"
+                        "applied_at and application_duration registered properly for migrations running before codd_schema is available"
                     $ do
                           defaultConnInfo      <- testConnInfo
                           testSettings         <- testCoddSettings
@@ -755,7 +798,7 @@ spec = do
                               $ finallyDrop "new_database_3"
                               $ void @IO
                               $ do
-                                    runStdoutLoggingT $ applyMigrationsNoCheck
+                                    runCoddLogger $ applyMigrationsNoCheck
                                         testSettings
                                         (Just allMigs)
                                         testConnTimeout
@@ -778,12 +821,16 @@ spec = do
 
                                               -- 2. Check applied_at is not the time we insert into codd_schema.sql_migrations,
                                               -- but the time when migrations are effectively applied.
-                                              runMigs :: [(FilePath, UTCTime)] <-
+                                              runMigs :: [ ( FilePath
+                                                    , UTCTime
+                                                    , CalendarDiffTime
+                                                    )
+                                                  ]                           <-
                                                   DB.query
                                                       conn
-                                                      "SELECT name, applied_at FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                      "SET intervalstyle TO 'iso_8601'; SELECT name, applied_at, application_duration FROM codd_schema.sql_migrations ORDER BY applied_at, id"
                                                       ()
-                                              map fst runMigs
+                                              map (\(f, _, _) -> f) runMigs
                                                   `shouldBe` map
                                                                  ( migrationName
                                                                  . addedSqlMig
@@ -795,14 +842,14 @@ spec = do
                                                       secondsToNominalDiffTime
                                                           0.5
                                                   migsWithSleep = filter
-                                                      (\(n, _) ->
+                                                      (\(n, _, _) ->
                                                           "-create-database-mig.sql"
                                                               `Text.isSuffixOf` Text.pack
                                                                                     n
                                                       )
                                                       runMigs
                                               zipWith
-                                                      (\(_, time1 :: UTCTime) (_, time2) ->
+                                                      (\(_, time1 :: UTCTime, _) (_, time2, _) ->
                                                           diffUTCTime time2
                                                                       time1
                                                       )
@@ -811,6 +858,13 @@ spec = do
                                                   `shouldSatisfy` all
                                                                       (> minTimeBetweenMigs
                                                                       )
+                                              migsWithSleep `shouldSatisfy` all
+                                                  (\(_, _, applicationDuration) ->
+                                                      ctTime applicationDuration
+                                                          > secondsToNominalDiffTime
+                                                                0.7
+                                                                 -- 700ms is a conservative value given each duration should be ~ 1 sec
+                                                  )
 
                 it "Diverse order of different types of migrations"
                     $ ioProperty
@@ -834,7 +888,7 @@ spec = do
                                         $ finallyDrop "new_database_3"
                                         $ void
                                         $ do
-                                              runStdoutLoggingT
+                                              runCoddLogger
                                                   $ applyMigrationsNoCheck
                                                         testSettings
                                                         (Just $ map
@@ -990,13 +1044,18 @@ diversifyAppCheckMigs defaultConnInfo testSettings createCoddTestDbMigs = do
 
 
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
-runMVarLogger logsmv m = runLoggingT
-    m
-    (\_loc _source _level str -> modifyMVar_
+runMVarLogger logsmv m = runReaderT
+    (runLoggingT m)
+    ( \newline msg -> modifyMVar_
         logsmv
         (\l -> do
-            let s = decodeUtf8 $ fromLogStr str
-            liftIO $ Text.hPutStrLn stdout s
-            pure $ l ++ [s]
+            case newline of
+                NoNewline -> do
+                    Text.hPutStr stdout msg
+                    hFlush stdout
+                WithNewline -> Text.hPutStrLn stdout msg
+            pure $ l ++ [msg]
         )
+    , const True
+    , True
     )

@@ -4,6 +4,9 @@ module Codd.AppCommands.VerifySchema
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
+import           Codd.Logging                   ( CoddLogger
+                                                , logInfo
+                                                )
 import           Codd.Query                     ( NotInTxn )
 import           Codd.Representations           ( logSchemasComparison
                                                 , readRepsFromDisk
@@ -11,9 +14,6 @@ import           Codd.Representations           ( logSchemasComparison
 import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )
 import           Codd.Representations.Types     ( DbRep )
 import           Control.Monad                  ( when )
-import           Control.Monad.Logger           ( MonadLoggerIO
-                                                , logInfoN
-                                                )
 import           Data.Aeson                     ( decode )
 import           Data.ByteString.Lazy           ( hGetContents )
 import           Data.Maybe                     ( fromMaybe )
@@ -28,7 +28,7 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 )
 
 verifySchema
-    :: (MonadUnliftIO m, MonadLoggerIO m, NotInTxn m)
+    :: (MonadUnliftIO m, CoddLogger m, NotInTxn m)
     => CoddSettings
     -> Bool
     -> m ()
@@ -53,4 +53,4 @@ verifySchema dbInfoWithAllMigs@CoddSettings { onDiskReps, migsConnString } fromS
         when (dbSchema /= expectedSchemas) $ do
             logSchemasComparison dbSchema expectedSchemas
             liftIO $ exitWith (ExitFailure 1)
-        logInfoN "Database and expected schemas match."
+        logInfo "Actual and expected schemas <GREEN>match</GREEN>"

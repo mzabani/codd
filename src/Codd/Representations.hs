@@ -12,19 +12,19 @@ import           Codd.Representations.Database  ( readRepresentationsFromDbWithS
 import           Codd.Representations.Disk
 import           Codd.Representations.Types
 
-import           Control.Monad.Logger           ( MonadLogger
-                                                , logErrorN
-                                                , logInfoN
+import           Codd.Logging                   ( CoddLogger
+                                                , logError
+                                                , logInfo
                                                 )
 import           Data.List                      ( sortOn )
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( mapMaybe )
 
--- | Takes the DB and the expected schemas and logErrorN's the differences, if any,
--- or logInfoN that they match otherwise.
+-- | Takes the DB and the expected schemas and logError's the differences, if any,
+-- or logInfo that they match otherwise.
 logSchemasComparison
-    :: MonadLogger m
+    :: CoddLogger m
     => DbRep
     -- ^ Database schema
     -> DbRep
@@ -32,10 +32,11 @@ logSchemasComparison
     -> m ()
 logSchemasComparison dbSchema expectedSchemas = if dbSchema /= expectedSchemas
     then
-        logErrorN
+        logError
         $ "DB and expected schemas do not match. Differing objects and their current DB schemas are: "
         <> detEncodeSingleLineJSON (schemaDifferences dbSchema expectedSchemas)
-    else logInfoN "Database and expected schemas match."
+    else logInfo
+        "Comparing actual and expected schemas... [<GREEN>match</GREEN>]"
 
 schemaDifferences :: DbRep -> DbRep -> Map FilePath DiffType
 schemaDifferences l r =

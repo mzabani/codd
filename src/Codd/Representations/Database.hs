@@ -43,8 +43,8 @@ import           Codd.Types                     ( SchemaAlgo
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Control.Monad.Logger           ( MonadLogger
-                                                , logWarnN
+import           Codd.Logging           ( CoddLogger
+                                                , logWarn
                                                 )
 import           Data.Aeson                     ( Value )
 import qualified Data.Attoparsec.Text          as Parsec
@@ -288,7 +288,7 @@ queryServerMajorVersion conn = do
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
     :: forall m
-     . (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
+     . (MonadUnliftIO m, CoddLogger m, NotInTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -297,7 +297,7 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
         $ readRepresentationsFromDbWithSettings sett conn
 
 readRepresentationsFromDbWithSettings
-    :: (MonadIO m, MonadLogger m, InTxn m, HasCallStack)
+    :: (MonadIO m, CoddLogger m, InTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -348,7 +348,7 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                 $  "Unsupported PostgreSQL version "
                 ++ show majorVersion
                 | otherwise -> do
-                    logWarnN
+                    logWarn
                         $ "Not all features of PostgreSQL version "
                         <> Text.pack (show majorVersion)
                         <> " may be supported by codd. Please file an issue for us to support this newer version properly."

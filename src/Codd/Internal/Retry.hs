@@ -4,12 +4,12 @@ module Codd.Internal.Retry
     , retryFold
     ) where
 
+import           Codd.Logging                   ( CoddLogger
+                                                , logError
+                                                , logWarn
+                                                )
 import           Codd.Types                     ( RetryPolicy(..)
                                                 , retryPolicyIterate
-                                                )
-import           Control.Monad.Logger           ( MonadLogger
-                                                , logErrorN
-                                                , logWarnN
                                                 )
 import           Data.Maybe                     ( isNothing )
 import qualified Data.Text                     as Text
@@ -23,7 +23,7 @@ data RetryIteration = RetryIteration
     -- ^ 0-indexed try number. E.g. 0 is the first try, 1 is the first *retry*.
     }
 
-retry_ :: (MonadUnliftIO m, MonadLogger m) => RetryPolicy -> m c -> m c
+retry_ :: (MonadUnliftIO m, CoddLogger m) => RetryPolicy -> m c -> m c
 retry_ rpol f = retryFold rpol accf () (const f) where accf () _ = pure ()
 
 -- | Retries an action as many times and with wait intervals according
@@ -31,7 +31,7 @@ retry_ rpol f = retryFold rpol accf () (const f) where accf () _ = pure ()
 -- exceptions. Provides fold-like behavior for an accumulator
 -- for each try, including the first one.
 retryFold
-    :: (MonadUnliftIO m, MonadLogger m)
+    :: (MonadUnliftIO m, CoddLogger m)
     => RetryPolicy
     -> (b -> RetryIteration -> m b)
     -- ^ Accumulating function. This runs even for the first try.
@@ -55,11 +55,10 @@ retryFold initialPol accf acc0 f = go initialPol acc0 0
             Just (waitIfFail, nextPol) -> catchAny (f thisAcc) $ \e -> do
                 let waitTimeMS :: Int =
                         truncate $ (realToFrac waitIfFail :: Float) * 1000
-                logErrorN $ "Got SQL Error: " <> Text.pack (show e)
-                logWarnN
+                logError $ "Got SQL Error: " <> Text.pack (show e)
+                logWarn
                     $  "Waiting "
                     <> Text.pack (show waitTimeMS)
                     <> "ms before next try"
                 threadDelay (1000 * waitTimeMS)
-                logWarnN "Retrying"
                 go nextPol thisAcc (tryNumber + 1)

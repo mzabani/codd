@@ -10,6 +10,10 @@ import           Codd.Internal                  ( PendingMigrations
                                                 , dbIdentifier
                                                 , withConnection
                                                 )
+import           Codd.Logging                   ( runCoddLogger )
+import           Codd.Logging                   ( CoddLogger
+                                                , LoggingT
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
                                                 , ParsedSql(..)
@@ -29,10 +33,6 @@ import           Codd.Types                     ( SchemaAlgo(..)
                                                 )
 import           Control.Monad                  ( forM_
                                                 , void
-                                                )
-import           Control.Monad.Logger           ( LoggingT
-                                                , MonadLogger
-                                                , runStdoutLoggingT
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.String                    ( fromString )
@@ -90,7 +90,7 @@ mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 -- | Brings a Database up to date just like `applyMigrations`, executes the supplied action passing it a Connection String for the Super User and DROPs the Database
 -- afterwards.
 withCoddDbAndDrop
-    :: (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
+    :: (MonadUnliftIO m, CoddLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => [AddedSqlMigration m]
     -> (ConnectInfo -> m a)
     -> m a
@@ -213,7 +213,8 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     connInfo <- testConnInfo
 
     -- TODO: Reuse withCoddDbAndDrop!
-    runStdoutLoggingT
+    runCoddLogger
+
             (do
                 bootstrapMig <- createTestUserMig
                 applyMigrationsNoCheck coddSettings
