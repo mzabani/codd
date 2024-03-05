@@ -44,7 +44,7 @@ import           Control.Monad                  ( forM_
                                                 , void
                                                 )
 import           Codd.Logging           ( MonadLogger
-                                                , logWarnN
+                                                , logWarn
                                                 )
 import           Data.Aeson                     ( Value )
 import qualified Data.Attoparsec.Text          as Parsec
@@ -348,7 +348,7 @@ readRepresentationsFromDbWithSettings CoddSettings { migsConnString, namespacesT
                 $  "Unsupported PostgreSQL version "
                 ++ show majorVersion
                 | otherwise -> do
-                    logWarnN
+                    logWarn
                         $ "Not all features of PostgreSQL version "
                         <> Text.pack (show majorVersion)
                         <> " may be supported by codd. Please file an issue for us to support this newer version properly."

@@ -47,10 +47,10 @@ import           Control.Monad                  ( (>=>)
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import Codd.Logging
     ( MonadLogger,
-      logDebugN,
-      logErrorN,
-      logInfoN,
-      logWarnN,
+      logDebug,
+      logError,
+      logInfo,
+      logWarn,
       logInfoNoNewline )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
@@ -230,7 +230,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
     = do
         let dbName = Text.pack $ DB.connectDatabase migsConnString
         let waitTimeInSecs :: Double = realToFrac connectTimeout
-        logInfoN
+        logInfo
             $  "Checking if database <MAGENTA>"
             <> dbName
             <> "</MAGENTA> is accessible with the configured connection string... (waiting up to <CYAN>"
@@ -276,7 +276,7 @@ applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, 
             bootstrapCheck
             pendingMigs
 
-        logInfoN $ "<GREEN>Successfully</GREEN> applied all migrations to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA>"
+        logInfo $ "<GREEN>Successfully</GREEN> applied all migrations to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA>"
         return actionAfterResult
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
@@ -361,7 +361,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
         pendingMigs <- collect bootCheck
 
         unless (defaultConnAccessible bootCheck) $ do
-            logInfoN
+            logInfo
                 "Default connection string is not accessible. Codd will run in bootstrap mode, expecting the first migrations will contain custom connection strings and will create/bootstrap the database."
 
             -- The specific error below isn't necessary at this stage, but it's much more informative
@@ -369,7 +369,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             let bootstrapMigBlocks =
                     takeWhile isDifferentDbMigBlock pendingMigs
             when (null bootstrapMigBlocks) $ do
-                logErrorN
+                logError
                     "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
                 liftIO exitFailure
 
@@ -397,11 +397,11 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                 )
 
         blocksOfPendingMigs <- parseMigrationFiles migsAlreadyApplied sqlMigrations
-        logInfoN $ " [<CYAN>" <> Fmt.sformat Fmt.int (sum $ map (NE.length . allMigs) blocksOfPendingMigs) <> " found</CYAN>]"
+        logInfo $ " [<CYAN>" <> Fmt.sformat Fmt.int (sum $ map (NE.length . allMigs) blocksOfPendingMigs) <> " found</CYAN>]"
         forM_ (concatMap (NE.toList . allMigs) blocksOfPendingMigs) $ \mig -> do
             case migrationSql $ addedSqlMig mig of
                 UnparsedSql _ ->
-                    logWarnN
+                    logWarn
                         $ Text.pack (migrationName $ addedSqlMig mig)
                         <> " is not to be parsed and thus will be considered in is entirety as in-txn, without support for COPY."
                 _ -> pure ()
@@ -612,7 +612,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
               Just conn -> pure conn
               Nothing   -> modifyMVar connsPerInfo $ \m -> do
                                   -- Need to unliftIO to log in here?
-                                  -- logInfoN $ "Connecting to (TODO: REDACT PASSWORD) " <> Text.pack (show cinfo)
+                                  -- logInfo $ "Connecting to (TODO: REDACT PASSWORD) " <> Text.pack (show cinfo)
                   conn <- connectWithTimeout cinfo connectTimeout
                   pure ((cinfo, conn) : m, conn)
 
@@ -649,7 +649,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                   coddSchemaVersion bootCheck /= maxBound
                               then
                                   do
-                                      logInfoN
+                                      logInfo
                                           "Creating or updating codd_schema..."
                                       createCoddSchema @txn
                                           maxBound
@@ -703,7 +703,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
       -- and use that to register all applied migrations and then run "actionAfter".
       (_, defaultConn) <- openConn defaultConnInfo
       when (coddSchemaVersion finalBootCheck /= maxBound) $ do
-          logInfoN "Creating or updating codd_schema..."
+          logInfo "Creating or updating codd_schema..."
           createCoddSchema @txn maxBound isolLvl defaultConn
       withTransaction @txn isolLvl defaultConn
           $ registerPendingMigrations @txn defaultConn appliedMigs
@@ -750,13 +750,13 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                 if tryNumber == 0
                                     then pure previousBlock
                                     else do
-                                        logDebugN
+                                        logDebug
                                             "Re-reading migrations of this block from disk"
                                         reReadBlock previousBlock
                             )
                             migBlock
                         $ \blockFinal -> do
-                              logInfoN "<MAGENTA>BEGIN</MAGENTA>ning transaction"
+                              logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
                               withTransaction isolLvl conn
                                   $   ApplyMigsResult
                                   <$> runMigs
@@ -770,7 +770,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
                                           )
                                           registerMig -- We retry entire transactions, not individual statements
                                   <*> act conn
-                logInfoN "<MAGENTA>COMMIT</MAGENTA>ed transaction"
+                logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
                 pure res
             else
                 ApplyMigsResult
@@ -794,7 +794,7 @@ strictCheckLastAction
 strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
     cksums <- readRepresentationsFromDbWithSettings coddSettings conn
     unless (all blockInTxn blocksOfMigs) $ do
-        logWarnN
+        logWarn
             "IMPORTANT: Due to the presence of no-txn or custom-connection migrations, all migrations have been applied. We'll run a schema check."
     logSchemasComparison cksums expectedReps
     when (cksums /= expectedReps) $ throwIO $ userError
@@ -861,9 +861,9 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
-        appliedMigrationDuration <- timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig) `onException` logInfoN " [<RED>failed</RED>]"
+        appliedMigrationDuration <- timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig) `onException` logInfo " [<RED>failed</RED>]"
         timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
-        logInfoN $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)"
+        logInfo $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)"
 
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp

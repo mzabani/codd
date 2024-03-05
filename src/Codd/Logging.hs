@@ -5,10 +5,10 @@ module Codd.Logging
     , Newline(..)
     , logInfoNoNewline
     , logInfoAlways
-    , logDebugN
-    , logInfoN
-    , logWarnN
-    , logErrorN
+    , logDebug
+    , logInfo
+    , logWarn
+    , logError
     , runCoddLogger
     , runErrorsOnlyLogger
     , runCoddLoggerLevelFilter
@@ -76,16 +76,16 @@ logInfoNoNewline :: MonadLogger m => Text -> m ()
 logInfoNoNewline = do
     logNoNewline LevelInfo
 
-logInfoN :: MonadLogger m => Text -> m ()
-logInfoN = logLine LevelInfo
+logInfo :: MonadLogger m => Text -> m ()
+logInfo = logLine LevelInfo
 logInfoAlways :: MonadLogger m => Text -> m ()
 logInfoAlways = logLineAlways LevelInfo
-logDebugN :: MonadLogger m => Text -> m ()
-logDebugN = logLine LevelDebug
-logWarnN :: MonadLogger m => Text -> m ()
-logWarnN = logLine LevelWarn
-logErrorN :: MonadLogger m => Text -> m ()
-logErrorN = logLine LevelError
+logDebug :: MonadLogger m => Text -> m ()
+logDebug = logLine LevelDebug
+logWarn :: MonadLogger m => Text -> m ()
+logWarn = logLine LevelWarn
+logError :: MonadLogger m => Text -> m ()
+logError = logLine LevelError
 
 data Newline = WithNewline | NoNewline
 newtype LoggingT m a = LoggingT { runLoggingT :: ReaderT (Newline -> Text -> IO (), LogLevel -> Bool, Bool) m a }

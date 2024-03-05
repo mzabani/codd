@@ -5,8 +5,8 @@ module Codd.Internal.Retry
     ) where
 
 import           Codd.Logging                   ( MonadLogger
-                                                , logErrorN
-                                                , logWarnN
+                                                , logError
+                                                , logWarn
                                                 )
 import           Codd.Types                     ( RetryPolicy(..)
                                                 , retryPolicyIterate
@@ -55,8 +55,8 @@ retryFold initialPol accf acc0 f = go initialPol acc0 0
             Just (waitIfFail, nextPol) -> catchAny (f thisAcc) $ \e -> do
                 let waitTimeMS :: Int =
                         truncate $ (realToFrac waitIfFail :: Float) * 1000
-                logErrorN $ "Got SQL Error: " <> Text.pack (show e)
-                logWarnN
+                logError $ "Got SQL Error: " <> Text.pack (show e)
+                logWarn
                     $  "Waiting "
                     <> Text.pack (show waitTimeMS)
                     <> "ms before next try"

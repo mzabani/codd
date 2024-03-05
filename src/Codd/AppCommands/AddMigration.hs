@@ -14,9 +14,9 @@ import           Codd.Internal                  ( delayedOpenStreamFile
                                                 , listMigrationsFromDisk
                                                 )
 import           Codd.Logging                   ( MonadLogger
-                                                , logErrorN
+                                                , logError
+                                                , logInfo
                                                 , logInfoAlways
-                                                , logInfoN
                                                 )
 import           Codd.Parsing                   ( EnvVars
                                                 , parseSqlMigration
@@ -81,7 +81,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
         migFileExists <- doesFileExist fp
         unless migFileExists $ do
-            logErrorN
+            logError
                 $  "Could not find migration file \""
                 <> Text.pack fp
                 <> "\""
@@ -89,7 +89,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
         finalDirExists <- doesDirectoryExist finalDir
         unless finalDirExists $ do
-            logErrorN
+            logError
                 $  "Could not find destination directory \""
                 <> Text.pack finalDir
                 <> "\""
@@ -97,7 +97,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
         expectedSchemaDirExists <- doesDirectoryExist onDiskRepsDir
         unless expectedSchemaDirExists $ do
-            logErrorN
+            logError
                 $ "Could not find directory for expected DB schema representation \""
                 <> Text.pack onDiskRepsDir
                 <> "\""
@@ -109,7 +109,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
             parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
             case parsedSqlMigE of
                 Left err -> do
-                    logErrorN $ "Could not add migration " <> Text.pack err
+                    logError $ "Could not add migration " <> Text.pack err
                     liftIO $ when
                         isFirstMigration
                         (printSuggestedFirstMigration migsConnString)
@@ -124,7 +124,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                     case migError of
                         Nothing  -> pure ()
                         Just err -> do
-                            logErrorN err
+                            logError err
                             liftIO $ when
                                 isFirstMigration
                                 (printSuggestedFirstMigration migsConnString)
@@ -148,7 +148,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                         <> Text.pack onDiskRepsDir
                         <> "</MAGENTA> folder"
                 when dontApply
-                    $  logInfoN
+                    $  logInfo
                     $  "Migration was NOT applied, but was added to "
                     <> Text.pack finalMigFile
             case addE of

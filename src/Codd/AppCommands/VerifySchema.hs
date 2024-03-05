@@ -5,7 +5,7 @@ module Codd.AppCommands.VerifySchema
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Logging                   ( MonadLogger
-                                                , logInfoN
+                                                , logInfo
                                                 )
 import           Codd.Query                     ( NotInTxn )
 import           Codd.Representations           ( logSchemasComparison
@@ -53,4 +53,4 @@ verifySchema dbInfoWithAllMigs@CoddSettings { onDiskReps, migsConnString } fromS
         when (dbSchema /= expectedSchemas) $ do
             logSchemasComparison dbSchema expectedSchemas
             liftIO $ exitWith (ExitFailure 1)
-        logInfoN "Database and expected schemas match."
+        logInfo "Database and expected schemas match."
