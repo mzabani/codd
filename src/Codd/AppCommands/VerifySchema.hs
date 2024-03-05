@@ -53,4 +53,4 @@ verifySchema dbInfoWithAllMigs@CoddSettings { onDiskReps, migsConnString } fromS
         when (dbSchema /= expectedSchemas) $ do
             logSchemasComparison dbSchema expectedSchemas
             liftIO $ exitWith (ExitFailure 1)
-        logInfo "Database and expected schemas match."
+        logInfo "Actual and expected schemas <GREEN>match</GREEN>"

@@ -107,8 +107,9 @@ instance MonadIO m => MonadLogger (LoggingT m) where
 printLogMsg :: MonadIO m => Bool -> LogLevel -> Text -> (Text -> IO ()) -> m ()
 printLogMsg suppColor level msg printFunc = liftIO $ do
     case level of
-        LevelWarn  -> printFunc $ "<YELLOW>Warn:</YELLOW> " <> colorReplace msg
-        LevelError -> printFunc $ "<RED>Error:</RED> " <> colorReplace msg
+        LevelWarn ->
+            printFunc $ colorReplace $ "<YELLOW>Warn:</YELLOW> " <> msg
+        LevelError -> printFunc $ colorReplace $ "<RED>Error:</RED> " <> msg
         _          -> printFunc $ colorReplace msg
 
   where
