@@ -23,8 +23,9 @@ Here you can see its main features in more detail:
 $ cat create-animals-table.sql
 CREATE TABLE animals (id SERIAL PRIMARY KEY, popular_name TEXT NOT NULL);
 INSERT INTO animals (popular_name) VALUES ('Dog'), ('Cat');
-$ codd add create-animals-table.sql
-Migration applied and added to sql-migrations/2022-02-27-23-14-50-create-animals-table.sql
+$ codd add --quiet create-animals-table.sql
+New migration applied and added to sql-migrations/all/2024-03-05-19-27-43-create-animals-table.sql
+Updated expected DB schema representations in the expected-schema folder
 $ psql -c "SELECT popular_name FROM animals"
  popular_name
 --------------
@@ -44,7 +45,7 @@ $ psql -c "SELECT popular_name FROM animals"
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
 $ codd verify-schema
-[Error] DB and expected schemas do not match. Differing objects and their current DB schemas are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar"}]}
+Error: DB and expected schemas do not match. Differing objects and their current DB schemas are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar","typmod":34}]}
 ````
 
 </td>
@@ -56,15 +57,14 @@ $ codd verify-schema
 
 ````shell
 $ codd up
-[Info] Checking if database 'codd-experiments' is accessible with the configured connection string... (waiting up to 5sec)
-[Info] Checking which SQL migrations have already been applied...
-[Info] Parse-checking headers of all pending SQL Migrations...
-[Info] BEGINning transaction
-[Info] Applying 2022-02-27-23-14-50-create-animals-table.sql
-[Info] Applying 2022-02-27-23-30-41-create-people-table.sql
-[Info] Database and expected schemas match.
-[Info] COMMITed transaction
-[Info] All migrations applied to codd-experiments successfully
+Checking if database codd-experiments is accessible with the configured connection string... (waiting up to 5sec)
+Looking for pending migrations... [2 found]
+BEGINning transaction
+Applying 2022-02-27-23-14-50-create-animals-table.sql (0.08ms)
+Applying 2022-02-27-23-30-41-create-people-table.sql (0.13ms)
+Comparing actual and expected schemas... [match]
+COMMITed transaction
+Successfully applied all migrations to codd-experiments
 ````
 
 </td>
