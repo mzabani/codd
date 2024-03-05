@@ -2,7 +2,6 @@ module TxnConstraintsSpecs.ValidConstructsSpec
     ( spec
     ) where
 import           Codd.Logging                   ( LoggingT(..)
-                                                , Verbosity(..)
                                                 , runCoddLogger
                                                 )
 import           Codd.Query                     ( InTxn
@@ -42,7 +41,7 @@ _testFnWithLoggerAsBase =
 
 _testFnWithInTxnTAsBase :: InTxnT IO ()
 _testFnWithInTxnTAsBase =
-    runCoddLogger Verbose
+    runCoddLogger
         $ withTransaction @(LoggingT (InTxnT IO)) DbDefault someConn
         $ pure ()
 

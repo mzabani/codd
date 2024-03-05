@@ -10,8 +10,9 @@ import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
-import           Codd.Logging                   ( Verbosity(..)
+import           Codd.Logging                   ( LogLevel(..)
                                                 , runCoddLogger
+                                                , runCoddLoggerLevelFilter
                                                 )
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( void )
@@ -23,7 +24,7 @@ import           Options.Applicative
 import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
 
-data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) Verbosity SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema Verbosity Bool
+data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -162,12 +163,12 @@ optionalSecondsOption defaultValue optFields = realToFrac
   -- Watch out: DiffTime's Read instance reads value with an "s" suffixed!
     where intParser = maybeReader (Text.readMaybe @Int)
 
-quietSwitch :: Parser Verbosity
+quietSwitch :: Parser (LogLevel -> Bool)
 quietSwitch =
     switch (long "quiet" <> short 'q' <> help "Hides some of the output.")
         <&> \case
-                True  -> NonVerbose
-                False -> Verbose
+                True  -> (> LevelInfo)
+                False -> const True
 
 main :: IO ()
 main = do
@@ -181,7 +182,7 @@ main = do
 
 doWork :: CoddSettings -> Cmd -> IO ()
 doWork dbInfo (Up mCheckSchemas connectTimeout) =
-    runCoddLogger Verbose $ case mCheckSchemas of
+    runCoddLogger $ case mCheckSchemas of
         Nothing -> Codd.applyMigrationsNoCheck dbInfo
                                                Nothing
                                                connectTimeout
@@ -191,7 +192,8 @@ doWork dbInfo (Up mCheckSchemas connectTimeout) =
                                                          connectTimeout
                                                          checkSchemas
 doWork dbInfo (Add addOpts destFolder verbosity fp) =
-    runCoddLogger verbosity $ addMigration dbInfo addOpts destFolder fp
+    runCoddLoggerLevelFilter verbosity
+        $ addMigration dbInfo addOpts destFolder fp
 doWork dbInfo (VerifySchema verbosity fromStdin) =
-    runCoddLogger verbosity $ verifySchema dbInfo fromStdin
+    runCoddLoggerLevelFilter verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts

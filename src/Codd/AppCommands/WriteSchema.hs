@@ -6,8 +6,7 @@ module Codd.AppCommands.WriteSchema
 import           Codd.Environment               ( CoddSettings(..) )
 import qualified Codd.Environment              as Codd
 import qualified Codd.Internal                 as Codd
-import           Codd.Logging                   ( Verbosity(..)
-                                                , runCoddLogger
+import           Codd.Logging                   ( runCoddLogger
                                                 , runErrorsOnlyLogger
                                                 )
 import           Codd.Query                     ( NotInTxn )
@@ -25,7 +24,7 @@ data WriteSchemaOpts = WriteToStdout | WriteToDisk (Maybe FilePath)
 writeSchema
     :: (MonadUnliftIO m, NotInTxn m) => CoddSettings -> WriteSchemaOpts -> m ()
 writeSchema dbInfo@CoddSettings { migsConnString } opts = case opts of
-    WriteToDisk mdest -> runCoddLogger Verbose $ do
+    WriteToDisk mdest -> runCoddLogger $ do
         dbSchema <- Codd.withConnection migsConnString
                                         (secondsToDiffTime 5)
                                         (readRepsFromDbWithNewTxn dbInfo)

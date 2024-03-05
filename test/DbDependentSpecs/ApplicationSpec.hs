@@ -17,11 +17,10 @@ import           Codd.Internal                  ( CoddSchemaVersion(..)
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
-import           Codd.Logging                   ( Newline(..)
-                                                , Verbosity(..)
+import           Codd.Logging                   ( LoggingT(runLoggingT)
+                                                , Newline(..)
                                                 , runCoddLogger
                                                 )
-import           Codd.Logging                   ( LoggingT(runLoggingT) )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -290,7 +289,7 @@ spec = do
                               "SQL containing characters typical to placeholders does not throw"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runCoddLogger Verbose
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [placeHoldersMig])
@@ -300,7 +299,7 @@ spec = do
                       it "Rows-returning function works for no-txn migrations"
                           $ \emptyTestDbInfo -> do
                                 void @IO
-                                    $ runCoddLogger Verbose
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [selectMig])
@@ -314,7 +313,7 @@ spec = do
                                         mig { migrationInTxn = True }
                                         t
                                 void @IO
-                                    $ runCoddLogger Verbose
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just [inTxnMig])
@@ -325,16 +324,15 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=on"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runCoddLogger Verbose
-                                        $ applyMigrationsNoCheck
-                                              emptyTestDbInfo
-                                              (Just [stdConfStringsMig])
-                                              testConnTimeout
-                                              (\conn -> liftIO $ DB.query
-                                                  conn
-                                                  "SELECT id, t FROM string_escape_tests ORDER BY id"
-                                                  ()
-                                              )
+                                    runCoddLogger $ applyMigrationsNoCheck
+                                        emptyTestDbInfo
+                                        (Just [stdConfStringsMig])
+                                        testConnTimeout
+                                        (\conn -> liftIO $ DB.query
+                                            conn
+                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                            ()
+                                        )
 
                                 map snd stringsAndIds
                                     `shouldBe` [ "bc\\def"
@@ -352,23 +350,22 @@ spec = do
                               "String escaping works in all its forms with standard_conforming_strings=off"
                           $ \emptyTestDbInfo -> void @IO $ do
                                 stringsAndIds :: [(Int, Text)] <-
-                                    runCoddLogger Verbose
-                                        $ applyMigrationsNoCheck
-                                              emptyTestDbInfo
-                                              (Just [notStdConfStringsMig])
-                                              testConnTimeout
-                                              (\conn -> liftIO $ DB.query
-                                                  conn
-                                                  "SELECT id, t FROM string_escape_tests ORDER BY id"
-                                                  ()
-                                              )
+                                    runCoddLogger $ applyMigrationsNoCheck
+                                        emptyTestDbInfo
+                                        (Just [notStdConfStringsMig])
+                                        testConnTimeout
+                                        (\conn -> liftIO $ DB.query
+                                            conn
+                                            "SELECT id, t FROM string_escape_tests ORDER BY id"
+                                            ()
+                                        )
 
                                 map snd stringsAndIds
                                     `shouldBe` ["bcdef", "abc\\de'f"]
 
                       it "COPY FROM STDIN works" $ \emptyTestDbInfo ->
                           runCoddLogger
-                                  Verbose
+
                                   (applyMigrationsNoCheck
                                       emptyTestDbInfo
                                       (Just [copyMig])
@@ -408,7 +405,7 @@ spec = do
                                           -- us to run an after-migrations action that queries the transaction isolation level
                                           (actualTxnIsol :: DB.Only String, actualTxnReadOnly :: DB.Only
                                                   String) <-
-                                              runCoddLogger @IO Verbose
+                                              runCoddLogger @IO
                                                   $ applyMigrationsNoCheck
                                                         modifiedSettings
                                                         -- One in-txn migration is just what we need to make the last action
@@ -463,7 +460,7 @@ spec = do
                                                                ]
                                                              )
                                           runCoddLogger
-                                                  Verbose
+
                                                   (applyMigrations
                                                       (emptyTestDbInfo
                                                           { onDiskReps = Right
@@ -491,7 +488,7 @@ spec = do
 
                                           -- Lax checking will apply the migration and will not throw an exception
                                           runCoddLogger
-                                              Verbose
+
                                               (applyMigrations
                                                   (emptyTestDbInfo
                                                       { onDiskReps = Right
@@ -542,7 +539,7 @@ spec = do
                                                         testConnTimeout
                                                   $ \conn -> do
                                                         runCoddLogger
-                                                                Verbose
+
                                                                 (applyMigrations
                                                                     (emptyTestDbInfo
                                                                         { onDiskReps =
@@ -663,7 +660,7 @@ spec = do
                                         ]
 
                                 void @IO
-                                    $ runCoddLogger Verbose
+                                    $ runCoddLogger
                                     $ applyMigrationsNoCheck
                                           emptyTestDbInfo
                                           (Just migs)
@@ -801,12 +798,11 @@ spec = do
                               $ finallyDrop "new_database_3"
                               $ void @IO
                               $ do
-                                    runCoddLogger Verbose
-                                        $ applyMigrationsNoCheck
-                                              testSettings
-                                              (Just allMigs)
-                                              testConnTimeout
-                                              (const $ pure ())
+                                    runCoddLogger $ applyMigrationsNoCheck
+                                        testSettings
+                                        (Just allMigs)
+                                        testConnTimeout
+                                        (const $ pure ())
                                     withConnection defaultConnInfo
                                                    testConnTimeout
                                         $ \conn -> do
@@ -892,7 +888,7 @@ spec = do
                                         $ finallyDrop "new_database_3"
                                         $ void
                                         $ do
-                                              runCoddLogger Verbose
+                                              runCoddLogger
                                                   $ applyMigrationsNoCheck
                                                         testSettings
                                                         (Just $ map

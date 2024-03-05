@@ -1,7 +1,7 @@
 module Codd.Logging
-    ( Verbosity(..)
-    , MonadLogger
+    ( MonadLogger
     , LoggingT(..)
+    , LogLevel(..)
     , Newline(..)
     , logInfoNoNewline
     , logInfoAlways
@@ -11,6 +11,7 @@ module Codd.Logging
     , logErrorN
     , runCoddLogger
     , runErrorsOnlyLogger
+    , runCoddLoggerLevelFilter
     ) where
 
 import           Control.Monad.Reader           ( MonadReader(..)
@@ -56,8 +57,6 @@ detect and strip that away internally to differentiate it from printing with a n
 So by not using monad-logger, we can reduce the amount of monkey patching. We are more free to develop things like detecting "<GREEN>some text</GREEN>" and users of codd-the-library wouldn't be surprised by such custom behaviour, unlike what would happen if someone
 tried to `runStdoutLoggingT`.
 -}
-
-data Verbosity = Verbose | NonVerbose
 
 data LogLevel = LevelDebug | LevelInfo | LevelWarn | LevelError
   deriving stock (Eq, Ord)
@@ -144,17 +143,14 @@ printLogMsg suppColor newline level msg printFunc = liftIO $ do
 -- Prefixes Warn and Error messages with "Warn: " and "Error: " and uses Yellow and Red colors
 -- when the terminal supports them for those. Also, by convention, parses special strings such as <GREEN>some text</GREEN>
 -- to use colors when the terminal supports them.
-runCoddLogger :: MonadIO m => Verbosity -> LoggingT m a -> m a
-runCoddLogger v m = do
+runCoddLogger :: MonadIO m => LoggingT m a -> m a
+runCoddLogger = runCoddLoggerLevelFilter (const True)
+
+runCoddLoggerLevelFilter
+    :: MonadIO m => (LogLevel -> Bool) -> LoggingT m a -> m a
+runCoddLoggerLevelFilter levelFilter m = do
     suppColor <- liftIO $ hSupportsANSIColor stdout
-    runReaderT
-        (runLoggingT m)
-        ( logPrinter stdout
-        , case v of
-            Verbose    -> const True
-            NonVerbose -> (> LevelInfo)
-        , suppColor
-        )
+    runReaderT (runLoggingT m) (logPrinter stdout, levelFilter, suppColor)
 
 -- | Logs Errors only, and to stderr. Useful if some command needs to produce output to be consumed
 -- by other programs, such as JSON output, so that they can `putStrLn` themselves and not worry about

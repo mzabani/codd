@@ -6,10 +6,9 @@ import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(WriteToStdout)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
-import           Codd.Logging                   ( Verbosity(..)
+import           Codd.Logging                   ( LoggingT
                                                 , runCoddLogger
                                                 )
-import           Codd.Logging                   ( LoggingT )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
@@ -60,7 +59,7 @@ doesNotCreateDB act = do
                                    { DB.connectDatabase = "non-existing-db-name"
                                    }
             }
-    runCoddLogger Verbose $ do
+    runCoddLogger $ do
         -- libpq's fatal connection error is an IOException
         verifySchema testSettings False
             `shouldThrow` (\(e :: IOException) ->
@@ -110,7 +109,7 @@ doesNotModifyExistingDb act assert = do
               execvoid_ conn "CREATE DATABASE new_checksums_test_db"
 
     countsBefore <- getCounts
-    assert $ runCoddLogger Verbose $ act testSettings
+    assert $ runCoddLogger $ act testSettings
     countsAfter <- getCounts
     countsAfter `shouldBe` countsBefore
 

@@ -10,9 +10,7 @@ import           Codd.Internal                  ( PendingMigrations
                                                 , dbIdentifier
                                                 , withConnection
                                                 )
-import           Codd.Logging                   ( Verbosity(..)
-                                                , runCoddLogger
-                                                )
+import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Logging                   ( LoggingT
                                                 , MonadLogger
                                                 )
@@ -216,7 +214,7 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
 
     -- TODO: Reuse withCoddDbAndDrop!
     runCoddLogger
-            Verbose
+
             (do
                 bootstrapMig <- createTestUserMig
                 applyMigrationsNoCheck coddSettings
