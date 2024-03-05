@@ -12,7 +12,7 @@ import           Codd.Representations.Database  ( readRepresentationsFromDbWithS
 import           Codd.Representations.Disk
 import           Codd.Representations.Types
 
-import           Control.Monad.Logger           ( MonadLogger
+import           Codd.Logging                   ( MonadLogger
                                                 , logErrorN
                                                 , logInfoN
                                                 )

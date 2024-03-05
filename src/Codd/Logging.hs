@@ -1,23 +1,26 @@
 module Codd.Logging
     ( Verbosity(..)
+    , MonadLogger
+    , LoggingT(..)
+    , Newline(..)
     , logInfoNoNewline
+    , logInfoAlways
+    , logDebugN
+    , logInfoN
+    , logWarnN
+    , logErrorN
     , runCoddLogger
     , runErrorsOnlyLogger
     ) where
 
-import           Control.Monad.Logger           ( LogLevel(..)
-                                                , LogStr
-                                                , LoggingT(..)
-                                                , MonadLogger
-                                                , fromLogStr
-                                                , logInfoN
+import           Control.Monad.Reader           ( MonadReader(..)
+                                                , MonadTrans(..)
+                                                , ReaderT(..)
+                                                , when
                                                 )
-import           Data.String                    ( IsString
-                                                , fromString
-                                                )
+import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
 import           System.Console.ANSI            ( Color(..)
                                                 , ColorIntensity(..)
@@ -28,57 +31,103 @@ import           System.Console.ANSI            ( Color(..)
 import           System.Console.ANSI.Codes      ( setSGRCode )
 import           UnliftIO                       ( Handle
                                                 , MonadIO
+                                                , MonadUnliftIO
                                                 , hFlush
                                                 , liftIO
                                                 , stderr
                                                 , stdout
                                                 )
+import           UnliftIO.Resource              ( MonadResource
+                                                , ResourceT
+                                                )
 
 {-|
-Our usage of monad-logger is a travesty. Codd calls `logInfoN` and other methods with string markers inside the message itself
-that are replaced by colours or are stripped away and interpreted as a signal not to add a newline when printing.
+One might ask why not use monad-logger instead of developing our own equivalent. It's a fair question.
 
-The problem is that all of these string markers will be printed ipsis litteris by any other monad-logger that is not `runCoddLogger`,
-including for example `runStdoutLoggingT` and `runStderrLoggingT`, but also any custom monad-logger instances in the world out there.
+I started with monad-logger, but at some point wanted to add colors and also print without a newline at the end. All of this, of course, without resorting directly to `putStr` and/or `putStrLn`, because then we'd lose the ability to filter out some of the output
+when e.g. the user has `--quiet` set, among other cases.
 
-We could instead use ANSI color escape codes, but we don't want to include them in contexts where colors aren't supported, which is hard without a custom instance of monad-logger.
+To support colors we'd have to force a `MonadIO m` constraint on every caller of the `log*` functions so that they can detect terminal
+color support. One alternative that wouldn't require that constraint would be to strip away color escape codes in our `MonadLogger` instance, but Stack Overflow answers suggest this would be pretty hard to do well.
 
-One approach would be to require (MonadIO m, MonadLogger m) everywhere and make codd use new functions we create here, such as a
-`logCoddInfoN`. We could then detect support for colors and conditionally replace string markers.
+Printing without a newline also has no support in monad-logger AFAICT, so we previously had to add an uncommon prefix to strings and
+detect and strip that away internally to differentiate it from printing with a newline. A big hack.
 
-While this would be much cleaner, that MonadIO constraint would be overkill for some parts of our codebase.
-
-So the proper thing to do would probably be to stop using monad-logger altogether, and create our own `MonadLogger` class. 
+So by not using monad-logger, we can reduce the amount of monkey patching. We are more free to develop things like detecting "<GREEN>some text</GREEN>" and users of codd-the-library wouldn't be surprised by such custom behaviour, unlike what would happen if someone
+tried to `runStdoutLoggingT`.
 -}
+
 data Verbosity = Verbose | NonVerbose
 
+data LogLevel = LevelDebug | LevelInfo | LevelWarn | LevelError
+  deriving stock (Eq, Ord)
+
+class MonadLogger m where
+    logNoNewline :: LogLevel -> Text -> m ()
+    logLine :: LogLevel -> Text -> m ()
+    logLineAlways :: LogLevel -> Text -> m ()
+
+instance (Monad m, MonadLogger m) => MonadLogger (ResourceT m) where
+    logNoNewline l msg = lift $ logNoNewline l msg
+    logLine l msg = lift $ logLine l msg
+    -- | Logs a line regardless of the user's level filters
+    logLineAlways l msg = lift $ logLineAlways l msg
+
+logInfoNoNewline :: MonadLogger m => Text -> m ()
+logInfoNoNewline = do
+    logNoNewline LevelInfo
+
+logInfoN :: MonadLogger m => Text -> m ()
+logInfoN = logLine LevelInfo
+logInfoAlways :: MonadLogger m => Text -> m ()
+logInfoAlways = logLineAlways LevelInfo
+logDebugN :: MonadLogger m => Text -> m ()
+logDebugN = logLine LevelDebug
+logWarnN :: MonadLogger m => Text -> m ()
+logWarnN = logLine LevelWarn
+logErrorN :: MonadLogger m => Text -> m ()
+logErrorN = logLine LevelError
+
+data Newline = WithNewline | NoNewline
+newtype LoggingT m a = LoggingT { runLoggingT :: ReaderT (Newline -> Text -> IO (), LogLevel -> Bool, Bool) m a }
+    deriving newtype (Applicative, Functor, Monad, MonadFail, MonadIO, MonadResource, MonadThrow, MonadTrans, MonadUnliftIO)
+
+instance MonadIO m => MonadLogger (LoggingT m) where
+    logNoNewline l msg = do
+        (printFunc, logFilter, suppColor) <- LoggingT ask
+        when (logFilter l) $ printLogMsg suppColor NoNewline l msg printFunc
+
+    logLine l msg = do
+        (printFunc, logFilter, suppColor) <- LoggingT ask
+        when (logFilter l) $ printLogMsg suppColor WithNewline l msg printFunc
+
+    logLineAlways l msg = do
+        (printFunc, _, suppColor) <- LoggingT ask
+        printLogMsg suppColor WithNewline l msg printFunc
+
 printLogMsg
-    :: MonadIO m => Bool -> Verbosity -> LogLevel -> LogStr -> Handle -> m ()
-printLogMsg suppColor v level (decodeUtf8 . fromLogStr -> msg) handle =
-    liftIO $ do
-        let (printFunc, finalMsg) =
-                case unlikelyCharSequence `Text.stripPrefix` msg of
-                    Just noNewLineMsg ->
-                        ( \t -> do
-                            Text.hPutStr handle $ colorReplace t
-                            hFlush handle
-                        , noNewLineMsg
-                        )
-                    Nothing -> (Text.hPutStrLn handle . colorReplace, msg)
-        case (v, level) of
-            (NonVerbose, LevelDebug) -> pure ()
-            (NonVerbose, LevelInfo) -> pure ()
-            (_, LevelWarn) -> printFunc $ "<YELLOW>Warn:</YELLOW> " <> finalMsg
-            (_, LevelError) -> printFunc $ "<RED>Error:</RED> " <> finalMsg
-            _ -> printFunc finalMsg
+    :: MonadIO m
+    => Bool
+    -> Newline
+    -> LogLevel
+    -> Text
+    -> (Newline -> Text -> IO ())
+    -> m ()
+printLogMsg suppColor newline level msg printFunc = liftIO $ do
+    case level of
+        LevelWarn ->
+            printFunc newline $ "<YELLOW>Warn:</YELLOW> " <> colorReplace msg
+        LevelError ->
+            printFunc newline $ "<RED>Error:</RED> " <> colorReplace msg
+        _ -> printFunc newline $ colorReplace msg
 
   where
-    cyan    = fromString $ setSGRCode [SetColor Foreground Dull Cyan]
-    green   = fromString $ setSGRCode [SetColor Foreground Dull Green]
-    magenta = fromString $ setSGRCode [SetColor Foreground Dull Magenta]
-    red     = fromString $ setSGRCode [SetColor Foreground Dull Red]
-    yellow  = fromString $ setSGRCode [SetColor Foreground Dull Yellow]
-    reset   = fromString $ setSGRCode [Reset]
+    cyan    = Text.pack $ setSGRCode [SetColor Foreground Dull Cyan]
+    green   = Text.pack $ setSGRCode [SetColor Foreground Dull Green]
+    magenta = Text.pack $ setSGRCode [SetColor Foreground Dull Magenta]
+    red     = Text.pack $ setSGRCode [SetColor Foreground Dull Red]
+    yellow  = Text.pack $ setSGRCode [SetColor Foreground Dull Yellow]
+    reset   = Text.pack $ setSGRCode [Reset]
     colorReplace =
         Text.replace "<CYAN>" (if suppColor then cyan else "")
             . Text.replace "</CYAN>" (if suppColor then reset else "")
@@ -98,15 +147,14 @@ printLogMsg suppColor v level (decodeUtf8 . fromLogStr -> msg) handle =
 runCoddLogger :: MonadIO m => Verbosity -> LoggingT m a -> m a
 runCoddLogger v m = do
     suppColor <- liftIO $ hSupportsANSIColor stdout
-    runLoggingT
-        m
-        (\_loc _source level msg -> printLogMsg suppColor v level msg stdout)
-
-unlikelyCharSequence :: IsString a => a
-unlikelyCharSequence = "      -----$$$$$+++++%%%%%######@@@@@"
-
-logInfoNoNewline :: MonadLogger m => Text -> m ()
-logInfoNoNewline msg = logInfoN $ unlikelyCharSequence <> msg -- We cheat and prefix with an uncommon character sequence that indicates to our printer not to use a newline. Very ugly, but really practical.
+    runReaderT
+        (runLoggingT m)
+        ( logPrinter stdout
+        , case v of
+            Verbose    -> const True
+            NonVerbose -> (> LevelInfo)
+        , suppColor
+        )
 
 -- | Logs Errors only, and to stderr. Useful if some command needs to produce output to be consumed
 -- by other programs, such as JSON output, so that they can `putStrLn` themselves and not worry about
@@ -114,9 +162,11 @@ logInfoNoNewline msg = logInfoN $ unlikelyCharSequence <> msg -- We cheat and pr
 runErrorsOnlyLogger :: MonadIO m => LoggingT m a -> m a
 runErrorsOnlyLogger m = do
     suppColor <- liftIO $ hSupportsANSIColor stdout
-    runLoggingT
-        m
-        (\_loc _source level msg -> case level of
-            LevelError -> printLogMsg suppColor Verbose level msg stderr
-            _          -> pure ()
-        )
+    runReaderT (runLoggingT m) (logPrinter stderr, (>= LevelError), suppColor)
+
+logPrinter :: Handle -> Newline -> Text -> IO ()
+logPrinter handle n msg = case n of
+    NoNewline -> do
+        Text.hPutStr handle msg
+        hFlush handle
+    WithNewline -> Text.hPutStrLn handle msg

@@ -12,6 +12,7 @@ import           Codd.Internal                  ( collectAndApplyMigrations
                                                 , laxCheckLastAction
                                                 , strictCheckLastAction
                                                 )
+import           Codd.Logging                   ( MonadLogger )
 import           Codd.Parsing                   ( AddedSqlMigration
                                                 , EnvVars
                                                 , hoistAddedSqlMigration
@@ -23,7 +24,6 @@ import           Codd.Representations           ( DbRep
                                                 , readRepsFromDisk
                                                 )
 import           Control.Monad.IO.Unlift        ( MonadUnliftIO )
-import           Control.Monad.Logger           ( MonadLogger )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Time                      ( DiffTime )

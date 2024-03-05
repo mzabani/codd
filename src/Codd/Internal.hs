@@ -45,12 +45,13 @@ import           Control.Monad                  ( (>=>)
                                                 , when, void
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
-import           Control.Monad.Logger           ( MonadLogger
-                                                , logDebugN
-                                                , logErrorN
-                                                , logInfoN
-                                                , logWarnN
-                                                )
+import Codd.Logging
+    ( MonadLogger,
+      logDebugN,
+      logErrorN,
+      logInfoN,
+      logWarnN,
+      logInfoNoNewline )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Functor                   ( (<&>) )
@@ -102,7 +103,6 @@ import           UnliftIO.Resource              ( MonadResource
                                                 )
 import System.Clock (getTime, Clock (Monotonic), TimeSpec (..))
 import qualified Formatting as Fmt
-import Codd.Logging (logInfoNoNewline)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -863,7 +863,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
 
         appliedMigrationDuration <- timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig) `onException` logInfoN " [<RED>failed</RED>]"
         timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
-        logInfoN $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)" 
+        logInfoN $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)"
 
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp

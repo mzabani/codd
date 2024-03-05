@@ -13,6 +13,11 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( delayedOpenStreamFile
                                                 , listMigrationsFromDisk
                                                 )
+import           Codd.Logging                   ( MonadLogger
+                                                , logErrorN
+                                                , logInfoAlways
+                                                , logInfoN
+                                                )
 import           Codd.Parsing                   ( EnvVars
                                                 , parseSqlMigration
                                                 )
@@ -23,9 +28,6 @@ import           Codd.Representations           ( persistRepsToDisk
 import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( unless
                                                 , when
-                                                )
-import           Control.Monad.Logger           ( MonadLoggerIO
-                                                , logInfoN
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Text                     as Text
@@ -56,12 +58,7 @@ newtype AddMigrationOptions = AddMigrationOptions
 
 addMigration
     :: forall m
-     . ( MonadUnliftIO m
-       , MonadLoggerIO m
-       , MonadThrow m
-       , EnvVars m
-       , NotInTxn m
-       )
+     . (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => CoddSettings
     -> AddMigrationOptions
     -> Maybe FilePath
@@ -83,41 +80,40 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
             onDiskReps
 
         migFileExists <- doesFileExist fp
-        unless migFileExists $ liftIO $ do
-            Text.hPutStrLn stderr
+        unless migFileExists $ do
+            logErrorN
                 $  "Could not find migration file \""
                 <> Text.pack fp
                 <> "\""
-            exitWith $ ExitFailure 99
+            liftIO $ exitWith $ ExitFailure 99
 
         finalDirExists <- doesDirectoryExist finalDir
-        unless finalDirExists $ liftIO $ do
-            Text.hPutStrLn stderr
+        unless finalDirExists $ do
+            logErrorN
                 $  "Could not find destination directory \""
                 <> Text.pack finalDir
                 <> "\""
-            exitWith $ ExitFailure 98
+            liftIO $ exitWith $ ExitFailure 98
 
         expectedSchemaDirExists <- doesDirectoryExist onDiskRepsDir
-        unless expectedSchemaDirExists $ liftIO $ do
-            Text.hPutStrLn stderr
+        unless expectedSchemaDirExists $ do
+            logErrorN
                 $ "Could not find directory for expected DB schema representation \""
                 <> Text.pack onDiskRepsDir
                 <> "\""
-            exitWith $ ExitFailure 97
+            liftIO $ exitWith $ ExitFailure 97
 
         isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
         runResourceT $ do
             migStream     <- delayedOpenStreamFile fp
             parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
             case parsedSqlMigE of
-                Left err -> liftIO $ do
-                    Text.hPutStrLn stderr
-                        $  "Could not add migration: "
-                        <> Text.pack err
-                    when isFirstMigration
-                         (printSuggestedFirstMigration migsConnString)
-                    exitWith $ ExitFailure 96
+                Left err -> do
+                    logErrorN $ "Could not add migration " <> Text.pack err
+                    liftIO $ when
+                        isFirstMigration
+                        (printSuggestedFirstMigration migsConnString)
+                    liftIO $ exitWith $ ExitFailure 96
 
                 Right sqlMig -> do
                     migCheck <- checkMigration sqlMig
@@ -127,12 +123,12 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
                     case migError of
                         Nothing  -> pure ()
-                        Just err -> liftIO $ do
-                            Text.hPutStrLn stderr $ "Error detected: " <> err
-                            when
+                        Just err -> do
+                            logErrorN err
+                            liftIO $ when
                                 isFirstMigration
                                 (printSuggestedFirstMigration migsConnString)
-                            exitWith $ ExitFailure 95
+                            liftIO $ exitWith $ ExitFailure 95
 
             finalMigFile <- timestampAndMoveMigrationFile sqlFp finalDir
             addE         <- try $ do
@@ -144,10 +140,10 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                         (readRepresentationsFromDbWithSettings dbInfo)
                     persistRepsToDisk databaseSchemas onDiskRepsDir
 
-                    logInfoN
+                    logInfoAlways
                         $  "New migration applied and added to "
                         <> Text.pack finalMigFile
-                    logInfoN
+                    logInfoAlways
                         $ "Updated expected DB schema representations in the <MAGENTA>"
                         <> Text.pack onDiskRepsDir
                         <> "</MAGENTA> folder"

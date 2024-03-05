@@ -1,6 +1,10 @@
 module TxnConstraintsSpecs.ValidConstructsSpec
     ( spec
     ) where
+import           Codd.Logging                   ( LoggingT(..)
+                                                , Verbosity(..)
+                                                , runCoddLogger
+                                                )
 import           Codd.Query                     ( InTxn
                                                 , InTxnT
                                                 , NotInTxn
@@ -8,9 +12,6 @@ import           Codd.Query                     ( InTxn
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
-import           Control.Monad.Logger           ( LoggingT(..)
-                                                , runStderrLoggingT
-                                                )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Test.Hspec
 import           UnliftIO                       ( MonadUnliftIO )
@@ -41,7 +42,7 @@ _testFnWithLoggerAsBase =
 
 _testFnWithInTxnTAsBase :: InTxnT IO ()
 _testFnWithInTxnTAsBase =
-    runStderrLoggingT
+    runCoddLogger Verbose
         $ withTransaction @(LoggingT (InTxnT IO)) DbDefault someConn
         $ pure ()
 

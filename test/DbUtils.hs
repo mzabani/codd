@@ -13,6 +13,9 @@ import           Codd.Internal                  ( PendingMigrations
 import           Codd.Logging                   ( Verbosity(..)
                                                 , runCoddLogger
                                                 )
+import           Codd.Logging                   ( LoggingT
+                                                , MonadLogger
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
                                                 , ParsedSql(..)
@@ -32,9 +35,6 @@ import           Codd.Types                     ( SchemaAlgo(..)
                                                 )
 import           Control.Monad                  ( forM_
                                                 , void
-                                                )
-import           Control.Monad.Logger           ( LoggingT
-                                                , MonadLogger
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.String                    ( fromString )

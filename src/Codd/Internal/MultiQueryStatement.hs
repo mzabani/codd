@@ -6,12 +6,12 @@ module Codd.Internal.MultiQueryStatement
     ) where
 
 import           Codd.Internal.Retry            ( retry_ )
+import           Codd.Logging                   ( MonadLogger )
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
 import           Codd.Types                     ( RetryPolicy )
 import           Control.Monad                  ( void )
-import           Control.Monad.Logger           ( MonadLogger )
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
 import qualified Database.PostgreSQL.LibPQ     as PQ

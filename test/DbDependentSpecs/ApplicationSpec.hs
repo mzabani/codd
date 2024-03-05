@@ -17,9 +17,11 @@ import           Codd.Internal                  ( CoddSchemaVersion(..)
                                                 )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException )
-import           Codd.Logging                   ( Verbosity(..)
+import           Codd.Logging                   ( Newline(..)
+                                                , Verbosity(..)
                                                 , runCoddLogger
                                                 )
+import           Codd.Logging                   ( LoggingT(runLoggingT) )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -36,10 +38,7 @@ import           Control.Monad                  ( forM_
                                                 , void
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( LogStr
-                                                , LoggingT(runLoggingT)
-                                                , fromLogStr
-                                                )
+import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
@@ -77,6 +76,7 @@ import           Test.Hspec.Expectations
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
+                                                , hFlush
                                                 , liftIO
                                                 , stdout
                                                 )
@@ -1048,13 +1048,18 @@ diversifyAppCheckMigs defaultConnInfo testSettings createCoddTestDbMigs = do
 
 
 runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
-runMVarLogger logsmv m = runLoggingT
-    m
-    (\_loc _source _level str -> modifyMVar_
+runMVarLogger logsmv m = runReaderT
+    (runLoggingT m)
+    ( \newline msg -> modifyMVar_
         logsmv
         (\l -> do
-            let s = decodeUtf8 $ fromLogStr str
-            liftIO $ Text.hPutStrLn stdout s
-            pure $ l ++ [s]
+            case newline of
+                NoNewline -> do
+                    Text.hPutStr stdout msg
+                    hFlush stdout
+                WithNewline -> Text.hPutStrLn stdout msg
+            pure $ l ++ [msg]
         )
+    , const True
+    , True
     )

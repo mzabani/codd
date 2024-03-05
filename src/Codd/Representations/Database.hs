@@ -43,7 +43,7 @@ import           Codd.Types                     ( SchemaAlgo
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Control.Monad.Logger           ( MonadLogger
+import           Codd.Logging           ( MonadLogger
                                                 , logWarnN
                                                 )
 import           Data.Aeson                     ( Value )

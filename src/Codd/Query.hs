@@ -9,11 +9,11 @@ module Codd.Query
     , withTransaction
     ) where
 
-import           Codd.Types                     ( TxnIsolationLvl(..) )
-import           Control.Monad                  ( void )
-import           Control.Monad.Logger           ( LoggingT
+import           Codd.Logging                   ( LoggingT
                                                 , MonadLogger
                                                 )
+import           Codd.Types                     ( TxnIsolationLvl(..) )
+import           Control.Monad                  ( void )
 import           Control.Monad.Reader           ( ReaderT )
 import           Control.Monad.State            ( StateT )
 import           Control.Monad.Trans            ( MonadTrans(..) )

@@ -4,12 +4,12 @@ module Codd.Internal.Retry
     , retryFold
     ) where
 
-import           Codd.Types                     ( RetryPolicy(..)
-                                                , retryPolicyIterate
-                                                )
-import           Control.Monad.Logger           ( MonadLogger
+import           Codd.Logging                   ( MonadLogger
                                                 , logErrorN
                                                 , logWarnN
+                                                )
+import           Codd.Types                     ( RetryPolicy(..)
+                                                , retryPolicyIterate
                                                 )
 import           Data.Maybe                     ( isNothing )
 import qualified Data.Text                     as Text

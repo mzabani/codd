@@ -9,6 +9,7 @@ import           Codd.Internal                  ( withConnection )
 import           Codd.Logging                   ( Verbosity(..)
                                                 , runCoddLogger
                                                 )
+import           Codd.Logging                   ( LoggingT )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
@@ -16,7 +17,6 @@ import           Codd.Query                     ( execvoid_
                                                 , unsafeQuery1
                                                 )
 import           Codd.Representations           ( DbRep(..) )
-import           Control.Monad.Logger           ( LoggingT )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
 import           Data.List                      ( isInfixOf )
