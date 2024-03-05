@@ -35,7 +35,8 @@ logSchemasComparison dbSchema expectedSchemas = if dbSchema /= expectedSchemas
         logErrorN
         $ "DB and expected schemas do not match. Differing objects and their current DB schemas are: "
         <> detEncodeSingleLineJSON (schemaDifferences dbSchema expectedSchemas)
-    else logInfoN "<GREEN>Database and expected schemas match</GREEN>"
+    else logInfoN
+        "Comparing actual and expected schemas... [<GREEN>match</GREEN>]"
 
 schemaDifferences :: DbRep -> DbRep -> Map FilePath DiffType
 schemaDifferences l r =

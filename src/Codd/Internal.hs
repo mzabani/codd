@@ -75,7 +75,7 @@ import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
 import           UnliftIO                       ( MonadUnliftIO
-                                                , hClose, newIORef, writeIORef, readIORef, timeout
+                                                , hClose, newIORef, writeIORef, readIORef, timeout, onException
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -276,7 +276,7 @@ applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, 
             bootstrapCheck
             pendingMigs
 
-        logInfoN $ "<GREEN>All migrations applied to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA><GREEN> successfully</GREEN>"
+        logInfoN $ "<GREEN>Successfully</GREEN> applied all migrations to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA>"
         return actionAfterResult
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
@@ -382,9 +382,9 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             Just connInfo -> DB.connectDatabase defaultConnString
                 /= DB.connectDatabase connInfo
     collect bootCheck = do
-        logInfoN "Checking which SQL migrations have already been applied..."
-        migsAlreadyApplied :: [FilePath] <- if coddSchemaVersion bootCheck >= CoddSchemaV1
-            then withConnection
+        logInfoNoNewline "Looking for pending migrations..."
+        migsAlreadyApplied :: [FilePath] <- if coddSchemaVersion bootCheck == CoddSchemaDoesNotExist then pure []
+            else withConnection
                 defaultConnString
                 connectTimeout
                 (\conn ->
@@ -395,10 +395,17 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                                 "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
                                 ()
                 )
-            else pure []
 
-        logInfoN "Parse-checking headers of all pending SQL Migrations..."
-        parseMigrationFiles migsAlreadyApplied sqlMigrations
+        blocksOfPendingMigs <- parseMigrationFiles migsAlreadyApplied sqlMigrations
+        logInfoN $ " [<CYAN>" <> Fmt.sformat Fmt.int (sum $ map (NE.length . allMigs) blocksOfPendingMigs) <> " found</CYAN>]"
+        forM_ (concatMap (NE.toList . allMigs) blocksOfPendingMigs) $ \mig -> do
+            case migrationSql $ addedSqlMig mig of
+                UnparsedSql _ ->
+                    logWarnN
+                        $ Text.pack (migrationName $ addedSqlMig mig)
+                        <> " is not to be parsed and thus will be considered in is entirety as in-txn, without support for COPY."
+                _ -> pure ()
+        pure blocksOfPendingMigs
 
 -- | Opens a UTF-8 file allowing it to be read in streaming fashion. This function delays opening the file
 -- until the returned Stream's first chunk is forced, and closes the file immediately after the returned Stream
@@ -528,9 +535,6 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                 Right asqlmig@(AddedSqlMigration mig _) -> do
                     case migrationSql mig of
                         UnparsedSql _ -> do
-                            logWarnN
-                                $ Text.pack fn
-                                <> " is not to be parsed and thus will be considered in is entirety as in-txn, without support for COPY."
                             -- We can close the file with peace of mind in this case, as it has been read into memory in its entirety. In fact,
                             -- it's already closed because the stream was consumed completely, but let's be explicit.
                             closeFileStream fs
@@ -857,7 +861,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
-        appliedMigrationDuration <- timeAction $ multiQueryStatement_ inTxn conn $ migrationSql sqlMig
+        appliedMigrationDuration <- timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig) `onException` logInfoN " [<RED>failed</RED>]"
         timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
         logInfoN $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)" 
 

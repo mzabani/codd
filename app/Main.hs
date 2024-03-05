@@ -40,7 +40,7 @@ cmdParser = hsubparser
            (info
                addParser
                (progDesc
-                   "Adds and applies a SQL migration (and all pending migrations as well), then updates on-disk schema files."
+                   "Adds and applies a SQL migration (and all pending migrations as well), then updates expected db schema on-disk."
                )
            )
     <> command

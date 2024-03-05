@@ -726,7 +726,7 @@ spec = do
                                         logs <- readMVar logsmv
                                         length
                                                 (filter
-                                                    ("Retrying" `Text.isInfixOf`
+                                                    ("before next try" `Text.isInfixOf`
                                                     )
                                                     logs
                                                 )

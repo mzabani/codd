@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -Wno-unused-matches #-}
 module Codd.AppCommands.AddMigration
     ( AddMigrationOptions(..)
     , addMigration
@@ -25,7 +24,9 @@ import           Codd.Types                     ( SqlFilePath(..) )
 import           Control.Monad                  ( unless
                                                 , when
                                                 )
-import           Control.Monad.Logger           ( MonadLoggerIO )
+import           Control.Monad.Logger           ( MonadLoggerIO
+                                                , logInfoN
+                                                )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
@@ -143,15 +144,17 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                         (readRepresentationsFromDbWithSettings dbInfo)
                     persistRepsToDisk databaseSchemas onDiskRepsDir
 
-                    liftIO
-                        $  putStrLn
-                        $  "Migration applied and added to "
-                        <> finalMigFile
+                    logInfoN
+                        $  "New migration applied and added to "
+                        <> Text.pack finalMigFile
+                    logInfoN
+                        $ "Updated expected DB schema representations in the <MAGENTA>"
+                        <> Text.pack onDiskRepsDir
+                        <> "</MAGENTA> folder"
                 when dontApply
-                    $  liftIO
-                    $  putStrLn
+                    $  logInfoN
                     $  "Migration was NOT applied, but was added to "
-                    <> finalMigFile
+                    <> Text.pack finalMigFile
             case addE of
                 Right _                    -> pure ()
                 Left  (e :: SomeException) -> liftIO $ do

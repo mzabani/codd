@@ -61,5 +61,4 @@ retryFold initialPol accf acc0 f = go initialPol acc0 0
                     <> Text.pack (show waitTimeMS)
                     <> "ms before next try"
                 threadDelay (1000 * waitTimeMS)
-                logWarnN "Retrying"
                 go nextPol thisAcc (tryNumber + 1)
