@@ -94,31 +94,22 @@ newtype LoggingT m a = LoggingT { runLoggingT :: ReaderT (Newline -> Text -> IO 
 instance MonadIO m => MonadLogger (LoggingT m) where
     logNoNewline l msg = do
         (printFunc, logFilter, suppColor) <- LoggingT ask
-        when (logFilter l) $ printLogMsg suppColor NoNewline l msg printFunc
+        when (logFilter l) $ printLogMsg suppColor l msg (printFunc NoNewline)
 
     logLine l msg = do
         (printFunc, logFilter, suppColor) <- LoggingT ask
-        when (logFilter l) $ printLogMsg suppColor WithNewline l msg printFunc
+        when (logFilter l) $ printLogMsg suppColor l msg (printFunc WithNewline)
 
     logLineAlways l msg = do
         (printFunc, _, suppColor) <- LoggingT ask
-        printLogMsg suppColor WithNewline l msg printFunc
+        printLogMsg suppColor l msg (printFunc WithNewline)
 
-printLogMsg
-    :: MonadIO m
-    => Bool
-    -> Newline
-    -> LogLevel
-    -> Text
-    -> (Newline -> Text -> IO ())
-    -> m ()
-printLogMsg suppColor newline level msg printFunc = liftIO $ do
+printLogMsg :: MonadIO m => Bool -> LogLevel -> Text -> (Text -> IO ()) -> m ()
+printLogMsg suppColor level msg printFunc = liftIO $ do
     case level of
-        LevelWarn ->
-            printFunc newline $ "<YELLOW>Warn:</YELLOW> " <> colorReplace msg
-        LevelError ->
-            printFunc newline $ "<RED>Error:</RED> " <> colorReplace msg
-        _ -> printFunc newline $ colorReplace msg
+        LevelWarn  -> printFunc $ "<YELLOW>Warn:</YELLOW> " <> colorReplace msg
+        LevelError -> printFunc $ "<RED>Error:</RED> " <> colorReplace msg
+        _          -> printFunc $ colorReplace msg
 
   where
     cyan    = Text.pack $ setSGRCode [SetColor Foreground Dull Cyan]
