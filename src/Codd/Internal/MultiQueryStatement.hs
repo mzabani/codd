@@ -6,7 +6,7 @@ module Codd.Internal.MultiQueryStatement
     ) where
 
 import           Codd.Internal.Retry            ( retry_ )
-import           Codd.Logging                   ( MonadLogger )
+import           Codd.Logging                   ( CoddLogger )
 import           Codd.Parsing                   ( ParsedSql(..)
                                                 , SqlPiece(..)
                                                 )
@@ -62,7 +62,7 @@ data InTransaction = InTransaction | NotInTransaction RetryPolicy deriving stock
 --   2. If not in a transaction, then statements will be executed one-by-one and
 --      will be retried according to the retry policy.
 multiQueryStatement_
-    :: (MonadUnliftIO m, MonadLogger m)
+    :: (MonadUnliftIO m, CoddLogger m)
     => InTransaction
     -> DB.Connection
     -> ParsedSql m

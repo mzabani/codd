@@ -1,5 +1,5 @@
 module Codd.Logging
-    ( MonadLogger
+    ( CoddLogger
     , LoggingT(..)
     , LogLevel(..)
     , Newline(..)
@@ -49,7 +49,7 @@ I started with monad-logger, but at some point wanted to add colors and also pri
 when e.g. the user has `--quiet` set, among other cases.
 
 To support colors we'd have to force a `MonadIO m` constraint on every caller of the `log*` functions so that they can detect terminal
-color support. One alternative that wouldn't require that constraint would be to strip away color escape codes in our `MonadLogger` instance, but Stack Overflow answers suggest this would be pretty hard to do well.
+color support. One alternative that wouldn't require that constraint would be to strip away color escape codes in our `CoddLogger` instance, but Stack Overflow answers suggest this would be pretty hard to do well.
 
 Printing without a newline also has no support in monad-logger AFAICT, so we previously had to add an uncommon prefix to strings and
 detect and strip that away internally to differentiate it from printing with a newline. A big hack.
@@ -61,37 +61,37 @@ tried to `runStdoutLoggingT`.
 data LogLevel = LevelDebug | LevelInfo | LevelWarn | LevelError
   deriving stock (Eq, Ord)
 
-class MonadLogger m where
+class CoddLogger m where
     logNoNewline :: LogLevel -> Text -> m ()
     logLine :: LogLevel -> Text -> m ()
     logLineAlways :: LogLevel -> Text -> m ()
 
-instance (Monad m, MonadLogger m) => MonadLogger (ResourceT m) where
+instance (Monad m, CoddLogger m) => CoddLogger (ResourceT m) where
     logNoNewline l msg = lift $ logNoNewline l msg
     logLine l msg = lift $ logLine l msg
     -- | Logs a line regardless of the user's level filters
     logLineAlways l msg = lift $ logLineAlways l msg
 
-logInfoNoNewline :: MonadLogger m => Text -> m ()
+logInfoNoNewline :: CoddLogger m => Text -> m ()
 logInfoNoNewline = do
     logNoNewline LevelInfo
 
-logInfo :: MonadLogger m => Text -> m ()
+logInfo :: CoddLogger m => Text -> m ()
 logInfo = logLine LevelInfo
-logInfoAlways :: MonadLogger m => Text -> m ()
+logInfoAlways :: CoddLogger m => Text -> m ()
 logInfoAlways = logLineAlways LevelInfo
-logDebug :: MonadLogger m => Text -> m ()
+logDebug :: CoddLogger m => Text -> m ()
 logDebug = logLine LevelDebug
-logWarn :: MonadLogger m => Text -> m ()
+logWarn :: CoddLogger m => Text -> m ()
 logWarn = logLine LevelWarn
-logError :: MonadLogger m => Text -> m ()
+logError :: CoddLogger m => Text -> m ()
 logError = logLine LevelError
 
 data Newline = WithNewline | NoNewline
 newtype LoggingT m a = LoggingT { runLoggingT :: ReaderT (Newline -> Text -> IO (), LogLevel -> Bool, Bool) m a }
     deriving newtype (Applicative, Functor, Monad, MonadFail, MonadIO, MonadResource, MonadThrow, MonadTrans, MonadUnliftIO)
 
-instance MonadIO m => MonadLogger (LoggingT m) where
+instance MonadIO m => CoddLogger (LoggingT m) where
     logNoNewline l msg = do
         (printFunc, logFilter, suppColor) <- LoggingT ask
         when (logFilter l) $ printLogMsg suppColor l msg (printFunc NoNewline)

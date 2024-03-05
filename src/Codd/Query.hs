@@ -9,8 +9,8 @@ module Codd.Query
     , withTransaction
     ) where
 
-import           Codd.Logging                   ( LoggingT
-                                                , MonadLogger
+import           Codd.Logging                   ( CoddLogger
+                                                , LoggingT
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void )
@@ -77,7 +77,7 @@ this is not necessarily an airtight sandbox, but any ways to break out of it mig
 class Monad m => InTxn (m :: Type -> Type)
 class Monad m => NotInTxn (m :: Type -> Type)
 newtype InTxnT m a = InTxnT { unTxnT :: m a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger, MonadUnliftIO, InTxn)
+  deriving newtype (Functor, Applicative, Monad, MonadIO, CoddLogger, MonadUnliftIO, InTxn)
 
 
 -- | TODO: Is this instance a way of breaking this module's sandbox? Check!

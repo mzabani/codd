@@ -46,7 +46,7 @@ import           Control.Monad                  ( (>=>)
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
 import Codd.Logging
-    ( MonadLogger,
+    ( CoddLogger,
       logDebug,
       logError,
       logInfo,
@@ -214,7 +214,7 @@ data PendingMigrations m = PendingMigrations
 
 collectAndApplyMigrations
     :: ( MonadUnliftIO m
-       , MonadLogger m
+       , CoddLogger m
        , MonadThrow m
        , EnvVars m
        , NotInTxn m
@@ -254,7 +254,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
 applyCollectedMigrations
     :: forall m a txn
      . ( MonadUnliftIO m
-       , MonadLogger m
+       , CoddLogger m
        , MonadResource m
        , NotInTxn m
        , txn ~ InTxnT m
@@ -344,7 +344,7 @@ createCoddSchema targetVersion txnIsolationLvl conn = withTransaction @txn txnIs
 collectPendingMigrations
     :: forall m
      . ( MonadUnliftIO m
-       , MonadLogger m
+       , CoddLogger m
        , MonadResource m
        , MonadThrow m
        , NotInTxn m
@@ -459,7 +459,7 @@ listMigrationsFromDisk sqlDirs excludeList = do
 parseMigrationFiles
     :: forall m
      . ( MonadUnliftIO m
-       , MonadLogger m
+       , CoddLogger m
        , MonadResource m
        , MonadThrow m
        , EnvVars m
@@ -569,7 +569,7 @@ data ApplyMigsResult a = ApplyMigsResult
 baseApplyMigsBlock
     :: forall m a txn
      . ( MonadUnliftIO m
-       , MonadLogger m
+       , CoddLogger m
        , NotInTxn m
        , MonadResource m
        , txn ~ InTxnT m
@@ -723,7 +723,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
             $ \AppliedMigration {..} -> registerRanMigration @x defaultConn isolLvl appliedMigrationName appliedMigrationTimestamp (Just appliedMigrationAt) appliedMigrationDuration
 
     runMigs
-        :: (MonadUnliftIO n, MonadLogger n, CanStartTxn n txn)
+        :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
         => DB.Connection
         -> RetryPolicy
         -> NonEmpty (AddedSqlMigration n)
@@ -787,7 +787,7 @@ baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl b
 -- strict-check schemas, logging differences, success and throwing
 -- an exception if they mismatch.
 strictCheckLastAction
-    :: (MonadUnliftIO m, MonadLogger m, InTxn m)
+    :: (MonadUnliftIO m, CoddLogger m, InTxn m)
     => CoddSettings
     -> DbRep
     -> ([BlockOfMigrations m] -> DB.Connection -> m ())
@@ -804,7 +804,7 @@ strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
 -- lax-check schemas, logging differences or success, but
 -- _never_ throwing exceptions and returning the database schema.
 laxCheckLastAction
-    :: (MonadUnliftIO m, MonadLogger m, InTxn m)
+    :: (MonadUnliftIO m, CoddLogger m, InTxn m)
     => CoddSettings
     -> DbRep
     -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
@@ -846,7 +846,7 @@ blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) 
 -- itself register that the migration ran, only runs "afterMigRun" after applying the migration.
 applySingleMigration
     :: forall m txn
-     . (MonadUnliftIO m, MonadLogger m, CanStartTxn m txn)
+     . (MonadUnliftIO m, CoddLogger m, CanStartTxn m txn)
     => DB.Connection
     -> RetryPolicy
     -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)

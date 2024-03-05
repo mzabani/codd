@@ -13,7 +13,7 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( delayedOpenStreamFile
                                                 , listMigrationsFromDisk
                                                 )
-import           Codd.Logging                   ( MonadLogger
+import           Codd.Logging                   ( CoddLogger
                                                 , logError
                                                 , logInfo
                                                 , logInfoAlways
@@ -58,7 +58,7 @@ newtype AddMigrationOptions = AddMigrationOptions
 
 addMigration
     :: forall m
-     . (MonadUnliftIO m, MonadLogger m, MonadThrow m, EnvVars m, NotInTxn m)
+     . (MonadUnliftIO m, CoddLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => CoddSettings
     -> AddMigrationOptions
     -> Maybe FilePath

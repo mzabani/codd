@@ -4,7 +4,7 @@ module Codd.Internal.Retry
     , retryFold
     ) where
 
-import           Codd.Logging                   ( MonadLogger
+import           Codd.Logging                   ( CoddLogger
                                                 , logError
                                                 , logWarn
                                                 )
@@ -23,7 +23,7 @@ data RetryIteration = RetryIteration
     -- ^ 0-indexed try number. E.g. 0 is the first try, 1 is the first *retry*.
     }
 
-retry_ :: (MonadUnliftIO m, MonadLogger m) => RetryPolicy -> m c -> m c
+retry_ :: (MonadUnliftIO m, CoddLogger m) => RetryPolicy -> m c -> m c
 retry_ rpol f = retryFold rpol accf () (const f) where accf () _ = pure ()
 
 -- | Retries an action as many times and with wait intervals according
@@ -31,7 +31,7 @@ retry_ rpol f = retryFold rpol accf () (const f) where accf () _ = pure ()
 -- exceptions. Provides fold-like behavior for an accumulator
 -- for each try, including the first one.
 retryFold
-    :: (MonadUnliftIO m, MonadLogger m)
+    :: (MonadUnliftIO m, CoddLogger m)
     => RetryPolicy
     -> (b -> RetryIteration -> m b)
     -- ^ Accumulating function. This runs even for the first try.

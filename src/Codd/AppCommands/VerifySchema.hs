@@ -4,7 +4,7 @@ module Codd.AppCommands.VerifySchema
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
-import           Codd.Logging                   ( MonadLogger
+import           Codd.Logging                   ( CoddLogger
                                                 , logInfo
                                                 )
 import           Codd.Query                     ( NotInTxn )
@@ -28,7 +28,7 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 )
 
 verifySchema
-    :: (MonadUnliftIO m, MonadLogger m, NotInTxn m)
+    :: (MonadUnliftIO m, CoddLogger m, NotInTxn m)
     => CoddSettings
     -> Bool
     -> m ()

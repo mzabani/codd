@@ -43,7 +43,7 @@ import           Codd.Types                     ( SchemaAlgo
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Codd.Logging           ( MonadLogger
+import           Codd.Logging           ( CoddLogger
                                                 , logWarn
                                                 )
 import           Data.Aeson                     ( Value )
@@ -288,7 +288,7 @@ queryServerMajorVersion conn = do
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn
     :: forall m
-     . (MonadUnliftIO m, MonadLogger m, NotInTxn m, HasCallStack)
+     . (MonadUnliftIO m, CoddLogger m, NotInTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep
@@ -297,7 +297,7 @@ readRepsFromDbWithNewTxn sett@CoddSettings { txnIsolationLvl } conn =
         $ readRepresentationsFromDbWithSettings sett conn
 
 readRepresentationsFromDbWithSettings
-    :: (MonadIO m, MonadLogger m, InTxn m, HasCallStack)
+    :: (MonadIO m, CoddLogger m, InTxn m, HasCallStack)
     => CoddSettings
     -> DB.Connection
     -> m DbRep

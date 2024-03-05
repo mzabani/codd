@@ -12,7 +12,7 @@ import           Codd.Representations.Database  ( readRepresentationsFromDbWithS
 import           Codd.Representations.Disk
 import           Codd.Representations.Types
 
-import           Codd.Logging                   ( MonadLogger
+import           Codd.Logging                   ( CoddLogger
                                                 , logError
                                                 , logInfo
                                                 )
@@ -24,7 +24,7 @@ import           Data.Maybe                     ( mapMaybe )
 -- | Takes the DB and the expected schemas and logError's the differences, if any,
 -- or logInfo that they match otherwise.
 logSchemasComparison
-    :: MonadLogger m
+    :: CoddLogger m
     => DbRep
     -- ^ Database schema
     -> DbRep
