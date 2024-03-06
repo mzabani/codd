@@ -8,7 +8,6 @@ import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars(..)
                                                 , ParsedSql(..)
-                                                , ParserState(..)
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , SqlPiece(..)
@@ -23,51 +22,29 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , piecesToText
                                                 , sqlPieceText
                                                 )
-import           Control.Monad                  ( (>=>)
-                                                , forM
+import           Control.Monad                  ( forM
                                                 , forM_
                                                 , unless
-                                                , when
                                                 )
 import           Control.Monad.Identity         ( Identity(runIdentity) )
-import           Control.Monad.Reader           ( ReaderT(..)
-                                                , ask
-                                                )
-import           Control.Monad.Trans            ( MonadTrans )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
-import           Data.Attoparsec.Text           ( parseOnly )
-import qualified Data.Char                     as Char
-import           Data.Either                    ( isLeft )
-import           Data.Foldable                  ( find )
 import qualified Data.List                     as List
 import           Data.List.NonEmpty             ( NonEmpty(..) )
-import qualified Data.List.NonEmpty            as NE
 import           Data.Map                       ( Map )
 import qualified Data.Map                      as Map
-import           Data.Maybe                     ( fromMaybe
-                                                , isJust
-                                                )
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import qualified Database.PostgreSQL.Simple    as DB
-import qualified Database.PostgreSQL.Simple    as SQL
-import           DbUtils                        ( mkValidSql
-                                                , parseSqlMigrationIO
-                                                )
-import           Debug.Trace
+import           DbUtils                        ( parseSqlMigrationIO )
 import           EnvironmentSpec                ( ConnStringGen(..) )
-import           GHC.Natural                    ( Natural )
-import           Streaming                      ( Of
-                                                , Stream
-                                                )
 import qualified Streaming.Prelude             as Streaming
 import           System.Random                  ( mkStdGen
                                                 , randomR
                                                 )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
-import           Test.Hspec.QuickCheck          ( prop )
 import           Test.QuickCheck
 import           UnliftIO                       ( MonadIO
                                                 , liftIO
@@ -228,7 +205,7 @@ genTextStream t = do
     pure $ mkRandStream n t
 
 mkRandStream :: Monad m => Int -> Text -> PureStream m
-mkRandStream seed t = PureStream $ go (mkStdGen seed) t
+mkRandStream seed text = PureStream $ go (mkStdGen seed) text
   where
     go g t =
         let
@@ -302,13 +279,13 @@ instance Arbitrary (CopyBody m) where
             notEnding       <- elements ["\\", ".", "\\.", ".\\", ""] -- Any characters that look like a terminator and could confuse the parser
             someCharsBefore <- arbitrary
             someCharsAfter  <- arbitrary
-            before          <- Text.pack <$> if someCharsBefore
+            bef             <- Text.pack <$> if someCharsBefore
                 then listOf1 (arbitrary @Char `suchThat` (/=) '\n')
                 else pure ""
-            after <- Text.pack <$> if someCharsAfter
+            aft <- Text.pack <$> if someCharsAfter
                 then listOf1 (arbitrary @Char `suchThat` (/=) '\n')
                 else pure ""
-            let row' = before <> notEnding <> after <> "\n"
+            let row' = bef <> notEnding <> aft <> "\n"
                 row  = if row' == "\\.\n" then "x\\.\n" else row'
             pure row
         pure $ CopyBody { .. }
@@ -433,8 +410,6 @@ spec = do
                               Streaming.toList_
                               $ parseSqlPiecesStreaming
                               $ unPureStream unSyntRandomSql
-                          let comments = [ t | CommentPiece t <- blks ]
-                              whtspc   = [ t | WhiteSpacePiece t <- blks ]
                           piecesToText blks `shouldBe` fullContents
                           forM_ blks $ \case
                               CommentPiece t ->
@@ -471,9 +446,8 @@ spec = do
                                      | numLines /= 0
                                      ]
                           ++ [ CopyFromStdinEnd terminator | terminator /= "" ]
-                      forM_ [ rows | CopyFromStdinRows rows <- parsed ]
-                          $ \rows ->
-                                rows `shouldSatisfy` ("\n" `Text.isSuffixOf`)
+                      forM_ [ row | CopyFromStdinRows row <- parsed ] $ \row ->
+                          row `shouldSatisfy` ("\n" `Text.isSuffixOf`)
 
 
         context "Valid SQL Migrations" $ do

@@ -4,9 +4,7 @@ import           Codd.Representations           ( persistRepsToDisk
                                                 , readRepsFromDisk
                                                 , schemaDifferences
                                                 )
-import           Control.Monad                  ( when )
 import qualified Data.Map                      as Map
-import           Data.Text                      ( unpack )
 import           Test.Hspec
 import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck

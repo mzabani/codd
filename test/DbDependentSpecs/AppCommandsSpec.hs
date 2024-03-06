@@ -51,7 +51,7 @@ migThatWontRun = AddedSqlMigration
     (getIncreasingTimestamp 99999)
 
 doesNotCreateDB :: (CoddSettings -> LoggingT IO a) -> IO ()
-doesNotCreateDB act = do
+doesNotCreateDB _act = do
     vanillaTestSettings <- testCoddSettings
     let testSettings = vanillaTestSettings
             { onDiskReps     = Right $ DbRep Aeson.Null Map.empty Map.empty

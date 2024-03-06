@@ -2,7 +2,6 @@ module TypesGen where
 
 import           AesonValueGen                  ( )
 import           Codd.Representations
-import           Data.Aeson                     ( Value )
 import           Data.Function                  ( on )
 import           Data.List                      ( nubBy )
 import qualified Data.Map.Strict               as Map

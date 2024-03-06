@@ -9,15 +9,10 @@ import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
                                                 )
-import           Control.Monad                  ( forM_
-                                                , when
-                                                )
-import           Data.Align                     ( alignWith )
 import           Data.Attoparsec.Text           ( endOfInput
                                                 , parseOnly
                                                 )
 import           Data.Either                    ( isLeft )
-import           Data.Functor                   ( (<&>) )
 import           Data.Hashable                  ( hash )
 import           Data.List                      ( sortOn )
 import           Data.Maybe                     ( catMaybes )
@@ -26,7 +21,6 @@ import           Data.Text                      ( Text )
 import           Data.Time                      ( secondsToDiffTime )
 import           Data.Word                      ( Word16 )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
-import           GHC.Generics                   ( Generic )
 import           Network.URI                    ( URI(..)
                                                 , URIAuth(..)
                                                 , escapeURIString
@@ -34,7 +28,6 @@ import           Network.URI                    ( URI(..)
                                                 , uriToString
                                                 )
 import           Test.Hspec
-import           Test.Hspec.Core.QuickCheck     ( modifyMaxSuccess )
 import           Test.QuickCheck
 import           TypesGen                       ( genObjName )
 
@@ -310,7 +303,9 @@ spec = do
                     `shouldBe` Right
                                    (RetryPolicy
                                        2
-                                       (ExponentialBackoff (realToFrac 2.5))
+                                       (ExponentialBackoff
+                                           (realToFrac @Double 2.5)
+                                       )
                                    )
 
                 parseOnly (retryPolicyParser <* endOfInput)
@@ -318,5 +313,7 @@ spec = do
                     `shouldBe` Right
                                    (RetryPolicy
                                        7
-                                       (ConstantBackoff (realToFrac 1.25))
+                                       (ConstantBackoff
+                                           (realToFrac @Double 1.25)
+                                       )
                                    )

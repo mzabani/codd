@@ -2,8 +2,7 @@ module LiftedExpectations
     ( shouldThrow
     ) where
 
-import           Test.Hspec                     ( Expectation
-                                                , HasCallStack
+import           Test.Hspec                     ( HasCallStack
                                                 , Selector
                                                 )
 import qualified Test.Hspec                    as Hspec
