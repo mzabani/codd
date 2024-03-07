@@ -1557,11 +1557,12 @@ spec = do
                                                       connInfo
                                                       testConnTimeout
                                                 $ \conn ->
-                                                      multiQueryStatement_
-                                                              (NotInTransaction
-                                                                  singleTryPolicy
-                                                              )
-                                                              conn
+                                                      Streaming.effects
+                                                          $ multiQueryStatement_
+                                                                (NotInTransaction
+                                                                    singleTryPolicy
+                                                                )
+                                                                conn
                                                           $ mkValidSql undoSql
                                             hashesAfterUndo <- getHashes
                                                 emptyDbInfo

@@ -24,6 +24,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , FileStream(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
+                                                , SqlPiece(..)
                                                 , hoistAddedSqlMigration
                                                 , parseAddedSqlMigration
                                                 , parseSqlPiecesStreaming
@@ -51,7 +52,6 @@ import           Control.Monad                  ( (>=>)
                                                 , forM
                                                 , forM_
                                                 , unless
-                                                , void
                                                 , when
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
@@ -205,12 +205,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
                    if isServerNotAvailableError e
                 then Nothing
 
-                                                                                       -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                       -- - The DB does not exist.
-                                                                                       -- - CONNECT rights not granted.
-                                                                                       -- - User doesn't exist.
-                                                                                       -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                       -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - The DB does not exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - User doesn't exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                                                                                                                                                                                                                           -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
                     then Just BootstrapCheck
                         { defaultConnAccessible = False
@@ -908,15 +908,22 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
-        appliedMigrationDuration <-
-            timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig)
+        (numStatements, appliedMigrationDuration) <-
+            timeAction
+                    ( Streaming.length_
+                    $ Streaming.filter countsAsRealStatement
+                    $ multiQueryStatement_ inTxn conn
+                    $ migrationSql sqlMig
+                    )
                 `onException` logInfo " [<RED>failed</RED>]"
         timestamp <- withTransaction isolLvl conn
             $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
         logInfo
             $  " (<CYAN>"
             <> prettyPrintDuration appliedMigrationDuration
-            <> "</CYAN>)"
+            <> "</CYAN>, "
+            <> Fmt.sformat Fmt.int numStatements
+            <> ")"
 
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
@@ -943,16 +950,30 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 (Fmt.fixed @Double 1)
                 (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10)
             <> "s" -- e.g. 10.5s
+    -- | If our goal were only to resume migration application from the last statement that failed,
+    -- we could count white space and the body and ending of COPY. However, that would be an odd number from a human
+    -- perspective, and our parser is also more prone to changing how it e.g. groups comments with actual statements,
+    -- so it's more dangerous to count these things.
+    countsAsRealStatement = \case
+        Left  _text -> True -- Unparsed SQL counts as a single statement
+        Right p     -> case p of
+            CommentPiece      _ -> False
+            WhiteSpacePiece   _ -> False
+            CopyFromStdinRows _ -> False
+            CopyFromStdinEnd  _ -> False
+            _                   -> True
     timeAction f = do
         before <- liftIO $ getTime Monotonic
-        void f
-        after <- liftIO $ getTime Monotonic
+        ret    <- f
+        after  <- liftIO $ getTime Monotonic
         pure
-            $ picosecondsToDiffTime
+            ( ret
+            , picosecondsToDiffTime
             $ (pico_1s :: Integer)
             * fromIntegral (sec after - sec before)
             + (pico_1ns :: Integer)
             * fromIntegral (nsec after - nsec before)
+            )
 
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 
