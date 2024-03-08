@@ -205,12 +205,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
                    if isServerNotAvailableError e
                 then Nothing
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - The DB does not exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - CONNECT rights not granted.
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - User doesn't exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                                                                                                                                                                                                                                                                                           -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- - The DB does not exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- - User doesn't exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
                     then Just BootstrapCheck
                         { defaultConnAccessible = False
@@ -343,7 +343,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                     -- to create codd_schema.
                     (runAfterMig, newBootCheck) <- case mDefaultConn of
                         Nothing -> pure
-                            ( \_ _ appliedAt _ -> DB.fromOnly <$> unsafeQuery1
+                            ( \_ _ appliedAt _ _ -> DB.fromOnly <$> unsafeQuery1
                                 conn
                                 "SELECT COALESCE(?, now())"
                                 (DB.Only appliedAt)
@@ -439,6 +439,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                   appliedMigrationTimestamp
                   (Just appliedMigrationAt)
                   appliedMigrationDuration
+                  appliedMigrationNumStatements
 
     runMigs
         :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
@@ -449,6 +450,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> DB.UTCTimestamp
            -> Maybe UTCTime
            -> DiffTime
+           -> Int
            -> txn UTCTime
            )
         -> n [AppliedMigration]
@@ -465,6 +467,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> DB.UTCTimestamp
            -> Maybe UTCTime
            -> DiffTime
+           -> Int
            -> txn UTCTime
            )
         -> m (ApplyMigsResult b)
@@ -506,27 +509,37 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         conn
                         retryPolicy
                         (allMigs migBlock)
-                        (\fp ts appliedAt duration ->
+                        (\fp ts appliedAt duration numAppliedStmts ->
                             withTransaction txnIsolationLvl conn
-                                $ registerMig fp ts appliedAt duration
+                                $ registerMig
+                                      fp
+                                      ts
+                                      appliedAt
+                                      duration
+                                      numAppliedStmts
                         )
                 <*> withTransaction txnIsolationLvl conn (act conn)
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
+     | CoddSchemaV3 -- ^ V3 includes the number of SQL statements applied per migration, allowing codd to resume application of even failed no-txn migrations correctly
   deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 detectCoddSchema :: MonadIO m => DB.Connection -> m CoddSchemaVersion
 detectCoddSchema conn = do
-    cols :: [Text] <- map DB.fromOnly <$> query
-        conn
-        "select attname from pg_attribute join pg_class on attrelid=pg_class.oid join pg_namespace on relnamespace=pg_namespace.oid where relname=? AND nspname=? AND attnum >= 1 order by attnum"
-        ("sql_migrations" :: Text, "codd_schema" :: Text)
+    cols :: [Text] <-
+        map DB.fromOnly
+            <$> query
+                    conn
+                    "select attname from pg_attribute join pg_class on attrelid=pg_class.oid join pg_namespace on relnamespace=pg_namespace.oid where relname='sql_migrations' AND nspname='codd_schema' AND attnum >= 1 order by attnum"
+                    ()
     case cols of
         [] -> pure CoddSchemaDoesNotExist
         ["id", "migration_timestamp", "applied_at", "name"] ->
             pure CoddSchemaV1
         ["id", "migration_timestamp", "applied_at", "name", "application_duration"]
             -> pure CoddSchemaV2
+        ["id", "migration_timestamp", "applied_at", "name", "application_duration", "num_applied_statements"]
+            -> pure CoddSchemaV3
         _ ->
             error
                 $ "Internal codd error. Unless you've manually modified the codd_schema.sql_migrations table, this is a bug in codd. Please report it and include the following as column names in your report: "
@@ -579,7 +592,10 @@ createCoddSchema targetVersion txnIsolationLvl conn =
                 CoddSchemaV1 -> execvoid_
                     conn
                     "ALTER TABLE codd_schema.sql_migrations ADD COLUMN application_duration INTERVAL"
-                CoddSchemaV2 -> pure ()
+                CoddSchemaV2 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations ADD COLUMN num_applied_statements INT"
+                CoddSchemaV3 -> pure ()
 
             -- `succ` is a partial function, but it should never throw in this context
             go (succ currentSchemaVersion)
@@ -895,6 +911,7 @@ applySingleMigration
        -> DB.UTCTimestamp
        -> Maybe UTCTime
        -> DiffTime
+       -> Int
        -> txn UTCTime
        )
     -> TxnIsolationLvl
@@ -908,7 +925,7 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 else NotInTransaction statementRetryPol
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
-        (numStatements, appliedMigrationDuration) <-
+        (appliedMigrationNumStatements, appliedMigrationDuration) <-
             timeAction
                     ( Streaming.length_
                     $ Streaming.filter countsAsRealStatement
@@ -916,19 +933,24 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                     $ migrationSql sqlMig
                     )
                 `onException` logInfo " [<RED>failed</RED>]"
-        timestamp <- withTransaction isolLvl conn
-            $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
+        timestamp <- withTransaction isolLvl conn $ afterMigRun
+            fn
+            migTimestamp
+            Nothing
+            appliedMigrationDuration
+            appliedMigrationNumStatements
         logInfo
             $  " (<CYAN>"
             <> prettyPrintDuration appliedMigrationDuration
             <> "</CYAN>, "
-            <> Fmt.sformat Fmt.int numStatements
+            <> Fmt.sformat Fmt.int appliedMigrationNumStatements
             <> ")"
 
-        pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
-                              , appliedMigrationTimestamp = migTimestamp
-                              , appliedMigrationAt        = timestamp
+        pure AppliedMigration { appliedMigrationName = migrationName sqlMig
+                              , appliedMigrationTimestamp     = migTimestamp
+                              , appliedMigrationAt            = timestamp
                               , appliedMigrationDuration
+                              , appliedMigrationNumStatements
                               }
   where
     pico_1ns = 1_000
@@ -990,12 +1012,13 @@ registerRanMigration
     -> DB.UTCTimestamp
     -> Maybe UTCTime -- ^ The time the migration finished being applied. If not supplied, pg's now() will be used
     -> DiffTime
+    -> Int -- ^ The number of applied statements
     -> m UTCTime
-registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration
+registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration numAppliedStatements
     = withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
         conn
-        "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
-            \                            VALUES (?, ?, COALESCE(?, now()), ?) \
+        "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration, num_applied_statements) \
+            \                            VALUES (?, ?, COALESCE(?, now()), ?, ?) \
             \                            RETURNING applied_at"
         ( migTimestamp
         , fn
@@ -1005,4 +1028,5 @@ registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDura
           realToFrac @Double @NominalDiffTime
         $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration)
         / 1_000_000_000_000
+        , numAppliedStatements
         )

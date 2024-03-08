@@ -151,12 +151,13 @@ data AddedSqlMigration m = AddedSqlMigration
     }
 
 data AppliedMigration = AppliedMigration
-    { appliedMigrationName      :: FilePath
-    , appliedMigrationTimestamp :: DB.UTCTimestamp
+    { appliedMigrationName          :: FilePath
+    , appliedMigrationTimestamp     :: DB.UTCTimestamp
     -- ^ The migration's timestamp as extracted from its file name.
-    , appliedMigrationAt        :: UTCTime
+    , appliedMigrationAt            :: UTCTime
     -- ^ When the migration was effectively applied.
-    , appliedMigrationDuration  :: DiffTime
+    , appliedMigrationDuration      :: DiffTime
+    , appliedMigrationNumStatements :: Int
     }
 
 data FileStream m = FileStream
