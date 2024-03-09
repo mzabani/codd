@@ -4,11 +4,7 @@ import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
-                                                ( InTransaction
-                                                    ( NotInTransaction
-                                                    )
-                                                , multiQueryStatement_
-                                                )
+                                                ( multiQueryStatement_ )
 import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
@@ -1559,9 +1555,6 @@ spec = do
                                                 $ \conn ->
                                                       Streaming.effects
                                                           $ multiQueryStatement_
-                                                                (NotInTransaction
-                                                                    singleTryPolicy
-                                                                )
                                                                 conn
                                                           $ mkValidSql undoSql
                                             hashesAfterUndo <- getHashes

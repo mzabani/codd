@@ -6,6 +6,7 @@ import           Codd                           ( VerifySchemas(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( CoddSchemaVersion(..)
+                                                , MigrationApplicationFailure
                                                 , createCoddSchema
                                                 , detectCoddSchema
                                                 , withConnection
@@ -697,7 +698,7 @@ spec = do
                                                     testConnTimeout
                                                     (const $ pure ())
                                                 )
-                                            `shouldThrow` (\(e :: SqlStatementException) ->
+                                            `shouldThrow` (\(e :: MigrationApplicationFailure) ->
                                                               "division by zero"
                                                                   `List.isInfixOf` show
                                                                                        e

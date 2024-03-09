@@ -5,7 +5,7 @@ import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal.MultiQueryStatement
-                                                ( InTransaction(..)
+                                                ( SqlStatementException
                                                 , multiQueryStatement_
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration(..)
@@ -24,7 +24,6 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , FileStream(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
-                                                , SqlPiece(..)
                                                 , hoistAddedSqlMigration
                                                 , parseAddedSqlMigration
                                                 , parseSqlPiecesStreaming
@@ -77,6 +76,7 @@ import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import qualified Formatting                    as Fmt
+import           Streaming                      ( Of(..) )
 import qualified Streaming.Prelude             as Streaming
 import           System.Clock                   ( Clock(Monotonic)
                                                 , TimeSpec(..)
@@ -86,10 +86,10 @@ import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
-import           UnliftIO                       ( MonadUnliftIO
+import           UnliftIO                       ( Exception
+                                                , MonadUnliftIO
                                                 , hClose
                                                 , newIORef
-                                                , onException
                                                 , readIORef
                                                 , timeout
                                                 , writeIORef
@@ -205,12 +205,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
                    if isServerNotAvailableError e
                 then Nothing
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - The DB does not exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - CONNECT rights not granted.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - User doesn't exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- - The DB does not exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- - User doesn't exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
                     then Just BootstrapCheck
                         { defaultConnAccessible = False
@@ -444,7 +444,6 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
     runMigs
         :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
         => DB.Connection
-        -> RetryPolicy
         -> NonEmpty (AddedSqlMigration n)
         -> (  FilePath
            -> DB.UTCTimestamp
@@ -454,9 +453,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> txn UTCTime
            )
         -> n [AppliedMigration]
-    runMigs conn withRetryPolicy migs runAfterMig =
+    runMigs conn migs runAfterMig =
         fmap NE.toList $ forM migs $ applySingleMigration conn
-                                                          withRetryPolicy
                                                           runAfterMig
                                                           txnIsolationLvl
     runBlock
@@ -475,6 +473,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
         if blockInTxn migBlock
             then do
                 res <-
+                 -- Naturally, we retry entire in-txn block transactions on error, not individual statements
                     retryFold
                             retryPolicy
                             (\previousBlock RetryIteration { tryNumber } ->
@@ -492,14 +491,13 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                   $   ApplyMigsResult
                                   <$> runMigs
                                           conn
-                                          singleTryPolicy
                                           (allMigs
                                               (hoistBlockOfMigrations
                                                   lift
                                                   blockFinal
                                               )
                                           )
-                                          registerMig -- We retry entire transactions, not individual statements
+                                          registerMig
                                   <*> act conn
                 logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
                 pure res
@@ -507,7 +505,6 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 ApplyMigsResult
                 <$> runMigs
                         conn
-                        retryPolicy
                         (allMigs migBlock)
                         (\fp ts appliedAt duration numAppliedStmts ->
                             withTransaction txnIsolationLvl conn
@@ -900,13 +897,22 @@ blockCustomConnInfo :: BlockOfMigrations m -> Maybe DB.ConnectInfo
 blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _)
     = migrationCustomConnInfo addedSqlMig
 
+data NoTxnMigFailureRetryInstructions = NoTxnMigMustRestartFromLastExplicitBegin Int -- ^ No-txn migrations can have explicit BEGIN and COMMIT statements. If a statement inside that BEGIN..COMMIT block fails, it's useless to retry it. In that case, we must retry from the last BEGIN statement, whose statement-number inside the migration is contained here.
+    | NoTxnMigMustRetryFailedStatement -- ^ When we're not inside an explicit BEGIN..COMMIT block in a no-txn migration, we must retry the statement that failed itself
+    deriving stock Show
+data MigrationApplicationFailure = MigrationApplicationFailure
+    { sqlStatementEx            :: SqlStatementException
+    , noTxnMigRetryInstructions :: Maybe NoTxnMigFailureRetryInstructions
+    }
+    deriving stock Show
+instance Exception MigrationApplicationFailure
+
 -- | Applies a single migration and returns the time when it finished being applied. Does not
 -- itself register that the migration ran, only runs "afterMigRun" after applying the migration.
 applySingleMigration
     :: forall m txn
      . (MonadUnliftIO m, CoddLogger m, CanStartTxn m txn)
     => DB.Connection
-    -> RetryPolicy
     -> (  FilePath
        -> DB.UTCTimestamp
        -> Maybe UTCTime
@@ -917,22 +923,35 @@ applySingleMigration
     -> TxnIsolationLvl
     -> AddedSqlMigration m
     -> m AppliedMigration
-applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigration sqlMig migTimestamp)
+applySingleMigration conn afterMigRun isolLvl (AddedSqlMigration sqlMig migTimestamp)
     = do
-        let fn    = migrationName sqlMig
-            inTxn = if migrationInTxn sqlMig
-                then InTransaction
-                else NotInTransaction statementRetryPol
+        let fn = migrationName sqlMig
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
         (appliedMigrationNumStatements, appliedMigrationDuration) <-
-            timeAction
-                    ( Streaming.length_
-                    $ Streaming.filter countsAsRealStatement
-                    $ multiQueryStatement_ inTxn conn
-                    $ migrationSql sqlMig
-                    )
-                `onException` logInfo " [<RED>failed</RED>]"
+            timeAction $ do
+                (numStmts :> errorOrDone) <-
+                    Streaming.length $ multiQueryStatement_ conn $ migrationSql
+                        sqlMig
+                case errorOrDone of
+                    Just err -> do
+                        -- TODO: register partially applied no-txn migration
+                        logInfo " [<RED>failed</RED>]"
+                        logError "GOING TO THROW EXCEPTION"
+                        -- TODO: only for now, throw assuming we're not in an explicit begin..commit block. We'll implement
+                        -- that later.
+                        noTxnMigRetryInstructions <- if migrationInTxn sqlMig
+                            then pure Nothing
+                            else do
+                                logError
+                                    "TODO: register partially applied no-txn migration. Use INSERT ON CONFLICT since we might have progressed after a retry!"
+                                pure $ Just NoTxnMigMustRetryFailedStatement
+                        throwIO $ MigrationApplicationFailure
+                            { sqlStatementEx            = err
+                            , noTxnMigRetryInstructions
+                            }
+                    Nothing -> pure numStmts
+
         timestamp <- withTransaction isolLvl conn $ afterMigRun
             fn
             migTimestamp
@@ -972,18 +991,6 @@ applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigrati
                 (Fmt.fixed @Double 1)
                 (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10)
             <> "s" -- e.g. 10.5s
-    -- | If our goal were only to resume migration application from the last statement that failed,
-    -- we could count white space and the body and ending of COPY. However, that would be an odd number from a human
-    -- perspective, and our parser is also more prone to changing how it e.g. groups comments with actual statements,
-    -- so it's more dangerous to count these things.
-    countsAsRealStatement = \case
-        Left  _text -> True -- Unparsed SQL counts as a single statement
-        Right p     -> case p of
-            CommentPiece      _ -> False
-            WhiteSpacePiece   _ -> False
-            CopyFromStdinRows _ -> False
-            CopyFromStdinEnd  _ -> False
-            _                   -> True
     timeAction f = do
         before <- liftIO $ getTime Monotonic
         ret    <- f
