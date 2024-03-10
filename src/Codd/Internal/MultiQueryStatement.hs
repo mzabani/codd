@@ -2,6 +2,7 @@ module Codd.Internal.MultiQueryStatement
     ( SqlStatementException(..)
     , multiQueryStatement_
     , runSingleStatementInternal_
+    , txnStatus
     ) where
 
 import           Codd.Logging                   ( CoddLogger )
