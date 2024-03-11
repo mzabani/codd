@@ -206,12 +206,12 @@ checkNeedsBootstrapping connInfo connectTimeout =
                    if isServerNotAvailableError e
                 then Nothing
 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- 2. Maybe the default migration connection string doesn't work because:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - The DB does not exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - CONNECT rights not granted.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- - User doesn't exist.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- In any case, it's best to be conservative and consider any libpq errors
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           -- here as errors that might just require bootstrapping.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - The DB does not exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - CONNECT rights not granted.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- - User doesn't exist.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
                     then Just BootstrapCheck
                         { defaultConnAccessible = False
@@ -306,11 +306,9 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 map (hoistBlockOfMigrations lift) pendingMigs
             isSingleInTxnBlock = case pendingMigs of
                 [] -> True
-                [block]
-                    | blockInTxn block
-                        && fromMaybe defaultConnInfo (blockCustomConnInfo block)
+                [block@(BlockInTxn _)] ->
+                    fromMaybe defaultConnInfo (blockCustomConnInfo block)
                         == defaultConnInfo
-                    -> True
                 _ -> False
 
         -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
@@ -375,16 +373,22 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                 )
 
                     ApplyMigsResult justAppliedMigs newSingleBlockResult <-
-                        if isSingleInTxnBlock
-                            then runBlock
+                        case (block, isSingleInTxnBlock) of
+                            (BlockInTxn inTxnBlock, True) -> runInTxnBlock
                                 (fmap Just . actionAfter hoistedBlocks)
                                 conn
-                                block
+                                inTxnBlock
                                 runAfterMig
-                            else runBlock (const $ pure Nothing)
-                                          conn
-                                          block
-                                          runAfterMig
+                            (BlockInTxn inTxnBlock, False) -> runInTxnBlock
+                                (const $ pure Nothing)
+                                conn
+                                inTxnBlock
+                                runAfterMig
+                            (BlockNoTxn noTxnBlock, _) -> runNoTxnMig
+                                (const $ pure Nothing)
+                                conn
+                                noTxnBlock
+                                runAfterMig
 
                     -- Keep in mind that migrations are applied but might not be registered if
                     -- we still haven't run any default-connection-string migrations.
@@ -442,26 +446,10 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                   appliedMigrationDuration
                   appliedMigrationNumStatements
 
-    runMigs
-        :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
-        => DB.Connection
-        -> NonEmpty (AddedSqlMigration n)
-        -> (  FilePath
-           -> DB.UTCTimestamp
-           -> Maybe UTCTime
-           -> DiffTime
-           -> Int
-           -> txn UTCTime
-           )
-        -> n [AppliedMigration]
-    runMigs conn migs runAfterMig =
-        fmap NE.toList $ forM migs $ applySingleMigration conn
-                                                          runAfterMig
-                                                          txnIsolationLvl
-    runBlock
+    runInTxnBlock
         :: (DB.Connection -> txn b)
         -> DB.Connection
-        -> BlockOfMigrations m
+        -> ConsecutiveInTxnMigrations m
         -> (  FilePath
            -> DB.UTCTimestamp
            -> Maybe UTCTime
@@ -470,98 +458,104 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> txn UTCTime
            )
         -> m (ApplyMigsResult b)
-    runBlock act conn migBlock registerMig = do
-        if blockInTxn migBlock
-            then do
-                res <-
-                 -- Naturally, we retry entire in-txn block transactions on error, not individual statements
-                    retryFold @MigrationApplicationFailure
-                            retryPolicy
-                            (\previousBlock RetryIteration { tryNumber } ->
-                                if tryNumber == 0
-                                    then pure previousBlock
-                                    else do
+    runInTxnBlock act conn migBlock registerMig = do
+        res <-
+         -- Naturally, we retry entire in-txn block transactions on error, not individual statements
+            retryFold @MigrationApplicationFailure
+                    retryPolicy
+                    (\previousBlock RetryIteration { tryNumber } ->
+                        if tryNumber == 0
+                            then pure previousBlock
+                            else do
+                                logDebug
+                                    "Re-reading migrations of this block from disk"
+                                reReadBlock previousBlock
+                    )
+                    migBlock
+                $ \blockFinal -> do
+                      logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
+                      withTransaction txnIsolationLvl conn $ do
+                          let hoistedMigs :: NonEmpty (AddedSqlMigration txn)
+                              hoistedMigs = hoistAddedSqlMigration lift
+                                  <$> inTxnMigs blockFinal
+                          ranMigs <-
+                              fmap NE.toList
+                              $ forM hoistedMigs
+                              $ applySingleMigration conn
+                                                     registerMig
+                                                     txnIsolationLvl
+                          ApplyMigsResult ranMigs <$> act conn
+        logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
+        pure res
+
+    runNoTxnMig
+        :: (DB.Connection -> txn b)
+        -> DB.Connection
+        -> SingleNoTxnMigration m
+        -> (  FilePath
+           -> DB.UTCTimestamp
+           -> Maybe UTCTime
+           -> DiffTime
+           -> Int
+           -> txn UTCTime
+           )
+        -> m (ApplyMigsResult b)
+    runNoTxnMig act conn mig registerMig = do
+        -- Retrying in no-txn migrations is much more complicated due to the presence of explicit user-written
+        -- `BEGIN..COMMIT` blocks. If the failed statement is outside one of those, we retry that statement.
+        -- Otherwise, we need to ROLLBACK, and retry from the last BEGIN statement onwards.
+        retryFold @MigrationApplicationFailure
+                retryPolicy
+                (\(previousMig, _) RetryIteration { lastException } ->
+                    case lastException of
+                        Nothing -> pure (previousMig, Nothing)
+                        Just MigrationApplicationFailure { noTxnMigRetryInstructions }
+                            -> case noTxnMigRetryInstructions of
+                                Nothing ->
+                                    error
+                                        "Internal error in codd, please report. This is supposed to be a no-txn migration, yet the internal error does not contain retry instructions for that"
+                                Just (NoTxnMigMustRestartFromLastExplicitBegin beginStmtNumber)
+                                    -> do
+                                        void $ liftIO $ DB.execute_
+                                            conn
+                                            "ROLLBACK"
+                                        logWarn
+                                            "<MAGENTA>ROLLBACK</MAGENTA>ed last explicitly started transaction before retrying"
                                         logDebug
-                                            "Re-reading migrations of this block from disk"
-                                        reReadBlock previousBlock
-                            )
-                            migBlock
-                        $ \blockFinal -> do
-                              logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
-                              withTransaction txnIsolationLvl conn
-                                  $   ApplyMigsResult
-                                  <$> runMigs
-                                          conn
-                                          (allMigs
-                                              (hoistBlockOfMigrations
-                                                  lift
-                                                  blockFinal
-                                              )
-                                          )
-                                          registerMig
-                                  <*> act conn
-                logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
-                pure res
-            else
-                -- Retrying in no-txn migrations is much more complicated due to the presence of explicit user-written
-                -- `BEGIN..COMMIT` blocks. If the failed statement is outside one of those, we retry that statement.
-                -- Otherwise, we need to ROLLBACK, and retry from the last BEGIN statement onwards.
-                retryFold @MigrationApplicationFailure
-                        retryPolicy
-                        (\(previousBlock, _) RetryIteration { lastException } ->
-                            case lastException of
-                                Nothing -> pure (previousBlock, Nothing)
-                                Just MigrationApplicationFailure { noTxnMigRetryInstructions }
-                                    -> case noTxnMigRetryInstructions of
-                                        Nothing ->
-                                            error
-                                                "Internal error in codd, please report. This is supposed to be a no-txn migration, yet the internal error does not contain retry instructions for that"
-                                        Just (NoTxnMigMustRestartFromLastExplicitBegin beginStmtNumber)
-                                            -> do
-                                                void $ liftIO $ DB.execute_
-                                                    conn
-                                                    "ROLLBACK"
-                                                logWarn
-                                                    "<MAGENTA>ROLLBACK</MAGENTA>ed last explicitly started transaction before retrying"
-                                                logDebug
-                                                    "Re-reading migrations of this block from disk"
-                                                freshBlock <- reReadBlock
-                                                    previousBlock
-                                                pure
-                                                    ( freshBlock
-                                                    , Just beginStmtNumber
-                                                    )
-                                        Just NoTxnMigMustRetryFailedStatement
-                                            -> pure (previousBlock, Nothing)
-                        )
-                        (migBlock, Nothing)
-                    $ \(blockFinal, skipToNthStatement) -> do
-                          let
-                              streamToApply = case skipToNthStatement of
-                                  -- TODO: We don't group no-txn migrations together so this should be the only migration in the block.
-                                  -- Still it'd be nice to have this better typed so we don't have a cross-function invariant to maintain/remember
-                                  Just n ->
-                                      error
-                                              "Needs to drop n countable statements"
-                                          $ NE.head (allMigs blockFinal)
-                                  Nothing -> error
-                                      "Still need to implementa all of this"
-                          ApplyMigsResult
-                              <$> runMigs
-                                      conn
-                                      (allMigs migBlock)
-                                      (\fp ts appliedAt duration numAppliedStmts ->
-                                          withTransaction txnIsolationLvl conn
-                                              $ registerMig
-                                                    fp
-                                                    ts
-                                                    appliedAt
-                                                    duration
-                                                    numAppliedStmts
-                                      )
-                              <*> withTransaction txnIsolationLvl
-                                                  conn
-                                                  (act conn)
+                                            "Re-reading failed no-txn migration from disk"
+                                        -- TODO: Resuming from the Nth statement shall soon be possible not just for a `BEGIN` statement, but also from a fresh invocation of "codd up" after a previous one failed!
+                                        logWarn
+                                            $ "TODO (NOT IMPLEMENTED): Will skip the first "
+                                            <> Fmt.sformat
+                                                   Fmt.int
+                                                   (beginStmtNumber - 1)
+                                            <> " SQL statements, which have already been applied, and start applying from the "
+                                            <> Fmt.sformat Fmt.ords
+                                                           beginStmtNumber
+                                            <> " statement"
+                                        freshBlock <- reReadMig previousMig
+                                        pure (freshBlock, Just beginStmtNumber)
+                                Just NoTxnMigMustRetryFailedStatement ->
+                                    pure (previousMig, Nothing)
+                )
+                (mig, Nothing)
+            $ \(migFinal, _skipToNthStatement) -> do
+                  ApplyMigsResult
+                      .   (: [])
+                      <$> applySingleMigration @m @txn
+                              conn
+                              (\fp ts appliedAt duration numAppliedStmts ->
+                                  withTransaction txnIsolationLvl conn
+                                      $ registerMig
+                                            fp
+                                            ts
+                                            appliedAt
+                                            duration
+                                            numAppliedStmts
+                              )
+                              txnIsolationLvl
+                              (singleNoTxnMig migFinal)
+                      <*> withTransaction txnIsolationLvl conn (act conn)
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
      | CoddSchemaV3 -- ^ V3 includes the number of SQL statements applied per migration, allowing codd to resume application of even failed no-txn migrations correctly
@@ -671,7 +665,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
             -- The specific error below isn't necessary at this stage, but it's much more informative
             -- than the errors we'd generate further ahead.
             let bootstrapMigBlocks =
-                    takeWhile isDifferentDbMigBlock pendingMigs
+                    takeWhile hasNonDefaultConnectionString pendingMigs
             when (null bootstrapMigBlocks) $ do
                 logError
                     "The earliest existing migration has no custom connection string or there are no migrations at all. Exiting."
@@ -680,11 +674,14 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
         pure $ PendingMigrations pendingMigs bootCheck
 
   where
-    isDifferentDbMigBlock (BlockOfMigrations (m1 :| _) _) =
-        case migrationCustomConnInfo $ addedSqlMig m1 of
-            Nothing       -> False
-            Just connInfo -> DB.connectDatabase defaultConnString
-                /= DB.connectDatabase connInfo
+    hasNonDefaultConnectionString block =
+        let mConnInfo = migrationCustomConnInfo $ addedSqlMig $ case block of
+                BlockInTxn (ConsecutiveInTxnMigrations (m1 :| _) _) -> m1
+                BlockNoTxn (SingleNoTxnMigration       m         _) -> m
+        in  case mConnInfo of
+                Nothing       -> False
+                Just connInfo -> DB.connectDatabase defaultConnString
+                    /= DB.connectDatabase connInfo
     collect bootCheck = do
         logInfoNoNewline "Looking for pending migrations..."
         migsAlreadyApplied :: [FilePath] <-
@@ -792,8 +789,7 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                (pure . readFromMemory . listPendingFromMemory)
                sqlMigrations
 
-    -- Group consecutive in-txn migrations with the same connection string together since they're atomic. in blocks of consecutive transactions by in-txn/no-txn and custom
-    -- Every other case should be migrations alone in their own groups.
+    -- Group consecutive in-txn migrations with the same connection string together for atomic application
     pure
         $   NE.groupBy
                 (\(_, AddedSqlMigration m1 _) (_, AddedSqlMigration m2 _) ->
@@ -803,9 +799,17 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                         == migrationCustomConnInfo m2
                 )
                 pendingParsedMigrations
-        <&> \migs -> BlockOfMigrations { allMigs     = snd <$> migs
-                                       , reReadBlock = reRead migs
-                                       }
+        <&> \migs ->
+                let firstMig = snd $ NE.head migs
+                in  if migrationInTxn (addedSqlMig firstMig)
+                        then BlockInTxn ConsecutiveInTxnMigrations
+                            { inTxnMigs   = snd <$> migs
+                            , reReadBlock = reRead migs
+                            }
+                        else BlockNoTxn SingleNoTxnMigration
+                            { singleNoTxnMig = firstMig
+                            , reReadMig      = reReadNoTxn migs
+                            }
 
   where
     reRead oldMigsAndPaths = do
@@ -816,9 +820,21 @@ parseMigrationFiles migsCompleted sqlMigrations = do
             (Right fileStream, _) ->
                 closeFileStream fileStream >> pure (filePath fileStream)
         newMigs <- readFromDisk filePaths
-        pure BlockOfMigrations { allMigs     = snd <$> newMigs
-                               , reReadBlock = reRead newMigs
-                               }
+        pure ConsecutiveInTxnMigrations { inTxnMigs   = snd <$> newMigs
+                                        , reReadBlock = reRead newMigs
+                                        }
+    -- | TODO: This is a near duplicate of `reRead`. Improve this.
+    reReadNoTxn oldMigsAndPaths = do
+        -- Close handles of all migrations in the block, re-open and read+parse them
+        filePaths <- forM oldMigsAndPaths $ \case
+            (Left _memStream, _) ->
+                error "Re-reading in-memory streams is not yet implemented"
+            (Right fileStream, _) ->
+                closeFileStream fileStream >> pure (filePath fileStream)
+        newMigs <- readFromDisk filePaths
+        pure SingleNoTxnMigration { singleNoTxnMig = snd $ NE.head newMigs
+                                  , reReadMig      = reReadNoTxn newMigs
+                                  }
     readFromMemory
         :: [AddedSqlMigration m]
         -> [(Either String (FileStream m), AddedSqlMigration m)]
@@ -919,10 +935,18 @@ laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
 
 -- | A collection of consecutive migrations that has the same (in-txn, db-connection)
 -- attributes.
-data BlockOfMigrations m = BlockOfMigrations
-    { allMigs     :: NonEmpty (AddedSqlMigration m)
-    , reReadBlock :: m (BlockOfMigrations m)
+data BlockOfMigrations m = BlockInTxn (ConsecutiveInTxnMigrations m) | BlockNoTxn (SingleNoTxnMigration m)
+data SingleNoTxnMigration m = SingleNoTxnMigration
+    { singleNoTxnMig :: AddedSqlMigration m
+    , reReadMig      :: m (SingleNoTxnMigration m)
     }
+data ConsecutiveInTxnMigrations m = ConsecutiveInTxnMigrations
+    { inTxnMigs   :: NonEmpty (AddedSqlMigration m)
+    , reReadBlock :: m (ConsecutiveInTxnMigrations m)
+    }
+allMigs :: BlockOfMigrations m -> NonEmpty (AddedSqlMigration m)
+allMigs (BlockInTxn b) = inTxnMigs b
+allMigs (BlockNoTxn b) = singleNoTxnMig b :| []
 
 hoistBlockOfMigrations
     :: forall m n
@@ -930,20 +954,31 @@ hoistBlockOfMigrations
     => (forall x . m x -> n x)
     -> BlockOfMigrations m
     -> BlockOfMigrations n
-hoistBlockOfMigrations hoist (BlockOfMigrations {..}) =
-    let hoistedAllMigs = hoistAddedSqlMigration hoist <$> allMigs
-        hoistedReReadBlock =
-            hoist $ reReadBlock <&> hoistBlockOfMigrations hoist
-    in  BlockOfMigrations { allMigs     = hoistedAllMigs
-                          , reReadBlock = hoistedReReadBlock
-                          }
+hoistBlockOfMigrations hoist = \case
+    BlockInTxn b -> BlockInTxn $ hoistInTxnBlock b
+    BlockNoTxn b -> BlockNoTxn $ hoistNoTxnBlock b
+  where
+    hoistInTxnBlock ConsecutiveInTxnMigrations {..} =
+        let hoistedAllMigs     = hoistAddedSqlMigration hoist <$> inTxnMigs
+            hoistedReReadBlock = hoist $ reReadBlock <&> hoistInTxnBlock
+        in  ConsecutiveInTxnMigrations { inTxnMigs   = hoistedAllMigs
+                                       , reReadBlock = hoistedReReadBlock
+                                       }
+    hoistNoTxnBlock SingleNoTxnMigration {..} =
+        let hoistedAllMigs     = hoistAddedSqlMigration hoist singleNoTxnMig
+            hoistedReReadBlock = hoist $ reReadMig <&> hoistNoTxnBlock
+        in  SingleNoTxnMigration { singleNoTxnMig = hoistedAllMigs
+                                 , reReadMig      = hoistedReReadBlock
+                                 }
 
 blockInTxn :: BlockOfMigrations m -> Bool
-blockInTxn (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _) =
-    migrationInTxn addedSqlMig
+blockInTxn (BlockInTxn _) = True
+blockInTxn (BlockNoTxn _) = False
 
 blockCustomConnInfo :: BlockOfMigrations m -> Maybe DB.ConnectInfo
-blockCustomConnInfo (BlockOfMigrations (AddedSqlMigration { addedSqlMig } :| _) _)
+blockCustomConnInfo (BlockInTxn (ConsecutiveInTxnMigrations (AddedSqlMigration { addedSqlMig } :| _) _))
+    = migrationCustomConnInfo addedSqlMig
+blockCustomConnInfo (BlockNoTxn (SingleNoTxnMigration (AddedSqlMigration { addedSqlMig }) _))
     = migrationCustomConnInfo addedSqlMig
 
 data NoTxnMigFailureRetryInstructions = NoTxnMigMustRestartFromLastExplicitBegin Int -- ^ No-txn migrations can have explicit BEGIN and COMMIT statements. If a statement inside that BEGIN..COMMIT block fails, it's useless to retry it. In that case, we must retry from the last BEGIN statement, whose statement-number inside the migration is contained here.
@@ -996,24 +1031,30 @@ applySingleMigration conn afterMigRun isolLvl (AddedSqlMigration sqlMig migTimes
                                           Just (l + 1)
                                       (PQ.TransInTrans, PQ.TransIdle) ->
                                           Nothing
-                                      (PQ.TransActive, _) ->
+                                      states@(PQ.TransActive, _) ->
                                           error
-                                              "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream"
-                                      (_, PQ.TransActive) ->
+                                              $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream: "
+                                              ++ show states
+                                      states@(_, PQ.TransActive) ->
                                           error
-                                              "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream"
-                                      (PQ.TransInError, _) ->
+                                              $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream"
+                                              ++ show states
+                                      states@(PQ.TransInError, _) ->
                                           error
-                                              "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
-                                      (_, PQ.TransInError) ->
+                                              $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
+                                              ++ show states
+                                      states@(_, PQ.TransInError) ->
                                           error
-                                              "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
-                                      (PQ.TransUnknown, _) ->
+                                              $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
+                                              ++ show states
+                                      states@(PQ.TransUnknown, _) ->
                                           error
-                                              "Connection to database went sour. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you."
-                                      (_, PQ.TransUnknown) ->
+                                              $ "Connection to database went sour. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you."
+                                              ++ show states
+                                      states@(_, PQ.TransUnknown) ->
                                           error
-                                              "Connection to database went sour. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you."
+                                              $ "Connection to database went sour. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you."
+                                              ++ show states
                         )
                         (0, Nothing, initialTxnStatus)
                         id
@@ -1028,7 +1069,7 @@ applySingleMigration conn afterMigRun isolLvl (AddedSqlMigration sqlMig migTimes
                             then pure Nothing
                             else do
                                 logError
-                                    "TODO: register partially applied no-txn migration. Use INSERT ON CONFLICT since we might have progressed after a retry!"
+                                    "TODO: register partially applied no-txn migration. Use INSERT ON CONFLICT since we might have progressed after a retry! However, we can't do that here as this might be a no-txn migration with a non-default connection string. Ouch!"
                                 logError
                                     $  "After applying "
                                     <> Fmt.sformat Fmt.int numStmts

@@ -111,10 +111,17 @@ runSingleStatementInternal_ conn (RollbackTransaction s) =
 runSingleStatementInternal_ conn (OtherSqlPiece s) = singleStatement_ conn s
 runSingleStatementInternal_ conn (CopyFromStdinStatement copyStm) = do
     liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
-    StatementApplied <$> txnStatus conn
+    -- Unlike every other SqlPiece, COPY does not fit into a single constructor.
+    -- For counting it doesn't matter if we count `COPY FROM` or the ending of `COPY`.
+    -- For skipping it doesn't matter either which one we count, as we'll skip N countable
+    -- statements when necessary and start from N+1, whatever that is.
+    -- Since the txnStatus here is TransActive (query ongoing), it is simpler
+    -- if we count the ending of `COPY`, as after that the status is TransIdle, so
+    -- callers have one fewer state to deal with.
+    pure NotACountableStatement
 runSingleStatementInternal_ conn (CopyFromStdinRows copyRows) = do
     liftIO $ DB.putCopyData conn $ encodeUtf8 copyRows
     pure NotACountableStatement
 runSingleStatementInternal_ conn (CopyFromStdinEnd _) = do
     liftIO $ void $ DB.putCopyEnd conn
-    pure NotACountableStatement
+    StatementApplied <$> txnStatus conn

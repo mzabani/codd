@@ -2,6 +2,7 @@
 module ParsingSpec where
 
 import           Codd.Internal                  ( BlockOfMigrations(..)
+                                                , ConsecutiveInTxnMigrations(..)
                                                 , parseMigrationFiles
                                                 )
 import           Codd.Logging                   ( runCoddLogger )
@@ -528,7 +529,7 @@ spec = do
                 $ runResourceT @IO
                 $ runCoddLogger
                 $ do
-                      [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
+                      [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
                           parseMigrationFiles []
                               $ Left ["test/migrations/normal-parse-test/"]
                       rawFileContents <-
@@ -556,7 +557,7 @@ spec = do
                 $ runResourceT @IO
                 $ runCoddLogger
                 $ do
-                      [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
+                      [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
                           parseMigrationFiles []
                               $ Left ["test/migrations/no-parse-test/"]
                       rawFileContents <-
