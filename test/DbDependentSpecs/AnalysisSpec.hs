@@ -3,22 +3,15 @@ module DbDependentSpecs.AnalysisSpec where
 import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
-import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 )
 import           Control.Monad                  ( (>=>)
                                                 , forM_
                                                 , void
-                                                , when
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
-import           Data.Maybe                     ( isJust )
-import           Data.Text                      ( unpack )
-import qualified Database.PostgreSQL.Simple    as DB
-import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
-import           DbUtils                        ( aroundDatabaseWithMigs
-                                                , getIncreasingTimestamp
+import           DbUtils                        ( getIncreasingTimestamp
                                                 , mkValidSql
                                                 )
 import           Test.Hspec

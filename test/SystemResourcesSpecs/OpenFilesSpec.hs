@@ -14,14 +14,12 @@ import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
 import qualified Data.Attoparsec.Text          as P
 import qualified Data.Char                     as Char
 import qualified Data.Map.Strict               as Map
-import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           DbUtils                        ( aroundFreshDatabase
                                                 , testConnTimeout
                                                 )
 import           Test.Hspec
-import           Test.Hspec.Expectations
 import           UnliftIO                       ( SomeException
                                                 , try
                                                 )
@@ -120,7 +118,7 @@ spec = do
 -- | Parses both glibc's `openat` and musl's `open` syscalls from a `strace -f -o` output line and returns the opened file and file descriptor.
 openParser :: P.Parser (FilePath, Int)
 openParser = do
-    void P.decimal
+    void $ P.decimal @Int
     P.skipWhile Char.isSpace
     void $ P.string "openat(AT_FDCWD, \"" <|> P.string "open(\"" -- glibc and musl use different syscalls. The former is glibc's and the latter is musl's.
     fp <- P.takeWhile1 ('"' /=)
@@ -131,14 +129,14 @@ openParser = do
     P.skipWhile Char.isSpace
     void $ P.string "="
     P.skipWhile Char.isSpace
-    fd <- P.decimal
+    fd <- P.decimal @Int
     pure (Text.unpack fp, fd)
 
 
 -- | Parses a `close` strace output line and returns the closed file descriptor.
 closeParser :: P.Parser Int
 closeParser = do
-    void P.decimal
+    void $ P.decimal @Int
     P.skipWhile Char.isSpace
     void $ P.string "close("
     fd <- P.decimal

@@ -11,6 +11,13 @@ import           Codd.Internal.MultiQueryStatement
 import           Codd.Internal.Retry            ( RetryIteration(..)
                                                 , retryFold
                                                 )
+import           Codd.Logging                   ( CoddLogger
+                                                , logDebug
+                                                , logError
+                                                , logInfo
+                                                , logInfoNoNewline
+                                                , logWarn
+                                                )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , AppliedMigration(..)
                                                 , EnvVars(..)
@@ -18,7 +25,9 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , ParsedSql(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
-                                                , parseAddedSqlMigration, parseSqlPiecesStreaming, substituteEnvVarsInSqlPiecesStream
+                                                , parseAddedSqlMigration
+                                                , parseSqlPiecesStreaming
+                                                , substituteEnvVarsInSqlPiecesStream
                                                 )
 import           Codd.Query                     ( CanStartTxn
                                                 , InTxn
@@ -42,16 +51,10 @@ import           Control.Monad                  ( (>=>)
                                                 , forM
                                                 , forM_
                                                 , unless
-                                                , when, void
+                                                , void
+                                                , when
                                                 )
 import           Control.Monad.IO.Class         ( MonadIO(..) )
-import Codd.Logging
-    ( CoddLogger,
-      logDebug,
-      logError,
-      logInfo,
-      logWarn,
-      logInfoNoNewline )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Functor                   ( (<&>) )
@@ -65,18 +68,31 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( DiffTime
-                                                , UTCTime, diffTimeToPicoseconds, picosecondsToDiffTime, NominalDiffTime
+                                                , NominalDiffTime
+                                                , UTCTime
+                                                , diffTimeToPicoseconds
+                                                , picosecondsToDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
+import qualified Formatting                    as Fmt
 import qualified Streaming.Prelude             as Streaming
+import           System.Clock                   ( Clock(Monotonic)
+                                                , TimeSpec(..)
+                                                , getTime
+                                                )
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
 import           UnliftIO                       ( MonadUnliftIO
-                                                , hClose, newIORef, writeIORef, readIORef, timeout, onException
+                                                , hClose
+                                                , newIORef
+                                                , onException
+                                                , readIORef
+                                                , timeout
+                                                , writeIORef
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -101,14 +117,13 @@ import           UnliftIO.Resource              ( MonadResource
                                                 , release
                                                 , runResourceT
                                                 )
-import System.Clock (getTime, Clock (Monotonic), TimeSpec (..))
-import qualified Formatting as Fmt
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 
 -- | Tries to connect until a connection succeeds or until a timeout, and returns a connection or throws an exception.
-connectWithTimeout :: MonadUnliftIO m => DB.ConnectInfo -> DiffTime -> m DB.Connection
+connectWithTimeout
+    :: MonadUnliftIO m => DB.ConnectInfo -> DiffTime -> m DB.Connection
 connectWithTimeout connStr timeLimit = do
     -- It feels bad using `timeout` for this given the asynchronous exception it can throw, but name resolution can block `DB.connect` for an arbitrary amount of time.
     -- The risk is we interrupt `DB.connect` after the operating system socket is open, which would mean we'd leave it hanging
@@ -116,19 +131,27 @@ connectWithTimeout connStr timeLimit = do
     -- we'll likely close codd itself pretty soon.
     -- The "decent" alternative (which I feel isn't worth it) here is to wrap postgresql-simple's `connectPostgreSQL` in a `onException` that closes the open handle on exception, or copy that code over ourselves and do that here. See https://hackage.haskell.org/package/postgresql-simple-0.7.0.0/docs/src/Database.PostgreSQL.Simple.Internal.html#connectPostgreSQL
     lastErrorRef <- newIORef (Nothing :: Maybe IOException)
-    mconn <- timeout (fromInteger $ diffTimeToPicoseconds timeLimit `div` 1_000_000) (tryConnect lastErrorRef)
+    mconn        <- timeout
+        (fromInteger $ diffTimeToPicoseconds timeLimit `div` 1_000_000)
+        (tryConnect lastErrorRef)
     lastError <- readIORef lastErrorRef
     case (mconn, lastError) of
-      (Just conn, _) -> pure conn
-      (Nothing, Just err) -> throwIO err
-      (Nothing, Nothing) -> throwIO $ userError "Timeout connecting to database"
+        (Just conn, _       ) -> pure conn
+        (Nothing  , Just err) -> throwIO err
+        (Nothing, Nothing) ->
+            throwIO $ userError "Timeout connecting to database"
   where
     tryConnect lastErrorRef = do
-        attempt <- tryJust
-            (\e -> if isServerNotAvailableError e then Just e else Nothing) $ liftIO (DB.connect connStr)
+        attempt <-
+            tryJust
+                    (\e -> if isServerNotAvailableError e
+                        then Just e
+                        else Nothing
+                    )
+                $ liftIO (DB.connect connStr)
         case attempt of
             Right conn -> pure conn
-            Left e -> do
+            Left  e    -> do
                 writeIORef lastErrorRef (Just e)
                 threadDelay 100_000 -- Wait 100ms before retrying
                 tryConnect lastErrorRef
@@ -141,8 +164,8 @@ withConnection
     -> DiffTime
     -> (DB.Connection -> m a)
     -> m a
-withConnection connStr timeLimit = bracket (connectWithTimeout connStr timeLimit)
-                   (liftIO . DB.close)
+withConnection connStr timeLimit =
+    bracket (connectWithTimeout connStr timeLimit) (liftIO . DB.close)
 
 -- | Verifies if a libpq error means the server is not ready to accept connections yet,
 -- either by not being listening at all or still being initializing.
@@ -170,7 +193,6 @@ data BootstrapCheck = BootstrapCheck
     , coddSchemaVersion     :: CoddSchemaVersion
     }
 
--- brittany-disable-next-identifier
 -- | Returns info on what kind of bootstrapping will be necessary,
 -- waiting up to the time limit for postgres to be up before throwing
 -- an exception.
@@ -180,22 +202,23 @@ checkNeedsBootstrapping connInfo connectTimeout =
     handleJust
             (\e ->
                 -- 1. No server available is a big "No", meaning we throw an exception.
-                if isServerNotAvailableError e
-                    then Nothing
+                   if isServerNotAvailableError e
+                then Nothing
 
-                -- 2. Maybe the default migration connection string doesn't work because:
-                -- - The DB does not exist.
-                -- - CONNECT rights not granted.
-                -- - User doesn't exist.
-                -- In any case, it's best to be conservative and consider any libpq errors
-                -- here as errors that might just require bootstrapping.
+                                                                                       -- 2. Maybe the default migration connection string doesn't work because:
+                                                                                       -- - The DB does not exist.
+                                                                                       -- - CONNECT rights not granted.
+                                                                                       -- - User doesn't exist.
+                                                                                       -- In any case, it's best to be conservative and consider any libpq errors
+                                                                                       -- here as errors that might just require bootstrapping.
                 else if isLibPqError e
-                    then Just BootstrapCheck { defaultConnAccessible = False
-                                             , coddSchemaVersion      = CoddSchemaDoesNotExist
-                                             }
+                    then Just BootstrapCheck
+                        { defaultConnAccessible = False
+                        , coddSchemaVersion     = CoddSchemaDoesNotExist
+                        }
 
                 -- 3. Let other exceptions blow up
-                else Nothing
+                    else Nothing
             )
             pure
         $ withConnection connInfo
@@ -251,6 +274,13 @@ collectAndApplyMigrations lastAction settings@CoddSettings { migsConnString, sql
                                      pendingMigs
                                      connectTimeout
 
+-- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations each within their own
+-- separate transactions.
+-- Behaviour here unfortunately is _really_ complex right now. Important notes:
+-- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
+--   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
+--   Otherwise it runs after all migrations, in an explicit transaction of
+--   its own and in the default connection, which is not necessarily the same connection as the last migration's.
 applyCollectedMigrations
     :: forall m a txn
      . ( MonadUnliftIO m
@@ -264,20 +294,223 @@ applyCollectedMigrations
     -> PendingMigrations m
     -> DiffTime
     -> m a
-applyCollectedMigrations lastAction CoddSettings { migsConnString, retryPolicy, txnIsolationLvl } PendingMigrations { pendingMigs, bootstrapCheck } connectTimeout
+applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConnInfo, retryPolicy, txnIsolationLvl } PendingMigrations { pendingMigs, bootstrapCheck } connectTimeout
     = do
-        let dbName = Text.pack $ DB.connectDatabase migsConnString
-        ApplyMigsResult _ actionAfterResult <- baseApplyMigsBlock
-            migsConnString
-            connectTimeout
-            retryPolicy
-            lastAction
-            txnIsolationLvl
-            bootstrapCheck
-            pendingMigs
+  -- This function is complex because:
+  -- 1. We need to open connections as late as possible due to bootstrapping.
+  -- 2. We want to insert into codd_schema.sql_migrations as early as possible even for custom-connection migrations.
+  -- 3. When possible, we want to insert into codd_schema.sql_migrations in the same transaction the migrations are running.
+        let dbName = Text.pack $ DB.connectDatabase defaultConnInfo
+            hoistedBlocks :: [BlockOfMigrations txn] =
+                map (hoistBlockOfMigrations lift) pendingMigs
+            isSingleInTxnBlock = case pendingMigs of
+                [] -> True
+                [block]
+                    | blockInTxn block
+                        && fromMaybe defaultConnInfo (blockCustomConnInfo block)
+                        == defaultConnInfo
+                    -> True
+                _ -> False
 
-        logInfo $ "<GREEN>Successfully</GREEN> applied all migrations to </GREEN><MAGENTA>" <> dbName <> "</MAGENTA>"
-        return actionAfterResult
+        -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
+        -- with MonadUnliftIO.
+        connsPerInfo <- newMVar (mempty :: [(DB.ConnectInfo, DB.Connection)])
+        let openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
+            openConn cinfo = flip allocate DB.close $ do
+                mConn <- lookup cinfo <$> readMVar connsPerInfo
+                case mConn of
+                    Just conn -> pure conn
+                    Nothing   -> modifyMVar connsPerInfo $ \m -> do
+                                        -- Need to unliftIO to log in here?
+                                        -- logInfo $ "Connecting to (TODO: REDACT PASSWORD) " <> Text.pack (show cinfo)
+                        conn <- connectWithTimeout cinfo connectTimeout
+                        pure ((cinfo, conn) : m, conn)
+
+            queryConn :: DB.ConnectInfo -> m (Maybe DB.Connection)
+            queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
+
+        (appliedMigs :: [(AppliedMigration, MigrationRegistered)], finalBootCheck :: BootstrapCheck, singleInTxnBlockResult :: Maybe
+                a) <-
+            foldM
+                (\(previouslyAppliedMigs, bootCheck, _) block -> do
+                    let
+                        cinfo = fromMaybe defaultConnInfo
+                                          (blockCustomConnInfo block)
+                    (_, conn)                   <- openConn cinfo
+                    mDefaultConn                <- queryConn defaultConnInfo
+
+                    -- The default connection string is the one which should have permissions
+                    -- to create codd_schema.
+                    (runAfterMig, newBootCheck) <- case mDefaultConn of
+                        Nothing -> pure
+                            ( \_ _ appliedAt _ -> DB.fromOnly <$> unsafeQuery1
+                                conn
+                                "SELECT COALESCE(?, now())"
+                                (DB.Only appliedAt)
+                            , bootCheck
+                            )
+                        Just defaultConn -> do
+                            newBootCheck <-
+                                if coddSchemaVersion bootCheck /= maxBound
+                                    then do
+                                        logInfo
+                                            "Creating or updating codd_schema..."
+                                        createCoddSchema @txn
+                                            maxBound
+                                            txnIsolationLvl
+                                            defaultConn
+                                        pure bootCheck
+                                            { defaultConnAccessible = True
+                                            , coddSchemaVersion     = maxBound
+                                            }
+                                    else pure bootCheck
+                            registerPendingMigrations @txn
+                                defaultConn
+                                previouslyAppliedMigs
+                            pure
+                                ( registerRanMigration @txn defaultConn
+                                                            txnIsolationLvl
+                                , newBootCheck
+                                )
+
+                    ApplyMigsResult justAppliedMigs newSingleBlockResult <-
+                        if isSingleInTxnBlock
+                            then runBlock
+                                (fmap Just . actionAfter hoistedBlocks)
+                                conn
+                                block
+                                runAfterMig
+                            else runBlock (const $ pure Nothing)
+                                          conn
+                                          block
+                                          runAfterMig
+
+                    -- Keep in mind that migrations are applied but might not be registered if
+                    -- we still haven't run any default-connection-string migrations.
+                    pure
+                        ( map
+                            (
+                            , if coddSchemaVersion newBootCheck >= CoddSchemaV1
+                                then MigrationRegistered
+                                else MigrationNotRegistered
+                            )
+                            (map fst previouslyAppliedMigs ++ justAppliedMigs)
+                        , newBootCheck
+                        , newSingleBlockResult
+                        )
+                )
+                ([], bootstrapCheck, Nothing)
+                pendingMigs
+
+        actAfterResult <- case singleInTxnBlockResult of
+            Just result -> pure result
+            Nothing     -> do
+              -- It is possible to have only non-default-connection-string migrations.
+              -- In that case, we assume the default-connection-string will be valid after those migrations
+              -- and use that to register all applied migrations and then run "actionAfter".
+                (_, defaultConn) <- openConn defaultConnInfo
+                when (coddSchemaVersion finalBootCheck /= maxBound) $ do
+                    logInfo "Creating or updating codd_schema..."
+                    createCoddSchema @txn maxBound txnIsolationLvl defaultConn
+                withTransaction @txn txnIsolationLvl defaultConn
+                    $ registerPendingMigrations @txn defaultConn appliedMigs
+                withTransaction txnIsolationLvl defaultConn
+                    $ actionAfter hoistedBlocks defaultConn
+
+        logInfo
+            $ "<GREEN>Successfully</GREEN> applied all migrations to </GREEN><MAGENTA>"
+            <> dbName
+            <> "</MAGENTA>"
+        return actAfterResult
+
+  where
+    registerPendingMigrations
+        :: forall x n
+         . (MonadUnliftIO n, MonadIO x, CanStartTxn n x)
+        => DB.Connection
+        -> [(AppliedMigration, MigrationRegistered)]
+        -> n ()
+    registerPendingMigrations defaultConn appliedMigs =
+        forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
+            $ \AppliedMigration {..} -> registerRanMigration @x
+                  defaultConn
+                  txnIsolationLvl
+                  appliedMigrationName
+                  appliedMigrationTimestamp
+                  (Just appliedMigrationAt)
+                  appliedMigrationDuration
+
+    runMigs
+        :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
+        => DB.Connection
+        -> RetryPolicy
+        -> NonEmpty (AddedSqlMigration n)
+        -> (  FilePath
+           -> DB.UTCTimestamp
+           -> Maybe UTCTime
+           -> DiffTime
+           -> txn UTCTime
+           )
+        -> n [AppliedMigration]
+    runMigs conn withRetryPolicy migs runAfterMig =
+        fmap NE.toList $ forM migs $ applySingleMigration conn
+                                                          withRetryPolicy
+                                                          runAfterMig
+                                                          txnIsolationLvl
+    runBlock
+        :: (DB.Connection -> txn b)
+        -> DB.Connection
+        -> BlockOfMigrations m
+        -> (  FilePath
+           -> DB.UTCTimestamp
+           -> Maybe UTCTime
+           -> DiffTime
+           -> txn UTCTime
+           )
+        -> m (ApplyMigsResult b)
+    runBlock act conn migBlock registerMig = do
+        if blockInTxn migBlock
+            then do
+                res <-
+                    retryFold
+                            retryPolicy
+                            (\previousBlock RetryIteration { tryNumber } ->
+                                if tryNumber == 0
+                                    then pure previousBlock
+                                    else do
+                                        logDebug
+                                            "Re-reading migrations of this block from disk"
+                                        reReadBlock previousBlock
+                            )
+                            migBlock
+                        $ \blockFinal -> do
+                              logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
+                              withTransaction txnIsolationLvl conn
+                                  $   ApplyMigsResult
+                                  <$> runMigs
+                                          conn
+                                          singleTryPolicy
+                                          (allMigs
+                                              (hoistBlockOfMigrations
+                                                  lift
+                                                  blockFinal
+                                              )
+                                          )
+                                          registerMig -- We retry entire transactions, not individual statements
+                                  <*> act conn
+                logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
+                pure res
+            else
+                ApplyMigsResult
+                <$> runMigs
+                        conn
+                        retryPolicy
+                        (allMigs migBlock)
+                        (\fp ts appliedAt duration ->
+                            withTransaction txnIsolationLvl conn
+                                $ registerMig fp ts appliedAt duration
+                        )
+                <*> withTransaction txnIsolationLvl conn (act conn)
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
   deriving stock (Bounded, Enum, Eq, Ord, Show)
@@ -290,9 +523,14 @@ detectCoddSchema conn = do
         ("sql_migrations" :: Text, "codd_schema" :: Text)
     case cols of
         [] -> pure CoddSchemaDoesNotExist
-        ["id", "migration_timestamp", "applied_at", "name"] -> pure CoddSchemaV1
-        ["id", "migration_timestamp", "applied_at", "name", "application_duration"] -> pure CoddSchemaV2
-        _ -> error $ "Internal codd error. Unless you've manually modified the codd_schema.sql_migrations table, this is a bug in codd. Please report it and include the following as column names in your report: " ++ show cols
+        ["id", "migration_timestamp", "applied_at", "name"] ->
+            pure CoddSchemaV1
+        ["id", "migration_timestamp", "applied_at", "name", "application_duration"]
+            -> pure CoddSchemaV2
+        _ ->
+            error
+                $ "Internal codd error. Unless you've manually modified the codd_schema.sql_migrations table, this is a bug in codd. Please report it and include the following as column names in your report: "
+                ++ show cols
 
 createCoddSchema
     :: forall txn m
@@ -302,21 +540,26 @@ createCoddSchema
     -> TxnIsolationLvl
     -> DB.Connection
     -> m ()
-createCoddSchema targetVersion txnIsolationLvl conn = withTransaction @txn txnIsolationLvl conn $ do
-    currentSchemaVersion <- detectCoddSchema conn
-    catchJust
-        (\e -> if isPermissionDeniedError e then Just () else Nothing)
-        (go currentSchemaVersion)
-        (\() ->
-            throwIO
-                $ userError
-                      "Not enough permissions to create or update codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions."
-        )
+createCoddSchema targetVersion txnIsolationLvl conn =
+    withTransaction @txn txnIsolationLvl conn $ do
+        currentSchemaVersion <- detectCoddSchema conn
+        catchJust
+            (\e -> if isPermissionDeniedError e then Just () else Nothing)
+            (go currentSchemaVersion)
+            (\() ->
+                throwIO
+                    $ userError
+                          "Not enough permissions to create or update codd's internal schema. Please check that your default connection string can create tables, sequences and GRANT them permissions."
+            )
   where
     go currentSchemaVersion
-        | targetVersion < currentSchemaVersion = error "Cannot migrate newer codd_schema version to an older version. Please report this as a bug in codd."
-        | targetVersion == currentSchemaVersion = pure ()
-        | otherwise = do
+        | targetVersion < currentSchemaVersion
+        = error
+            "Cannot migrate newer codd_schema version to an older version. Please report this as a bug in codd."
+        | targetVersion == currentSchemaVersion
+        = pure ()
+        | otherwise
+        = do
             case currentSchemaVersion of
                 CoddSchemaDoesNotExist -> do
                     execvoid_
@@ -333,7 +576,9 @@ createCoddSchema targetVersion txnIsolationLvl conn = withTransaction @txn txnIs
                            -- SELECT on the sequence enables dumps by unprivileged users
                            "GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
                            \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
-                CoddSchemaV1 -> execvoid_ conn "ALTER TABLE codd_schema.sql_migrations ADD COLUMN application_duration INTERVAL"
+                CoddSchemaV1 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations ADD COLUMN application_duration INTERVAL"
                 CoddSchemaV2 -> pure ()
 
             -- `succ` is a partial function, but it should never throw in this context
@@ -383,21 +628,29 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                 /= DB.connectDatabase connInfo
     collect bootCheck = do
         logInfoNoNewline "Looking for pending migrations..."
-        migsAlreadyApplied :: [FilePath] <- if coddSchemaVersion bootCheck == CoddSchemaDoesNotExist then pure []
-            else withConnection
-                defaultConnString
-                connectTimeout
-                (\conn ->
-                    withTransaction @(InTxnT m) txnIsolationLvl conn
-                        $   map DB.fromOnly
-                        <$> query
-                                conn
-                                "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
-                                ()
-                )
+        migsAlreadyApplied :: [FilePath] <-
+            if coddSchemaVersion bootCheck == CoddSchemaDoesNotExist
+                then pure []
+                else withConnection
+                    defaultConnString
+                    connectTimeout
+                    (\conn ->
+                        withTransaction @(InTxnT m) txnIsolationLvl conn
+                            $   map DB.fromOnly
+                            <$> query
+                                    conn
+                                    "SELECT name FROM codd_schema.sql_migrations WHERE applied_at IS NOT NULL"
+                                    ()
+                    )
 
-        blocksOfPendingMigs <- parseMigrationFiles migsAlreadyApplied sqlMigrations
-        logInfo $ " [<CYAN>" <> Fmt.sformat Fmt.int (sum $ map (NE.length . allMigs) blocksOfPendingMigs) <> " found</CYAN>]"
+        blocksOfPendingMigs <- parseMigrationFiles migsAlreadyApplied
+                                                   sqlMigrations
+        logInfo
+            $  " [<CYAN>"
+            <> Fmt.sformat
+                   Fmt.int
+                   (sum $ map (NE.length . allMigs) blocksOfPendingMigs)
+            <> " found</CYAN>]"
         forM_ (concatMap (NE.toList . allMigs) blocksOfPendingMigs) $ \mig -> do
             case migrationSql $ addedSqlMig mig of
                 UnparsedSql _ ->
@@ -418,20 +671,24 @@ delayedOpenStreamFile filePath = do
     -- See https://hackage.haskell.org/package/streaming-0.2.3.1/docs/src/Streaming.Prelude.html#fromHandle
     -- So we copied streaming's implementation and modified it slightly.
     releaseKey <- newIORef Nothing
-    pure $ FileStream { filePath, releaseKey, fileStream = lazyStream releaseKey }
+    pure $ FileStream { filePath
+                      , releaseKey
+                      , fileStream = lazyStream releaseKey
+                      }
   where
     -- | Lazy stream because it waits until the file is demanded to open it in the first place
     lazyStream releaseKeyIORef = do
-        (releaseKey, handle) <- lift $ allocate (openFile filePath ReadMode) hClose
+        (releaseKey, handle) <- lift
+            $ allocate (openFile filePath ReadMode) hClose
         writeIORef releaseKeyIORef (Just releaseKey)
         go releaseKeyIORef handle
     go rkioref h = do
-        str  <- liftIO $ Text.hGetChunk h
+        str <- liftIO $ Text.hGetChunk h
         case str of
-          "" -> do
-            hClose h
-            lift $ writeIORef rkioref Nothing
-          _ -> do
+            "" -> do
+                hClose h
+                lift $ writeIORef rkioref Nothing
+            _ -> do
                 Streaming.yield str
                 go rkioref h
 
@@ -442,19 +699,19 @@ closeFileStream (FileStream _ releaseKey _) = do
 
 -- | Returns all migrations on the supplied folders (including possibly already applied ones)
 -- except for the explicitly supplied ones.
-listMigrationsFromDisk :: MonadIO m => [FilePath]
+listMigrationsFromDisk
+    :: MonadIO m
+    => [FilePath]
     -- ^ The folders where to look for migrations.
-     -> [FilePath]
+    -> [FilePath]
     -- ^ Migration filenames (without their directories) to exclude from returned list.
     -> m [FilePath]
 listMigrationsFromDisk sqlDirs excludeList = do
     fmap (sortOn takeFileName . concat) $ forM sqlDirs $ \dir -> do
-            filesInDir <- listDirectory dir
-            return $ map (dir </>) $ filter
-                (\fn ->
-                    ".sql" `List.isSuffixOf` fn && fn `notElem` excludeList
-                )
-                filesInDir
+        filesInDir <- listDirectory dir
+        return $ map (dir </>) $ filter
+            (\fn -> ".sql" `List.isSuffixOf` fn && fn `notElem` excludeList)
+            filesInDir
 
 parseMigrationFiles
     :: forall m
@@ -545,13 +802,21 @@ parseMigrationFiles migsCompleted sqlMigrations = do
                             -- This isn't terribly pretty and assumes the file won't change in between now and the moment it'll be opened again for SQL to be effectivelly applied,
                             -- but that assumption is probably fine and unavoidable if we want to report errors in any pending migrations before we start applying their SQL.
                             closeFileStream fs
-                            fileStreamAgain :: FileStream m <- delayedOpenStreamFile pendingMigrationPath
-                            let sqlPiecesStreamAgain = substituteEnvVarsInSqlPiecesStream (migrationEnvVars $ addedSqlMig asqlmig) $ parseSqlPiecesStreaming $ fileStream fileStreamAgain
-                                asqlmigAgain = asqlmig {
-                                addedSqlMig = (addedSqlMig asqlmig) {
-                                    migrationSql = WellParsedSql sqlPiecesStreamAgain
-                                }
-                            }
+                            fileStreamAgain :: FileStream m <-
+                                delayedOpenStreamFile pendingMigrationPath
+                            let sqlPiecesStreamAgain =
+                                    substituteEnvVarsInSqlPiecesStream
+                                            ( migrationEnvVars
+                                            $ addedSqlMig asqlmig
+                                            )
+                                        $ parseSqlPiecesStreaming
+                                        $ fileStream fileStreamAgain
+                                asqlmigAgain = asqlmig
+                                    { addedSqlMig = (addedSqlMig asqlmig)
+                                        { migrationSql = WellParsedSql
+                                            sqlPiecesStreamAgain
+                                        }
+                                    }
                             pure (Right fileStreamAgain, asqlmigAgain)
 
 data ApplyMigsResult a = ApplyMigsResult
@@ -559,229 +824,6 @@ data ApplyMigsResult a = ApplyMigsResult
     , actionAfterResult :: a
     }
 
--- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations each within their own
--- separate transactions.
--- Behaviour here unfortunately is _really_ complex right now. Important notes:
--- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
---   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
---   Otherwise it runs after all migrations, in an explicit transaction of
---   its own and in the default connection, which is not necessarily the same connection as the last migration's.
-baseApplyMigsBlock
-    :: forall m a txn
-     . ( MonadUnliftIO m
-       , CoddLogger m
-       , NotInTxn m
-       , MonadResource m
-       , txn ~ InTxnT m
-       )
-    => DB.ConnectInfo
-    -> DiffTime
-    -> RetryPolicy
-    -> ([BlockOfMigrations txn] -> DB.Connection -> txn a)
-    -> TxnIsolationLvl
-    -> BootstrapCheck
-    -> [BlockOfMigrations m]
-    -> m (ApplyMigsResult a)
-baseApplyMigsBlock defaultConnInfo connectTimeout retryPol actionAfter isolLvl bootstrapCheck blocksOfMigs = do
-    -- This function is complex because:
-    -- 1. We need to open connections as late as possible due to bootstrapping.
-    -- 2. We want to insert into codd_schema.sql_migrations as early as possible even for custom-connection migrations.
-    -- 3. When possible, we want to insert into codd_schema.sql_migrations in the same transaction the migrations are running.
-  let hoistedBlocks :: [BlockOfMigrations txn] =
-          map (hoistBlockOfMigrations lift) blocksOfMigs
-      isSingleInTxnBlock =
-          case blocksOfMigs of
-              [] ->
-                            True
-              [block]
-                  | blockInTxn block
-                      && fromMaybe defaultConnInfo (blockCustomConnInfo block)
-                      == defaultConnInfo
-                  -> True
-              _ -> False
-
-  -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
-  -- with MonadUnliftIO.
-  connsPerInfo <- newMVar
-      (mempty :: [(DB.ConnectInfo, DB.Connection)])
-  let openConn
-          :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
-      openConn cinfo = flip allocate DB.close $ do
-          mConn <- lookup cinfo <$> readMVar connsPerInfo
-          case mConn of
-              Just conn -> pure conn
-              Nothing   -> modifyMVar connsPerInfo $ \m -> do
-                                  -- Need to unliftIO to log in here?
-                                  -- logInfo $ "Connecting to (TODO: REDACT PASSWORD) " <> Text.pack (show cinfo)
-                  conn <- connectWithTimeout cinfo connectTimeout
-                  pure ((cinfo, conn) : m, conn)
-
-      queryConn :: DB.ConnectInfo -> m (Maybe DB.Connection)
-      queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
-
-  (appliedMigs :: [(AppliedMigration, MigrationRegistered)], finalBootCheck :: BootstrapCheck, singleInTxnBlockResult :: Maybe a) <-
-      foldM
-          (\(previouslyAppliedMigs, bootCheck, _) block -> do
-              let
-                  cinfo = fromMaybe
-                      defaultConnInfo
-                      (blockCustomConnInfo block)
-              (_, conn) <- openConn cinfo
-              mDefaultConn <- queryConn defaultConnInfo
-
-              -- The default connection string is the one which should have permissions
-              -- to create codd_schema.
-              (runAfterMig, newBootCheck) <-
-                  case mDefaultConn of
-                      Nothing ->
-                          pure
-                              ( \_ _ appliedAt _ ->
-                                  DB.fromOnly
-                                      <$> unsafeQuery1
-                                              conn
-                                              "SELECT COALESCE(?, now())"
-                                              (DB.Only appliedAt)
-                              , bootCheck
-                              )
-                      Just defaultConn -> do
-                          newBootCheck <-
-                              if
-                                  coddSchemaVersion bootCheck /= maxBound
-                              then
-                                  do
-                                      logInfo
-                                          "Creating or updating codd_schema..."
-                                      createCoddSchema @txn
-                                          maxBound
-                                          isolLvl
-                                          defaultConn
-                                      pure bootCheck
-                                          { defaultConnAccessible =
-                                              True
-                                          , coddSchemaVersion =
-                                              maxBound
-                                          }
-                              else
-                                  pure bootCheck
-                          registerPendingMigrations @txn
-                              defaultConn
-                              previouslyAppliedMigs
-                          pure
-                              ( registerRanMigration @txn
-                                  defaultConn
-                                  isolLvl
-                              , newBootCheck
-                              )
-
-              ApplyMigsResult justAppliedMigs newSingleBlockResult <- if isSingleInTxnBlock then runBlock (fmap Just . actionAfter hoistedBlocks) conn block runAfterMig
-                 else runBlock
-                  (const $ pure Nothing)
-                  conn
-                  block
-                  runAfterMig
-
-              -- Keep in mind that migrations are applied but might not be registered if
-              -- we still haven't run any default-connection-string migrations.
-              pure $ (, newBootCheck, newSingleBlockResult) $ map
-                  (
-                  , if coddSchemaVersion newBootCheck >= CoddSchemaV1
-                      then MigrationRegistered
-                      else MigrationNotRegistered
-                  )
-                  (  map fst previouslyAppliedMigs
-                  ++ justAppliedMigs
-                  )
-          )
-          ([], bootstrapCheck, Nothing)
-          blocksOfMigs
-
-  actAfterResult <- case singleInTxnBlockResult of
-    Just result -> pure result
-    Nothing -> do
-      -- It is possible to have only non-default-connection-string migrations.
-      -- In that case, we assume the default-connection-string will be valid after those migrations
-      -- and use that to register all applied migrations and then run "actionAfter".
-      (_, defaultConn) <- openConn defaultConnInfo
-      when (coddSchemaVersion finalBootCheck /= maxBound) $ do
-          logInfo "Creating or updating codd_schema..."
-          createCoddSchema @txn maxBound isolLvl defaultConn
-      withTransaction @txn isolLvl defaultConn
-          $ registerPendingMigrations @txn defaultConn appliedMigs
-      withTransaction isolLvl defaultConn
-                  $ actionAfter hoistedBlocks defaultConn
-
-  pure $ ApplyMigsResult (map fst appliedMigs) actAfterResult
-
-  where
-    registerPendingMigrations
-        :: forall x n. (MonadUnliftIO n, MonadIO x, CanStartTxn n x)
-        => DB.Connection
-        -> [(AppliedMigration, MigrationRegistered)]
-        -> n ()
-    registerPendingMigrations defaultConn appliedMigs =
-        forM_ [ am | (am, MigrationNotRegistered) <- appliedMigs ]
-            $ \AppliedMigration {..} -> registerRanMigration @x defaultConn isolLvl appliedMigrationName appliedMigrationTimestamp (Just appliedMigrationAt) appliedMigrationDuration
-
-    runMigs
-        :: (MonadUnliftIO n, CoddLogger n, CanStartTxn n txn)
-        => DB.Connection
-        -> RetryPolicy
-        -> NonEmpty (AddedSqlMigration n)
-        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
-        -> n [AppliedMigration]
-    runMigs conn withRetryPolicy migs runAfterMig =
-        fmap NE.toList $ forM migs $ applySingleMigration conn
-                                                          withRetryPolicy
-                                                          runAfterMig
-                                                          isolLvl
-    runBlock
-        :: (DB.Connection -> txn b)
-        -> DB.Connection
-        -> BlockOfMigrations m
-        -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
-        -> m (ApplyMigsResult b)
-    runBlock act conn migBlock registerMig = do
-        if blockInTxn migBlock
-            then do
-                res <-
-                    retryFold
-                            retryPol
-                            (\previousBlock RetryIteration { tryNumber } ->
-                                if tryNumber == 0
-                                    then pure previousBlock
-                                    else do
-                                        logDebug
-                                            "Re-reading migrations of this block from disk"
-                                        reReadBlock previousBlock
-                            )
-                            migBlock
-                        $ \blockFinal -> do
-                              logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
-                              withTransaction isolLvl conn
-                                  $   ApplyMigsResult
-                                  <$> runMigs
-                                          conn
-                                          singleTryPolicy
-                                          (allMigs
-                                              (hoistBlockOfMigrations
-                                                  lift
-                                                  blockFinal
-                                              )
-                                          )
-                                          registerMig -- We retry entire transactions, not individual statements
-                                  <*> act conn
-                logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
-                pure res
-            else
-                ApplyMigsResult
-                <$> runMigs
-                        conn
-                        retryPol
-                        (allMigs migBlock)
-                        (\fp ts appliedAt duration ->
-                            withTransaction isolLvl conn $ registerMig fp ts appliedAt duration
-                        )
-                <*> withTransaction isolLvl conn (act conn)
 
 -- | This can be used as a last-action when applying migrations to
 -- strict-check schemas, logging differences, success and throwing
@@ -849,41 +891,68 @@ applySingleMigration
      . (MonadUnliftIO m, CoddLogger m, CanStartTxn m txn)
     => DB.Connection
     -> RetryPolicy
-    -> (FilePath -> DB.UTCTimestamp -> Maybe UTCTime -> DiffTime -> txn UTCTime)
+    -> (  FilePath
+       -> DB.UTCTimestamp
+       -> Maybe UTCTime
+       -> DiffTime
+       -> txn UTCTime
+       )
     -> TxnIsolationLvl
     -> AddedSqlMigration m
     -> m AppliedMigration
 applySingleMigration conn statementRetryPol afterMigRun isolLvl (AddedSqlMigration sqlMig migTimestamp)
     = do
-        let fn = migrationName sqlMig
+        let fn    = migrationName sqlMig
             inTxn = if migrationInTxn sqlMig
                 then InTransaction
                 else NotInTransaction statementRetryPol
         logInfoNoNewline $ "Applying " <> Text.pack fn
 
-        appliedMigrationDuration <- timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig) `onException` logInfo " [<RED>failed</RED>]"
-        timestamp <- withTransaction isolLvl conn $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
-        logInfo $ " (<CYAN>" <> prettyPrintDuration appliedMigrationDuration <> "</CYAN>)"
+        appliedMigrationDuration <-
+            timeAction (multiQueryStatement_ inTxn conn $ migrationSql sqlMig)
+                `onException` logInfo " [<RED>failed</RED>]"
+        timestamp <- withTransaction isolLvl conn
+            $ afterMigRun fn migTimestamp Nothing appliedMigrationDuration
+        logInfo
+            $  " (<CYAN>"
+            <> prettyPrintDuration appliedMigrationDuration
+            <> "</CYAN>)"
 
         pure AppliedMigration { appliedMigrationName      = migrationName sqlMig
                               , appliedMigrationTimestamp = migTimestamp
                               , appliedMigrationAt        = timestamp
                               , appliedMigrationDuration
                               }
-    where
-      pico_1ns = 1_000
-      pico_1ms = 1_000_000_000
-      pico_1s :: forall a. Num a => a
-      pico_1s = 1_000_000_000_000
-      prettyPrintDuration (fromIntegral @Integer @Double . diffTimeToPicoseconds -> dps)
-        | dps < pico_1ms = Fmt.sformat (Fmt.fixed @Double 2) (fromIntegral @Integer (round (100 * dps / pico_1ms)) / 100) <> "ms" -- e.g. 0.23ms
-        | dps < pico_1s = Fmt.sformat (Fmt.int @Integer) (round $ dps / pico_1ms) <> "ms" -- e.g. 671ms
-        | otherwise = Fmt.sformat (Fmt.fixed @Double 1) (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10) <> "s" -- e.g. 10.5s
-      timeAction f = do
+  where
+    pico_1ns = 1_000
+    pico_1ms = 1_000_000_000
+    pico_1s :: forall a . Num a => a
+    pico_1s = 1_000_000_000_000
+    prettyPrintDuration (fromIntegral @Integer @Double . diffTimeToPicoseconds -> dps)
+        | dps < pico_1ms
+        = Fmt.sformat
+                (Fmt.fixed @Double 2)
+                (fromIntegral @Integer (round (100 * dps / pico_1ms)) / 100)
+            <> "ms"
+        | -- e.g. 0.23ms
+          dps < pico_1s
+        = Fmt.sformat (Fmt.int @Integer) (round $ dps / pico_1ms) <> "ms"
+        | -- e.g. 671ms
+          otherwise
+        = Fmt.sformat
+                (Fmt.fixed @Double 1)
+                (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10)
+            <> "s" -- e.g. 10.5s
+    timeAction f = do
         before <- liftIO $ getTime Monotonic
         void f
         after <- liftIO $ getTime Monotonic
-        pure $ picosecondsToDiffTime $ (pico_1s :: Integer) * fromIntegral (sec after - sec before) + (pico_1ns :: Integer) * fromIntegral (nsec after - nsec before)
+        pure
+            $ picosecondsToDiffTime
+            $ (pico_1s :: Integer)
+            * fromIntegral (sec after - sec before)
+            + (pico_1ns :: Integer)
+            * fromIntegral (nsec after - nsec before)
 
 data MigrationRegistered = MigrationRegistered | MigrationNotRegistered
 
@@ -901,12 +970,18 @@ registerRanMigration
     -> Maybe UTCTime -- ^ The time the migration finished being applied. If not supplied, pg's now() will be used
     -> DiffTime
     -> m UTCTime
-registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration =
-    withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
+registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration
+    = withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
         conn
         "INSERT INTO codd_schema.sql_migrations (migration_timestamp, name, applied_at, application_duration) \
             \                            VALUES (?, ?, COALESCE(?, now()), ?) \
             \                            RETURNING applied_at"
-        (migTimestamp, fn, appliedAt,
+        ( migTimestamp
+        , fn
+        , appliedAt
+        ,
                 -- postgresql-simple does not have a `ToField DiffTime` instance :(
-                realToFrac @Double @NominalDiffTime $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration) / 1_000_000_000_000)
+          realToFrac @Double @NominalDiffTime
+        $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration)
+        / 1_000_000_000_000
+        )

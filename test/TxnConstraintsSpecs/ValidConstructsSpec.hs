@@ -10,7 +10,6 @@ import           Codd.Query                     ( InTxn
                                                 , withTransaction
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
-import           Control.Monad.IO.Class         ( MonadIO(..) )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Test.Hspec
 import           UnliftIO                       ( MonadUnliftIO )

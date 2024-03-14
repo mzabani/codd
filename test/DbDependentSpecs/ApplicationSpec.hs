@@ -4,13 +4,8 @@ import           Codd                           ( VerifySchemas(..)
                                                 , applyMigrations
                                                 , applyMigrationsNoCheck
                                                 )
-import           Codd.Analysis                  ( MigrationCheck(..)
-                                                , checkMigration
-                                                )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( CoddSchemaVersion(..)
-                                                , baseApplyMigsBlock
-                                                , collectAndApplyMigrations
                                                 , createCoddSchema
                                                 , detectCoddSchema
                                                 , withConnection
@@ -26,8 +21,6 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
-import           Codd.Representations           ( readRepresentationsFromDbWithSettings
-                                                )
 import           Codd.Representations.Types     ( DbRep(..) )
 import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 , RetryPolicy(..)
@@ -35,7 +28,6 @@ import           Codd.Types                     ( RetryBackoffPolicy(..)
                                                 )
 import           Control.Monad                  ( forM_
                                                 , void
-                                                , when
                                                 )
 import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans            ( lift )
@@ -43,21 +35,15 @@ import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
 import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
-import           Data.Text                      ( Text
-                                                , unpack
-                                                )
+import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Text.Encoding             ( decodeUtf8 )
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( CalendarDiffTime(ctTime)
-                                                , DiffTime
-                                                , NominalDiffTime
                                                 , UTCTime
                                                 , diffUTCTime
                                                 , secondsToNominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
-import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import           DbUtils                        ( aroundFreshDatabase
                                                 , createTestUserMig
                                                 , createTestUserMigPol
@@ -71,7 +57,6 @@ import           DbUtils                        ( aroundFreshDatabase
                                                 , testConnTimeout
                                                 )
 import           Test.Hspec
-import           Test.Hspec.Expectations
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( MonadIO
@@ -268,7 +253,7 @@ spec = do
                                           testConnTimeout
                                     $ \conn -> do
                                           -- Drop the codd_schema that was created by `aroundFreshDatabase`
-                                          DB.execute_
+                                          void $ DB.execute_
                                               conn
                                               "DROP SCHEMA codd_schema CASCADE"
                                           createCoddSchema vIntermediary
@@ -487,7 +472,7 @@ spec = do
                                                              )
 
                                           -- Lax checking will apply the migration and will not throw an exception
-                                          runCoddLogger
+                                          void $ runCoddLogger
 
                                               (applyMigrations
                                                   (emptyTestDbInfo
@@ -695,6 +680,7 @@ spec = do
                                                                 7
                                                                 (ExponentialBackoff
                                                                     (realToFrac
+                                                                        @Double
                                                                         0.001
                                                                     )
                                                                 )
@@ -736,7 +722,7 @@ spec = do
                                                     logs
                                                 )
                                             `shouldBe` 7
-                                        forM_ [1, 2, 4, 8, 16, 32, 64]
+                                        forM_ [1 :: Int, 2, 4, 8, 16, 32, 64]
                                             $ \delay ->
                                                   length
                                                           (filter
@@ -877,7 +863,6 @@ spec = do
                               $ forAll
                                     (diversifyAppCheckMigs
                                         defaultConnInfo
-                                        testSettings
                                         createCoddTestDbMigs
                                     )
                               $ \(DiverseMigrationOrder allMigs) ->
@@ -927,15 +912,15 @@ spec = do
 -- the final 0-based index of each element in the list and the
 -- element itself to form the final generated list.
 mergeShuffle :: [a] -> [a] -> (Int -> a -> b) -> Gen [b]
-mergeShuffle l1 l2 f = go l1 l2 f (0 :: Int)
+mergeShuffle ll1 ll2 f = go ll1 ll2 (0 :: Int)
   where
-    go []          l2          f i = pure $ zipWith f [i ..] l2
-    go l1          []          f i = pure $ zipWith f [i ..] l1
-    go l1@(x : xs) l2@(y : ys) f i = do
+    go []          l2          i = pure $ zipWith f [i ..] l2
+    go l1          []          i = pure $ zipWith f [i ..] l1
+    go l1@(x : xs) l2@(y : ys) i = do
         yieldFirst <- arbitrary @Bool
         if yieldFirst
-            then (f i x :) <$> go xs l2 f (i + 1)
-            else (f i y :) <$> go l1 ys f (i + 1)
+            then (f i x :) <$> go xs l2 (i + 1)
+            else (f i y :) <$> go l1 ys (i + 1)
 
 data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig Bool | CreateCountCheckingMigDifferentUser Bool | CreateDbCreationMig Int
 
@@ -954,10 +939,9 @@ instance Show (DiverseMigrationOrder m) where
 diversifyAppCheckMigs
     :: MonadThrow m
     => DB.ConnectInfo
-    -> CoddSettings
     -> AddedSqlMigration m
     -> Gen (DiverseMigrationOrder m)
-diversifyAppCheckMigs defaultConnInfo testSettings createCoddTestDbMigs = do
+diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
     -- We want to diversify the order of migrations we apply.
     -- Meaning we want to test regexp-like sequences
     -- like (custom-connection-mig | default-connection-mig)+

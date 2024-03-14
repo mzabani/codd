@@ -1,8 +1,5 @@
 module DbDependentSpecs.InvariantsSpec where
 
-import           Codd.Analysis                  ( MigrationCheck(..)
-                                                , checkMigration
-                                                )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Logging                   ( runCoddLogger )
@@ -10,24 +7,16 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , toMigrationTimestamp
                                                 )
-import           Codd.Representations           ( readRepresentationsFromDbWithSettings
-                                                )
 import           Codd.Representations.Database  ( readRepsFromDbWithNewTxn )
-import           Control.Monad                  ( void
-                                                , when
-                                                )
+import           Control.Monad                  ( void )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.List                      ( nubBy )
-import           Data.Text                      ( unpack )
 import           Data.Time.Calendar             ( fromGregorian )
 import           Data.Time.Clock                ( UTCTime(..) )
 import qualified Database.PostgreSQL.Simple    as DB
-import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           DbUtils                        ( aroundDatabaseWithMigs
-                                                , aroundFreshDatabase
-                                                , aroundTestDbInfo
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 , shouldBeStrictlySortedOn
@@ -75,7 +64,7 @@ spec = do
                 $
                     -- This is much more a test of postgresql-simple than Codd. But it's such an important property to know that holds
                     -- that we test for it here anyway.
-                  \dbInfo@CoddSettings { migsConnString } ->
+                  \CoddSettings { migsConnString } ->
                       let
                           veryCloseUtcTimes =
                               zip [0 ..]

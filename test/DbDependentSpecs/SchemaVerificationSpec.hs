@@ -1,15 +1,6 @@
 module DbDependentSpecs.SchemaVerificationSpec where
 
-import           Codd                           ( ApplyResult(..)
-                                                , CoddSettings(migsConnString)
-                                                , SchemasPair(..)
-                                                , VerifySchemas(..)
-                                                , applyMigrations
-                                                , applyMigrationsNoCheck
-                                                )
-import           Codd.Analysis                  ( MigrationCheck(..)
-                                                , checkMigration
-                                                )
+import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
@@ -25,13 +16,10 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 , parseSqlMigration
-                                                , parsedSqlText
-                                                , toMigrationTimestamp
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Representations           ( DbRep(..)
                                                 , DiffType(..)
-                                                , ObjName
                                                 , readRepresentationsFromDbWithSettings
                                                 , schemaDifferences
                                                 )
@@ -44,11 +32,8 @@ import           Codd.Types                     ( SchemaAlgo(..)
                                                 , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
-                                                , foldM_
                                                 , forM
-                                                , forM_
                                                 , void
-                                                , when
                                                 , zipWithM
                                                 )
 import           Control.Monad.State            ( MonadState(put)
@@ -59,31 +44,22 @@ import           Control.Monad.State.Class      ( get )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Functor                   ( (<&>) )
-import           Data.List                      ( nubBy )
 import qualified Data.Map                      as Map
 import           Data.Maybe                     ( fromMaybe )
-import           Data.Text                      ( Text
-                                                , unpack
-                                                )
+import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import           Data.Time.Calendar             ( fromGregorian )
-import           Data.Time.Clock                ( UTCTime(..) )
 import qualified Database.PostgreSQL.Simple    as DB
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
-import qualified Database.PostgreSQL.Simple.Time
-                                               as DB
 import           DbUtils                        ( aroundFreshDatabase
                                                 , finallyDrop
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 , parseSqlMigrationIO
-                                                , testConnInfo
                                                 , testConnTimeout
                                                 )
 import qualified Streaming.Prelude             as Streaming
 import           System.Process.Typed           ( ExitCode(..)
                                                 , byteStringInput
-                                                , readProcess
                                                 , readProcessStdout
                                                 , runProcess
                                                 , setStdin
@@ -94,11 +70,9 @@ import           Test.Hspec.QuickCheck          ( modifyMaxSuccess )
 import           Test.QuickCheck                ( Arbitrary
                                                 , chooseBoundedIntegral
                                                 , property
-                                                , suchThat
                                                 )
 import           Test.QuickCheck.Arbitrary      ( Arbitrary(arbitrary) )
 import           UnliftIO                       ( liftIO )
-import           UnliftIO.Concurrent            ( threadDelay )
 
 data DiffTypeSimplified = DBothButDifferent | DExpectedButNotFound | DNotExpectedButFound
   deriving stock (Show, Eq)
@@ -878,9 +852,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
       -- For tables
 
       -- Owner of the table implicitly has all privileges by default
-    (grantAll, revokeAll) <-
-        addMig "GRANT ALL ON TABLE employee TO postgres" "SELECT 1;"
-            $ ChangeEq []
+    addMig_ "GRANT ALL ON TABLE employee TO postgres" "SELECT 1;" $ ChangeEq []
 
     addMig_ "GRANT SELECT ON TABLE employee TO \"codd-test-user\""
             "REVOKE SELECT ON TABLE employee FROM \"codd-test-user\""
@@ -951,13 +923,13 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
 
 
       -- Permissions of unmapped role don't affect hashing
-    (createUnmappedRoleAndGrant, dropUnmappedRole) <-
+    (createUnmappedRole1AndGrant, dropUnmappedRole1) <-
         addMig
                 "CREATE ROLE unmapped_role1; GRANT ALL ON TABLE employee TO unmapped_role1; GRANT ALL ON SEQUENCE employee_employee_id_seq TO unmapped_role1; GRANT ALL ON all_employee_names TO unmapped_role1"
                 "DROP OWNED BY unmapped_role1; DROP ROLE unmapped_role1"
             $ ChangeEq []
 
-    addMig_ dropUnmappedRole createUnmappedRoleAndGrant $ ChangeEq []
+    addMig_ dropUnmappedRole1 createUnmappedRole1AndGrant $ ChangeEq []
 
       -- CREATING UNMAPPED AND MAPPED SCHEMAS
     addMig_ "CREATE SCHEMA unmappedschema" "DROP SCHEMA unmappedschema"
@@ -1062,10 +1034,8 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         $ ChangeEq [("schemas/public/types/experience", DBothButDifferent)]
 
     -- Composite types
-    (createComplex1, dropComplex) <-
-        addMig "CREATE TYPE complex AS (a double precision);"
-               "DROP TYPE complex;"
-            $ ChangeEq [("schemas/public/types/complex", DExpectedButNotFound)]
+    addMig_ "CREATE TYPE complex AS (a double precision);" "DROP TYPE complex;"
+        $ ChangeEq [("schemas/public/types/complex", DExpectedButNotFound)]
     addMig_ "ALTER TYPE complex ADD ATTRIBUTE b double precision;"
             "ALTER TYPE complex DROP ATTRIBUTE b"
         $ ChangeEq [("schemas/public/types/complex", DBothButDifferent)]

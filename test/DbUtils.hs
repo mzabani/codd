@@ -1,18 +1,12 @@
 module DbUtils where
 
-import           Codd                           ( applyMigrations
-                                                , applyMigrationsNoCheck
-                                                )
+import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( PendingMigrations
-                                                , applyCollectedMigrations
-                                                , collectPendingMigrations
-                                                , dbIdentifier
+import           Codd.Internal                  ( dbIdentifier
                                                 , withConnection
                                                 )
-import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Logging                   ( CoddLogger
-                                                , LoggingT
+                                                , runCoddLogger
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
@@ -59,9 +53,6 @@ import           UnliftIO                       ( MonadIO(..)
                                                 , liftIO
                                                 )
 import           UnliftIO.Environment           ( getEnv )
-import           UnliftIO.Resource              ( ResourceT
-                                                , runResourceT
-                                                )
 
 testConnInfo :: MonadIO m => m ConnectInfo
 testConnInfo = getEnv "PGPORT" >>= \portStr -> return defaultConnectInfo
@@ -95,8 +86,7 @@ withCoddDbAndDrop
     -> (ConnectInfo -> m a)
     -> m a
 withCoddDbAndDrop migs f = do
-    coddSettings@CoddSettings { migsConnString, txnIsolationLvl } <-
-        testCoddSettings
+    coddSettings@CoddSettings { migsConnString } <- testCoddSettings
     bracket
         (do
             bootstrapMig <- createTestUserMig
@@ -208,9 +198,7 @@ aroundDatabaseWithMigs
     -> SpecWith CoddSettings
     -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
-    coddSettings@CoddSettings { migsConnString, txnIsolationLvl } <-
-        testCoddSettings
-    connInfo <- testConnInfo
+    coddSettings@CoddSettings { migsConnString } <- testCoddSettings
 
     -- TODO: Reuse withCoddDbAndDrop!
     runCoddLogger
