@@ -7,7 +7,7 @@ import qualified Codd
 import           Codd.Analysis                  ( MigrationCheck(..)
                                                 , checkMigration
                                                 )
-import           Codd.AppCommands               ( timestampAndMoveMigrationFile
+import           Codd.AppCommands               ( timestampAndCopyMigrationFile
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( delayedOpenStreamFile
@@ -42,8 +42,7 @@ import           UnliftIO                       ( MonadUnliftIO
                                                 , liftIO
                                                 , stderr
                                                 )
-import           UnliftIO.Directory             ( copyFile
-                                                , doesDirectoryExist
+import           UnliftIO.Directory             ( doesDirectoryExist
                                                 , doesFileExist
                                                 , removeFile
                                                 )
@@ -130,7 +129,7 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                                 (printSuggestedFirstMigration migsConnString)
                             liftIO $ exitWith $ ExitFailure 95
 
-            finalMigFile <- timestampAndMoveMigrationFile sqlFp finalDir
+            finalMigFile <- timestampAndCopyMigrationFile sqlFp finalDir
             addE         <- try $ do
                 unless dontApply $ do
                     databaseSchemas <- Codd.applyMigrationsNoCheck
@@ -152,11 +151,19 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
                     $  "Migration was NOT applied, but was added to "
                     <> Text.pack finalMigFile
             case addE of
-                Right _                    -> pure ()
-                Left  (e :: SomeException) -> liftIO $ do
-                    -- Print error and move file back to its original directory
+                Right _ -> do
+                    -- Remove original file
+                    fileRemoved <- try $ removeFile (unSqlFilePath sqlFp)
+                    case fileRemoved of
+                        Left (_ :: SomeException) ->
+                            logError
+                                $  "Could not remove "
+                                <> Text.pack (show sqlFp)
+                                <> ", but it has been added successfully"
+                        Right _ -> pure ()
+                Left (e :: SomeException) -> liftIO $ do
+                    -- Print error and delete file from migrations directory
                     Text.hPutStrLn stderr $ Text.pack $ show e
-                    copyFile finalMigFile fp
                     removeFile finalMigFile
 
                     when isFirstMigration
