@@ -1,5 +1,5 @@
 module Codd.AppCommands
-    ( timestampAndMoveMigrationFile
+    ( timestampAndCopyMigrationFile
     ) where
 
 import           Codd.Parsing                   ( toMigrationTimestamp )
@@ -11,27 +11,24 @@ import           System.FilePath                ( (</>)
                                                 , takeFileName
                                                 )
 import           UnliftIO                       ( MonadIO(..) )
-import           UnliftIO.Directory             ( copyFile
-                                                , removeFile
-                                                )
+import           UnliftIO.Directory             ( copyFile )
 
-timestampAndMoveMigrationFile
+timestampAndCopyMigrationFile
     :: MonadIO m => SqlFilePath -> FilePath -> m FilePath
-timestampAndMoveMigrationFile (unSqlFilePath -> migrationPath) folderToMoveTo =
+timestampAndCopyMigrationFile (unSqlFilePath -> migrationPath) folderToCopyTo =
     do
     -- The only important invariants for naming SQL migrations are:
-    --   1. Migrations added by the same developer consecutively are such that the first is alphabetically lesser than the second.
+    --   1. Migrations added by a developer is such that it should come after all existing migrations on disk
     --   2. Chance of naming conflicts with migrations added by other developers is small.
     -- One desirable property, however, is that filenames are human-readable
     -- and convey more or less an idea of when they were added.
         (migTimestamp, _) <- toMigrationTimestamp <$> liftIO getCurrentTime
         let finalName =
-                folderToMoveTo
+                folderToCopyTo
                     </> nicerTimestampFormat (iso8601Show migTimestamp)
                     ++  "-"
                     ++  takeFileName migrationPath
         copyFile migrationPath finalName
-        removeFile migrationPath
         return finalName
   where
         -- Replaces 'T' and colons by a dash and removes 'Z' from UTC timestamps.
