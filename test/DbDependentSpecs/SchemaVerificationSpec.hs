@@ -8,6 +8,7 @@ import           Codd.Internal.MultiQueryStatement
 import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
+                                                , ParsedSql(..)
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -25,7 +26,6 @@ import           Codd.Representations.Database  ( queryServerMajorVersion
 import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
-                                                , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
                                                 , forM
@@ -1548,7 +1548,8 @@ spec = do
                                     case mUndoSql of
                                         Nothing -> pure expectedHashesAfterUndo
                                         Just undoSql -> do
-                                            runCoddLogger
+                                            void
+                                                $ runCoddLogger
                                                 $ withConnection
                                                       connInfo
                                                       testConnTimeout
@@ -1556,7 +1557,12 @@ spec = do
                                                       Streaming.effects
                                                           $ multiQueryStatement_
                                                                 conn
-                                                          $ mkValidSql undoSql
+                                                          $ (\(WellParsedSql sqlStream) ->
+                                                                sqlStream
+                                                            )
+                                                                (mkValidSql
+                                                                    undoSql
+                                                                )
                                             hashesAfterUndo <- getHashes
                                                 emptyDbInfo
                                             let

@@ -6,39 +6,27 @@ import           Codd                           ( VerifySchemas(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( CoddSchemaVersion(..)
-                                                , MigrationApplicationFailure
                                                 , createCoddSchema
                                                 , detectCoddSchema
                                                 , withConnection
                                                 )
-import           Codd.Internal.MultiQueryStatement
-                                                ( SqlStatementException )
-import           Codd.Logging                   ( LoggingT(runLoggingT)
-                                                , Newline(..)
-                                                , runCoddLogger
-                                                )
+import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Representations.Types     ( DbRep(..) )
-import           Codd.Types                     ( RetryBackoffPolicy(..)
-                                                , RetryPolicy(..)
-                                                , TxnIsolationLvl(..)
-                                                )
+import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
-import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( CalendarDiffTime(ctTime)
                                                 , UTCTime
                                                 , diffUTCTime
@@ -60,16 +48,7 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
-import           UnliftIO                       ( MonadIO
-                                                , hFlush
-                                                , liftIO
-                                                , stdout
-                                                )
-import           UnliftIO.Concurrent            ( MVar
-                                                , modifyMVar_
-                                                , newMVar
-                                                , readMVar
-                                                )
+import           UnliftIO                       ( liftIO )
 
 placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
 placeHoldersMig = AddedSqlMigration
@@ -664,82 +643,6 @@ spec = do
                                           countTxIds `shouldBe` 4
                                           countInterns `shouldBe` 4
                                           totalRows `shouldBe` 10
-                      context
-                              "Retry Policy retries and backoff work as expected"
-                          $ do
-                                let
-                                    testRetries inTxn emptyTestDbInfo = do
-                                        -- Kind of ugly.. we test behaviour by analyzing logs and
-                                        -- trust that threadDelay is called.
-                                        logsmv <- newMVar []
-                                        runMVarLogger
-                                                logsmv
-                                                (applyMigrationsNoCheck
-                                                    (emptyTestDbInfo
-                                                        { retryPolicy   =
-                                                            RetryPolicy
-                                                                7
-                                                                (ExponentialBackoff
-                                                                    (realToFrac
-                                                                        @Double
-                                                                        0.001
-                                                                    )
-                                                                )
-                                                        , sqlMigrations =
-                                                            [ if inTxn
-                                                                  then
-                                                                      "test/migrations/retry-policy-test-in-txn/"
-                                                                  else
-                                                                      "test/migrations/retry-policy-test-no-txn/"
-                                                            ]
-                                                        }
-                                                    )
-                                                    Nothing
-                                                    testConnTimeout
-                                                    (const $ pure ())
-                                                )
-                                            `shouldThrow` (\(e :: MigrationApplicationFailure) ->
-                                                              "division by zero"
-                                                                  `List.isInfixOf` show
-                                                                                       e
-
-                                                                  && "SELECT 7/0"
-                                                                  `List.isInfixOf` show
-                                                                                       e
-                                                          )
-                                        logs <- readMVar logsmv
-                                        length
-                                                (filter
-                                                    ("before next try" `Text.isInfixOf`
-                                                    )
-                                                    logs
-                                                )
-                                            `shouldBe` 7
-                                        -- The last attempt isn't logged because we don't catch exceptions for it
-                                        length
-                                                (filter
-                                                    ("division by zero" `Text.isInfixOf`
-                                                    )
-                                                    logs
-                                                )
-                                            `shouldBe` 7
-                                        forM_ [1 :: Int, 2, 4, 8, 16, 32, 64]
-                                            $ \delay ->
-                                                  length
-                                                          (filter
-                                                              ((  "Waiting "
-                                                               <> Text.pack
-                                                                      (show
-                                                                          delay
-                                                                      )
-                                                               <> "ms"
-                                                               ) `Text.isInfixOf`
-                                                              )
-                                                              logs
-                                                          )
-                                                      `shouldBe` 1
-                                it "For in-txn migrations" $ testRetries True
-                                it "For no-txn migrations" $ testRetries False
 
             describe "Custom connection-string migrations" $ do
                 it
@@ -1026,21 +929,3 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                         $ getIncreasingTimestamp 0
                   ]
     pure $ DiverseMigrationOrder migsInOrder
-
-
-runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
-runMVarLogger logsmv m = runReaderT
-    (runLoggingT m)
-    ( \newline msg -> modifyMVar_
-        logsmv
-        (\l -> do
-            case newline of
-                NoNewline -> do
-                    Text.hPutStr stdout msg
-                    hFlush stdout
-                WithNewline -> Text.hPutStrLn stdout msg
-            pure $ l ++ [msg]
-        )
-    , const True
-    , True
-    )

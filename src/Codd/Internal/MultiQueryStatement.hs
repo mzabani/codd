@@ -1,14 +1,15 @@
 module Codd.Internal.MultiQueryStatement
     ( SqlStatementException(..)
+    , StatementApplied(..)
     , multiQueryStatement_
     , runSingleStatementInternal_
+    , singleStatement_
+    , skipNonCountableRunnableStatements
     , txnStatus
     ) where
 
 import           Codd.Logging                   ( CoddLogger )
-import           Codd.Parsing                   ( ParsedSql(..)
-                                                , SqlPiece(..)
-                                                )
+import           Codd.Parsing                   ( SqlPiece(..) )
 import           Control.Monad                  ( void )
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
@@ -73,7 +74,7 @@ multiQueryStatement_
     :: forall m
      . (MonadUnliftIO m, CoddLogger m)
     => DB.Connection
-    -> ParsedSql m
+    -> Stream (Of SqlPiece) m ()
     -> Stream (Of PQ.TransactionStatus) m (Maybe SqlStatementException)
 multiQueryStatement_ conn sql =
     partitionEithersReturn id
@@ -83,11 +84,7 @@ multiQueryStatement_ conn sql =
                   StatementApplied ts    -> Just $ Right ts
                   StatementErred   e     -> Just $ Left e
               )
-        $ case sql of
-             -- There must be some simpler function to avoid mapM and yield..              
-              UnparsedSql t -> S.mapM (singleStatement_ conn) (S.yield t)
-              WellParsedSql stms ->
-                  Streaming.mapM (runSingleStatementInternal_ conn) stms
+        $ Streaming.mapM (runSingleStatementInternal_ conn) sql
   where
     -- | Like `S.partitionEithers`, but with `Left` being considered an error and put as the stream's return value if one exists while the `Rights` are streamed.
     partitionEithersReturn
@@ -99,29 +96,62 @@ multiQueryStatement_ conn sql =
         S.Effect m -> S.Effect $ partitionEithersReturn f <$> m
         S.Return _ -> S.Return Nothing
 
+isCountableRunnable :: SqlPiece -> Bool
+isCountableRunnable = \case
+    OtherSqlPiece          _ -> True
+    CommentPiece           _ -> False
+    WhiteSpacePiece        _ -> False
+    BeginTransaction       _ -> True
+    CommitTransaction      _ -> True
+    RollbackTransaction    _ -> True
+    CopyFromStdinStatement _ -> False
+    CopyFromStdinRows      _ -> False
+    CopyFromStdinEnd       _ -> True
+
+-- | Skips the first n non countable-runnable statements from the stream.
+-- TODO: Test this function in isolation. E.g. one must never fall in a CopyFromStdinRows after skipping any number of statements.
+-- But also test basic cases including COMMIT, BEGIN, ROLLBACK, etc.
+skipNonCountableRunnableStatements
+    :: Monad m => Int -> Stream (Of SqlPiece) m r -> Stream (Of SqlPiece) m r
+skipNonCountableRunnableStatements numCountableRunnableToSkip =
+    S.catMaybes
+        . S.scan
+              (\(skipped, _) p -> if skipped >= numCountableRunnableToSkip
+                  then (skipped, Just p)
+                  else if isCountableRunnable p
+                      then (skipped + 1, Nothing)
+                      else (skipped, Nothing)
+              )
+              (0, Nothing)
+              snd
+
+
 runSingleStatementInternal_
     :: MonadIO m => DB.Connection -> SqlPiece -> m StatementApplied
-runSingleStatementInternal_ _ (CommentPiece _) = pure NotACountableStatement
-runSingleStatementInternal_ _ (WhiteSpacePiece _) = pure NotACountableStatement
-runSingleStatementInternal_ conn (BeginTransaction s) = singleStatement_ conn s
-runSingleStatementInternal_ conn (CommitTransaction s) =
-    singleStatement_ conn s
-runSingleStatementInternal_ conn (RollbackTransaction s) =
-    singleStatement_ conn s
-runSingleStatementInternal_ conn (OtherSqlPiece s) = singleStatement_ conn s
-runSingleStatementInternal_ conn (CopyFromStdinStatement copyStm) = do
-    liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
-    -- Unlike every other SqlPiece, COPY does not fit into a single constructor.
-    -- For counting it doesn't matter if we count `COPY FROM` or the ending of `COPY`.
-    -- For skipping it doesn't matter either which one we count, as we'll skip N countable
-    -- statements when necessary and start from N+1, whatever that is.
-    -- Since the txnStatus here is TransActive (query ongoing), it is simpler
-    -- if we count the ending of `COPY`, as after that the status is TransIdle, so
-    -- callers have one fewer state to deal with.
-    pure NotACountableStatement
-runSingleStatementInternal_ conn (CopyFromStdinRows copyRows) = do
-    liftIO $ DB.putCopyData conn $ encodeUtf8 copyRows
-    pure NotACountableStatement
-runSingleStatementInternal_ conn (CopyFromStdinEnd _) = do
-    liftIO $ void $ DB.putCopyEnd conn
-    StatementApplied <$> txnStatus conn
+runSingleStatementInternal_ conn p = case p of
+    CommentPiece           _       -> applied
+    WhiteSpacePiece        _       -> applied
+    BeginTransaction       s       -> singleStatement_ conn s
+    CommitTransaction      s       -> singleStatement_ conn s
+    RollbackTransaction    s       -> singleStatement_ conn s
+    OtherSqlPiece          s       -> singleStatement_ conn s
+    CopyFromStdinStatement copyStm -> do
+        liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
+        -- Unlike every other SqlPiece, COPY does not fit into a single constructor.
+        -- For counting it doesn't matter if we count `COPY FROM` or the ending of `COPY`.
+        -- For skipping it doesn't matter either which one we count, as we'll skip N countable
+        -- statements when necessary and start from N+1, whatever that is.
+        -- Since the txnStatus here is TransActive (query ongoing), it is simpler
+        -- if we count the ending of `COPY`, as after that the status is TransIdle, so
+        -- callers have one fewer state to deal with.
+        applied
+    CopyFromStdinRows copyRows -> do
+        liftIO $ DB.putCopyData conn $ encodeUtf8 copyRows
+        applied
+    CopyFromStdinEnd _ -> do
+        liftIO $ void $ DB.putCopyEnd conn
+        applied
+  where
+    applied = if isCountableRunnable p
+        then StatementApplied <$> txnStatus conn
+        else pure NotACountableStatement

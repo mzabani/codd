@@ -4,7 +4,6 @@ module Codd.Internal.Retry
     ) where
 
 import           Codd.Logging                   ( CoddLogger
-                                                , logError
                                                 , logWarn
                                                 )
 import           Codd.Types                     ( RetryPolicy(..)
@@ -38,11 +37,13 @@ retryFold
     -- ^ Accumulating function. This runs even for the first try.
     -> b
     -- ^ Initial value of the accumulator.
+    -> (Either e a -> m a)
+    -- ^ Called after the action succeeds or after all retries fail.
     -> (b -> m a)
     -- ^ Action to retry. Any exceptions of the chosen type are caught and logged as errors.
     -- Retries don't happen in case no exceptions are thrown.
     -> m a
-retryFold initialPol accf acc0 f = go initialPol acc0 0 Nothing
+retryFold initialPol accf acc0 final f = go initialPol acc0 0 Nothing
   where
     go rpol previousAcc tryNumber lastException = do
         let mNextPol = retryPolicyIterate rpol
@@ -52,16 +53,17 @@ retryFold initialPol accf acc0 f = go initialPol acc0 0 Nothing
                                       }
         thisAcc <- accf previousAcc thisIter
         case mNextPol of
-            Nothing                    -> f thisAcc
-            Just (waitIfFail, nextPol) -> catch (f thisAcc) $ \(ex :: e) -> do
-                let waitTimeMS :: Int =
-                        truncate $ (realToFrac waitIfFail :: Float) * 1000
-                -- It would be more reasonable if this retryFold function didn't print anything, letting
-                -- its callers do that. Maybe in the future.
-                logError $ "Got SQL Error: " <> Text.pack (show ex)
-                logWarn
-                    $  "Waiting "
-                    <> Text.pack (show waitTimeMS)
-                    <> "ms before next try"
-                threadDelay (1000 * waitTimeMS)
-                go nextPol thisAcc (tryNumber + 1) (Just ex)
+            Nothing                    -> catch (f thisAcc) (final . Left)
+            Just (waitIfFail, nextPol) -> do
+                ret <- catch (f thisAcc) $ \(ex :: e) -> do
+                    let waitTimeMS :: Int =
+                            truncate $ (realToFrac waitIfFail :: Float) * 1000
+                    -- It would be more reasonable if this retryFold function didn't print anything, letting
+                    -- its callers do that. Maybe in the future.
+                    logWarn
+                        $  "Waiting "
+                        <> Text.pack (show waitTimeMS)
+                        <> "ms before next try"
+                    threadDelay (1000 * waitTimeMS)
+                    go nextPol thisAcc (tryNumber + 1) (Just ex)
+                final (Right ret)
