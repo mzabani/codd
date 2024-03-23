@@ -77,7 +77,12 @@ We want to allow functions to specify the following constraints:
 Of course, any type level constraints we devise must assume the user will not call `execute conn "BEGIN"`, `execute conn "COMMIT"`,
 or similar statements, but rather that they'll use functions exposed by this module to manage transactions.
 And with that little bit of discipline, we should be able to moderately achieve goals 1 to 3, where "moderately" means
-this is not necessarily an airtight sandbox, but any ways to break out of it might be unlikely in codd's codebase.
+this is not necessarily an airtight sandbox, but ways to break out of it should be harder in codd's codebase.
+
+One existing exception to this airtightness is handling multiple connections at once. It's not hard to do something like
+`withTransaction @txn isolLvl conn1 $ someInTxnTFunc conn2` when conn2 is in fact not in a transaction.
+
+We want to address this hole eventually.
 -}
 
 class Monad m => InTxn (m :: Type -> Type)
