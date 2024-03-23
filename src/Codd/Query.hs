@@ -5,6 +5,7 @@ module Codd.Query
     , NotInTxn
     , execvoid_
     , query
+    , txnStatus
     , unsafeQuery1
     , withTransaction
     ) where
@@ -13,13 +14,18 @@ import           Codd.Logging                   ( CoddLogger
                                                 , LoggingT
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
-import           Control.Monad                  ( void )
+import           Control.Monad                  ( void
+                                                , when
+                                                )
 import           Control.Monad.Reader           ( ReaderT )
 import           Control.Monad.State            ( StateT )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Writer     ( WriterT )
 import           Data.Kind                      ( Type )
+import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
+import qualified Database.PostgreSQL.Simple.Internal
+                                               as PGInternal
 import           UnliftIO                       ( MonadIO(..)
                                                 , MonadUnliftIO
                                                 , onException
@@ -84,7 +90,7 @@ newtype InTxnT m a = InTxnT { unTxnT :: m a }
 instance MonadTrans InTxnT where
     lift = InTxnT
 
--- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also don't.
+-- 1. First we start with our basic assumptions: `IO` has no open transactions, and `SomeMonadTransformerT IO` also doesn't.
 -- We do this for some common monad transformers to increase compatibility.
 instance NotInTxn IO
 instance NotInTxn m => NotInTxn (LoggingT m)
@@ -105,7 +111,7 @@ instance (InTxn m, Monoid w) => InTxn (WriterT w m)
 
 -- 3. Now we want the type-level trickery to let us infer from class constraints if we're inside an `InTxn` monad or not.
 -- There are possibly many ways to go about this with GHC. I'm not well versed in them.
--- My ~first~ second attempt is to use we use multi-parameter classes to avoid duplicate instances (since instance heads are ignored
+-- My ~first~ second attempt is to use multi-parameter classes to avoid duplicate instances (since instance heads are ignored
 -- for instance selection).
 -- However, in some contexts where the `txn` monad type appears only in class constraints, but not in the function's arguments, using
 -- `withTransaction` will require enabling AllowAmbiguousTypes and explicit type applications like `withTransaction @txn`.
@@ -144,11 +150,26 @@ withTransaction
 withTransaction isolLvl conn f = do
     t :: CheckTxnWit m txn <- txnCheck
     case t of
-        AlreadyInTxn -> f
+        AlreadyInTxn -> assertTxnStatus PQ.TransInTrans >> f
         NotInTxn     -> do
+            assertTxnStatus PQ.TransIdle
             execvoid_ conn $ beginStatement isolLvl
             -- Note: once we stop rolling back on exception here, we can relax this function's `MonadUnliftIO`
             -- constraint to just `MonadIO`
             v <- unTxnT f `onException` liftIO (DB.rollback conn)
             liftIO $ DB.commit conn
             pure v
+  where
+    assertTxnStatus :: MonadUnliftIO n => PQ.TransactionStatus -> n ()
+    assertTxnStatus s = do
+        actualStatus <- txnStatus conn
+        when (actualStatus /= s)
+            $  error
+            $  "Internal error in codd. We were expecting txnStatus "
+            ++ show s
+            ++ " but got "
+            ++ show actualStatus
+            ++ ". Please report this as a bug"
+
+txnStatus :: MonadUnliftIO m => DB.Connection -> m PQ.TransactionStatus
+txnStatus conn = liftIO $ PGInternal.withConnection conn PQ.transactionStatus

@@ -5,11 +5,11 @@ module Codd.Internal.MultiQueryStatement
     , runSingleStatementInternal_
     , singleStatement_
     , skipNonCountableRunnableStatements
-    , txnStatus
     ) where
 
 import           Codd.Logging                   ( CoddLogger )
 import           Codd.Parsing                   ( SqlPiece(..) )
+import           Codd.Query                     ( txnStatus )
 import           Control.Monad                  ( void )
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
@@ -29,7 +29,6 @@ import qualified Streaming.Internal            as S
 import qualified Streaming.Prelude             as Streaming
 import qualified Streaming.Prelude             as S
 import           UnliftIO                       ( Exception
-                                                , MonadIO
                                                 , MonadUnliftIO
                                                 , handle
                                                 , liftIO
@@ -49,11 +48,10 @@ data StatementApplied = NotACountableStatement
      -- ^ Contains the transaction state _after_ the statement was applied.
      | StatementErred SqlStatementException
 
-txnStatus :: MonadIO m => DB.Connection -> m PQ.TransactionStatus
-txnStatus conn = liftIO $ PGInternal.withConnection conn PQ.transactionStatus
 
 -- | Runs SQL that could be either a row-returning or count-returning statement. Unlike postgresql-simple, this does not throw exceptions in case of SQL errors, but rather returns them.
-singleStatement_ :: MonadIO m => DB.Connection -> Text -> m StatementApplied
+singleStatement_
+    :: MonadUnliftIO m => DB.Connection -> Text -> m StatementApplied
 singleStatement_ conn sql = do
     res    <- liftIO $ PGInternal.exec conn $ encodeUtf8 sql
     status <- liftIO $ PQ.resultStatus res
@@ -127,7 +125,7 @@ skipNonCountableRunnableStatements numCountableRunnableToSkip =
 
 
 runSingleStatementInternal_
-    :: MonadIO m => DB.Connection -> SqlPiece -> m StatementApplied
+    :: MonadUnliftIO m => DB.Connection -> SqlPiece -> m StatementApplied
 runSingleStatementInternal_ conn p = case p of
     CommentPiece           _       -> applied
     WhiteSpacePiece        _       -> applied

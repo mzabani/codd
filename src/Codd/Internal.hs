@@ -10,7 +10,6 @@ import           Codd.Internal.MultiQueryStatement
                                                 , multiQueryStatement_
                                                 , singleStatement_
                                                 , skipNonCountableRunnableStatements
-                                                , txnStatus
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration(..)
                                                 , retryFold
@@ -38,6 +37,7 @@ import           Codd.Query                     ( CanStartTxn
                                                 , NotInTxn
                                                 , execvoid_
                                                 , query
+                                                , txnStatus
                                                 , unsafeQuery1
                                                 , withTransaction
                                                 )
@@ -319,7 +319,6 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 case mConn of
                     Just conn -> pure conn
                     Nothing   -> modifyMVar connsPerInfo $ \m -> do
-                                        -- Need to unliftIO to log in here?
                                         -- logInfo $ "Connecting to (TODO: REDACT PASSWORD) " <> Text.pack (show cinfo)
                         conn <- connectWithTimeout cinfo connectTimeout
                         pure ((cinfo, conn) : m, conn)
@@ -356,32 +355,30 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             pure $ map (second (const MigrationRegistered)) apmigs
                     Nothing -> pure ()
 
-            registerAppliedMigIfPossible :: forall t. (CanStartTxn m (t m), MonadIO (t m), MonadUnliftIO (t m), MonadTrans t) => DB.Connection -> FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> t m ()
-            registerAppliedMigIfPossible anyConnection appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationNumStatements apStatus = do
-                mDefaultConn <- lift $ queryConn defaultConnInfo
-                (registered, appliedAt) <-
-                    case mDefaultConn of
-                        Nothing -> fmap (MigrationNotRegistered,) $ 
-                                    DB.fromOnly <$> unsafeQuery1 anyConnection "SELECT clock_timestamp()" ()
-                        Just defaultConn -> do
-                            timeApplied <- registerRanMigration @(t m) defaultConn txnIsolationLvl appliedMigrationName appliedMigrationTimestamp NowInPostgresTime appliedMigrationDuration appliedMigrationNumStatements apStatus
-                            pure (MigrationRegistered, timeApplied)
+            -- | The function used to register applied migrations for when a block of in-txn migrations using the default connection string are to be applied.
+            -- This will use same transaction as the one used to apply the migrations to insert into codd_schema.sql_migrations.
+            registerAppliedMigDefaultConnInTxnBlock :: FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> txn ()
+            registerAppliedMigDefaultConnInTxnBlock appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationNumStatements apStatus = do
+                (_, defaultConn) <- lift $ openConn defaultConnInfo
+                timeApplied <- registerRanMigration @txn defaultConn txnIsolationLvl appliedMigrationName appliedMigrationTimestamp NowInPostgresTime appliedMigrationDuration appliedMigrationNumStatements apStatus
 
                 modifyMVar_ appliedMigs $ \apmigs -> pure $ apmigs ++ [(AppliedMigration { appliedMigrationName
                       , appliedMigrationTimestamp
-                      , appliedMigrationAt = appliedAt
+                      , appliedMigrationAt = timeApplied
                       , appliedMigrationDuration
                       , appliedMigrationNumStatements
-                      }, registered)]
+                      }, MigrationRegistered)]
 
-            -- TODO: This function is a copy of the one above, but runs in a different monad. It'd be nicer to avoid the duplication.
-            registerAppliedMigIfPossibleNoTxn :: DB.Connection -> FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> m ()
-            registerAppliedMigIfPossibleNoTxn anyConnection appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationNumStatements apStatus = do
+            -- | The function used to register applied migrations for when either a no-txn migration or a block of in-txn migrations _not_ using the default connection string are to be applied.
+            -- This will account for the possibility that the default connection string still isn't accessible by storing in-memory that some migrations were applied but not registered,
+            -- and also will BEGIN..COMMIT-wrap the insertion using the default connection if it's available.
+            registerAppliedMigIfPossibleOthers :: DB.Connection -> FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> m ()
+            registerAppliedMigIfPossibleOthers blockConn appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationNumStatements apStatus = do
                 mDefaultConn <- queryConn defaultConnInfo
                 (registered, appliedAt) <-
                     case mDefaultConn of
                         Nothing -> fmap (MigrationNotRegistered,) $ 
-                                    DB.fromOnly <$> unsafeQuery1 anyConnection "SELECT clock_timestamp()" ()
+                                    DB.fromOnly <$> unsafeQuery1 blockConn "SELECT clock_timestamp()" ()
                         Just defaultConn -> do
                             timeApplied <- withTransaction @txn txnIsolationLvl defaultConn $ registerRanMigration @txn defaultConn txnIsolationLvl appliedMigrationName appliedMigrationTimestamp NowInPostgresTime appliedMigrationDuration appliedMigrationNumStatements apStatus
                             pure (MigrationRegistered, timeApplied)
@@ -402,6 +399,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                           (blockCustomConnInfo block)
                     (_, conn)                   <- openConn cinfo
 
+
                     -- Create codd_schema and flush previously applied migrations if possible. We do this here
                     -- since we expect _some_ of the migration blocks to use the default connection string, and after
                     -- that we can register migrations were applied.
@@ -412,20 +410,20 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         , isOneShotApplication defaultConnInfo pendingMigs
                         )
                         of
-                        (BlockInTxn inTxnBlock, True) -> runInTxnBlock
+                        (BlockInTxn inTxnBlock, True) -> runInTxnBlockDefaultConn
                             (fmap Just . actionAfter hoistedBlocks)
                             conn
                             inTxnBlock
-                            (registerAppliedMigIfPossible conn)
-                        (BlockInTxn inTxnBlock, False) -> runInTxnBlock
+                            registerAppliedMigDefaultConnInTxnBlock
+                        (BlockInTxn inTxnBlock, False) -> if cinfo == defaultConnInfo then runInTxnBlockDefaultConn (const $ pure Nothing) conn inTxnBlock registerAppliedMigDefaultConnInTxnBlock else runInTxnBlockNotDefaultConn
                             (const $ pure Nothing)
                             conn
                             inTxnBlock
-                            (registerAppliedMigIfPossible conn)
+                            (registerAppliedMigIfPossibleOthers conn)
                         (BlockNoTxn noTxnBlock, _) -> runNoTxnMig
                             conn
                             noTxnBlock
-                            (registerAppliedMigIfPossibleNoTxn conn)
+                            (registerAppliedMigIfPossibleOthers conn)
 
                 )
                 Nothing
@@ -449,13 +447,59 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
         return actAfterResult
 
   where
-    runInTxnBlock
+    runInTxnBlockNotDefaultConn
         :: (DB.Connection -> txn b)
         -> DB.Connection
         -> ConsecutiveInTxnMigrations m
-        -> (FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> txn ()) -- ^ This `txn` is a hoax; this should run in `m` to be correct. In-txn migrations can run inside a transaction in a connection that is not the default one, and that's what `txn` will be here: a transaction _possibly_ in a connection different than the one that will be used to apply migrations. This is a flaw of our transaction tracking type-level interface.
+        -> (FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> m ()) -- ^ Running in the `m` monad is correct. In-txn migrations can run inside a transaction in a connection that is not the default one, and that's what `txn` would be here: a transaction _possibly_ in a connection different than the one that will be used to apply migrations.
         -> m b
-    runInTxnBlock act conn migBlock registerMig = do
+    runInTxnBlockNotDefaultConn act conn migBlock registerMig = do
+        res <-
+         -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
+            retryFold @MigrationApplicationFailure
+                    retryPolicy
+                    (\previousBlock RetryIteration { tryNumber } ->
+                        if tryNumber == 0
+                            then pure previousBlock
+                            else reReadBlock previousBlock
+                    )
+                    migBlock
+                    (\case
+                        Left lastEx -> do
+                            logError
+                                "Failed after all configured retries. Giving up."
+                            throwIO lastEx
+                        Right ret -> pure ret
+                    )
+                $ \blockFinal -> do
+                      logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
+                      flip
+                              onException
+                              (logInfo
+                                  "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
+                              )
+                          $ withTransaction @txn txnIsolationLvl conn
+                          $ do
+                                let hoistedMigs
+                                        :: NonEmpty (AddedSqlMigration txn)
+                                    hoistedMigs =
+                                        hoistAddedSqlMigration lift
+                                            <$> inTxnMigs blockFinal
+                                forM_ hoistedMigs
+                                    $ applySingleMigration conn
+                                                           (\fp ts duration numStmts apStatus -> lift $ registerMig fp ts duration numStmts apStatus)
+                                                           0
+                                act conn
+        logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
+        pure res
+
+    runInTxnBlockDefaultConn
+        :: (DB.Connection -> txn b)
+        -> DB.Connection
+        -> ConsecutiveInTxnMigrations m
+        -> (FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> txn ()) -- ^ Using the `txn` is right: registering applied migrations happens in the default connection, and so it will happen in the same transaction as the migrations themselves.
+        -> m b
+    runInTxnBlockDefaultConn act conn migBlock registerMig = do
         res <-
          -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
             retryFold @MigrationApplicationFailure
@@ -1035,19 +1079,19 @@ applySingleMigration conn registerMigRan numCountableRunnableStmtsToSkip (AddedS
                                                       -> Nothing
                                                   states@(PQ.TransActive, _) ->
                                                       error
-                                                          $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream: "
+                                                          $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this as a bug: "
                                                           ++ show states
                                                   states@(_, PQ.TransActive) ->
                                                       error
-                                                          $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this upstream"
+                                                          $ "Internal error in codd. It seems libpq returned a transaction status while another statement was running, which should be impossible. Please report this as a bug"
                                                           ++ show states
                                                   states@(PQ.TransInError, _)
                                                       -> error
-                                                          $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
+                                                          $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this as a bug"
                                                           ++ show states
                                                   states@(_, PQ.TransInError)
                                                       -> error
-                                                          $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this upstream"
+                                                          $ "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this as a bug"
                                                           ++ show states
                                                   states@(PQ.TransUnknown, _)
                                                       -> error
