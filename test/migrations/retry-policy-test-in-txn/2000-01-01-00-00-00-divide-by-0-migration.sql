@@ -11,6 +11,10 @@
 -- have more than the first few SQL statements (should only be the
 -- statements in the first line, really) in memory.
 
+-- The CREATE TABLE statements ensure we're rolling back and retrying properly, or else they will fail due to
+-- tables already existing.
+
+CREATE TABLE any_table();
 SELECT 1;
 SELECT 1;
 SELECT 1;
@@ -23,6 +27,5 @@ SELECT 1;
 SELECT 1;
 SELECT 1;
 SELECT 1;
-SELECT 1;
-SELECT 1;
+CREATE TABLE other_table();
 SELECT 7/0

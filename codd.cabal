@@ -211,6 +211,7 @@ test-suite codd-test
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
+      DbDependentSpecs.RetrySpec
       DbDependentSpecs.SchemaVerificationSpec
       DbDependentSpecs.InvariantsSpec
       DbUtils

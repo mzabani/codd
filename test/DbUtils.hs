@@ -145,6 +145,7 @@ createTestUserMigPol = do
 
     let
         psql =
+            -- IMPORTANT: If you change this migration, also change the 2000-01-01-00-00-00-bootstrap-but-fail.sql file and the test that uses it
             mkValidSql
                 $  "DO\n"
                 <> "$do$\n"
@@ -185,10 +186,11 @@ testCoddSettings = do
         }
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
+-- This does cleanup if you create any databases or tables in the `postgres` DB, though.
 aroundTestDbInfo :: SpecWith CoddSettings -> Spec
 aroundTestDbInfo = around $ \act -> do
     coddSettings <- testCoddSettings
-    act coddSettings
+    act coddSettings `finally` cleanupAfterTest
 
 aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
@@ -198,9 +200,8 @@ aroundDatabaseWithMigs
     -> SpecWith CoddSettings
     -> Spec
 aroundDatabaseWithMigs startingMigs = around $ \act -> do
-    coddSettings@CoddSettings { migsConnString } <- testCoddSettings
+    coddSettings <- testCoddSettings
 
-    -- TODO: Reuse withCoddDbAndDrop!
     runCoddLogger
 
             (do
@@ -211,43 +212,66 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
                                        (const $ pure ())
                 liftIO (act coddSettings)
             )
-        `finally` withConnection
-                      migsConnString { connectUser     = "postgres"
-                                     , connectDatabase = "postgres"
-                                     }
-                      testConnTimeout
+        `finally` cleanupAfterTest
+
+cleanupAfterTest :: IO ()
+cleanupAfterTest = do
+    CoddSettings { migsConnString } <- testCoddSettings
+    withConnection
+        migsConnString { connectUser     = "postgres"
+                       , connectDatabase = "postgres"
+                       }
+        testConnTimeout
                         -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB/postgres instance.
                         -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
                         -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
-                      (\conn -> do
-                          execvoid_ conn "ALTER ROLE postgres RESET ALL;"
-                          execvoid_ conn "DROP DATABASE \"codd-test-db\";"
+        (\conn -> do
+            execvoid_ conn "ALTER ROLE postgres RESET ALL;"
+            dbs :: [String] <-
+                map DB.fromOnly
+                    <$> query
+                            conn
+                            "SELECT datname FROM pg_catalog.pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1')"
+                            ()
+            forM_ dbs $ \db ->
+                execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\""
 
-                          allRoles :: [String] <-
-                              map DB.fromOnly
-                                  <$> query
-                                          conn
-                                          "SELECT rolname FROM pg_roles WHERE rolname NOT IN ('postgres') AND rolname NOT LIKE 'pg_%' ORDER BY rolname DESC"
-                                          ()
-                          forM_ allRoles $ \role -> do
-                              let escapedRole =
-                                      fromString ("\"" <> role <> "\"")
-                              execvoid_ conn
-                                  $  "DROP OWNED BY "
-                                  <> escapedRole
-                                  -- <> "; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "
-                                  -- <> escapedRole
-                                  -- <> "; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "
-                                  -- <> escapedRole
-                                  -- <> "; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "
-                                  -- <> escapedRole
-                                  -- <> "; REVOKE ALL ON SCHEMA public FROM "
-                                  -- <> escapedRole
-                                  -- <> "; REVOKE ALL ON DATABASE \"codd-test-db\" FROM "
-                                  -- <> escapedRole
-                                  <> "; DROP ROLE "
-                                  <> escapedRole
-                      )
+            allRoles :: [String] <-
+                map DB.fromOnly
+                    <$> query
+                            conn
+                            "SELECT rolname FROM pg_roles WHERE rolname NOT IN ('postgres') AND rolname NOT LIKE 'pg_%' ORDER BY rolname DESC"
+                            ()
+            forM_ allRoles $ \role -> do
+                let escapedRole = fromString ("\"" <> role <> "\"")
+                execvoid_ conn
+                    $  "DROP OWNED BY "
+                    <> escapedRole
+                    -- <> "; REVOKE ALL ON ALL TABLES IN SCHEMA public FROM "
+                    -- <> escapedRole
+                    -- <> "; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM "
+                    -- <> escapedRole
+                    -- <> "; REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM "
+                    -- <> escapedRole
+                    -- <> "; REVOKE ALL ON SCHEMA public FROM "
+                    -- <> escapedRole
+                    -- <> "; REVOKE ALL ON DATABASE \"codd-test-db\" FROM "
+                    -- <> escapedRole
+                    <> "; DROP ROLE "
+                    <> escapedRole
+
+            createdTables :: [(String, String)] <- query
+                conn
+                "SELECT schemaname, tablename FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')"
+                ()
+            forM_ createdTables $ \(schema, tbl) ->
+                execvoid_ conn
+                    $  "DROP TABLE \""
+                    <> fromString schema
+                    <> "\".\""
+                    <> fromString tbl
+                    <> "\" CASCADE"
+        )
 
 -- | Returns a Postgres UTC Timestamp that increases with its input parameter.
 getIncreasingTimestamp :: DiffTime -> DB.UTCTimestamp
