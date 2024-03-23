@@ -3,14 +3,12 @@ module DbDependentSpecs.RetrySpec where
 import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( MigrationApplicationFailure
-                                                , connectWithTimeout
                                                 , withConnection
                                                 )
 import           Codd.Logging                   ( LoggingT(runLoggingT)
                                                 , Newline(..)
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
-                                                , ParsedSql(..)
                                                 , SqlMigration(..)
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
@@ -25,11 +23,8 @@ import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( UTCTime )
-import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( aroundFreshDatabase
                                                 , aroundTestDbInfo
-                                                , createTestUserMig
-                                                , createTestUserMigPol
                                                 , getIncreasingTimestamp
                                                 , mkValidSql
                                                 , testConnTimeout
@@ -120,7 +115,7 @@ spec = do
                                         "SELECT name, num_applied_statements, applied_at, no_txn_failed_at FROM codd_schema.sql_migrations"
                                         ()
                                 (apname, apnstmts, apat)
-                                    `shouldBe` ( "bootstrap-but-fail.sql" :: String
+                                    `shouldBe` ( "2000-01-01-00-00-00-bootstrap-but-fail.sql" :: String
                                                , 5 :: Int
                                                , Nothing :: Maybe UTCTime
                                                )
@@ -130,8 +125,6 @@ spec = do
             describe "Side-effect-less migrations" $ aroundFreshDatabase $ do
                 let
                     testRetries inTxn emptyTestDbInfo = do
-                        -- Kind of ugly.. we test behaviour by analyzing logs and
-                        -- trust that threadDelay is called.
                         logsmv <- newMVar []
                         runMVarLogger
                                 logsmv

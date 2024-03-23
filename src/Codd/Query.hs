@@ -17,6 +17,7 @@ import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( void
                                                 , when
                                                 )
+import           Control.Monad.Except           ( ExceptT )
 import           Control.Monad.Reader           ( ReaderT )
 import           Control.Monad.State            ( StateT )
 import           Control.Monad.Trans            ( MonadTrans(..) )
@@ -102,6 +103,7 @@ instance NotInTxn m => NotInTxn (LoggingT m)
 instance NotInTxn m => NotInTxn (ResourceT m)
 instance NotInTxn m => NotInTxn (ReaderT r m)
 instance NotInTxn m => NotInTxn (StateT s m)
+instance NotInTxn m => NotInTxn (ExceptT e m)
 instance (NotInTxn m, Monoid w) => NotInTxn (WriterT w m)
 
 -- 2. Next, if some monad `m` is inside a transaction, `SomeMonadTransformerT m` also is.
@@ -112,6 +114,7 @@ instance InTxn m => InTxn (LoggingT m)
 instance InTxn m => InTxn (ResourceT m)
 instance InTxn m => InTxn (ReaderT r m)
 instance InTxn m => InTxn (StateT s m)
+instance InTxn m => InTxn (ExceptT e m)
 instance (InTxn m, Monoid w) => InTxn (WriterT w m)
 
 -- 3. Now we want the type-level trickery to let us infer from class constraints if we're inside an `InTxn` monad or not.

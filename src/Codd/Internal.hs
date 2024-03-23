@@ -71,7 +71,7 @@ import           Data.Time                      ( DiffTime
                                                 , NominalDiffTime
                                                 , UTCTime
                                                 , diffTimeToPicoseconds
-                                                , picosecondsToDiffTime
+                                                , picosecondsToDiffTime, secondsToDiffTime
                                                 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
@@ -92,10 +92,9 @@ import           UnliftIO                       ( Exception
                                                 , MonadUnliftIO
                                                 , hClose
                                                 , newIORef
-                                                , onException
                                                 , readIORef
                                                 , timeout
-                                                , writeIORef
+                                                , writeIORef, try, SomeException
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -374,11 +373,21 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
             -- and also will BEGIN..COMMIT-wrap the insertion using the default connection if it's available.
             registerAppliedMigIfPossibleOthers :: DB.Connection -> FilePath -> DB.UTCTimestamp -> DiffTime -> Int -> MigrationApplicationStatus -> m ()
             registerAppliedMigIfPossibleOthers blockConn appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationNumStatements apStatus = do
+                csExists <- readMVar coddSchemaExists
+                case (apStatus, csExists) of
+                    (NoTxnMigrationFailed, False) -> do
+                        -- Super duper ultra extra special case: we try to create codd_schema as a partially-run no-txn migration may have applied statements that make the default connection string accessible. The same isn't possible with in-txn migrations.
+                        -- This will increase the delay between retry intervals beyond what the user has specified since we're adding a bit of a timeout to each retry of failed no-txn migrations. Since this is an extremely rare error case, it probably doesn't
+                        -- matter too much what we do. I have questions if we should even support this, to be honest. Hacky stuff below:
+                        void $ try @m @SomeException $ withConnection defaultConnInfo (min 0.3 connectTimeout) $ \_conn -> do
+                            void $ openConn defaultConnInfo
+                            createCoddSchemaAndFlushPendingMigrations
+                    _ -> pure ()
                 mDefaultConn <- queryConn defaultConnInfo
                 (registered, appliedAt) <-
                     case mDefaultConn of
                         Nothing -> fmap (MigrationNotRegistered,) $ 
-                                    DB.fromOnly <$> unsafeQuery1 blockConn "SELECT clock_timestamp()" ()
+                                                    DB.fromOnly <$> unsafeQuery1 blockConn "SELECT clock_timestamp()" ()
                         Just defaultConn -> do
                             timeApplied <- withTransaction @txn txnIsolationLvl defaultConn $ registerRanMigration @txn defaultConn txnIsolationLvl appliedMigrationName appliedMigrationTimestamp NowInPostgresTime appliedMigrationDuration appliedMigrationNumStatements apStatus
                             pure (MigrationRegistered, timeApplied)
@@ -473,23 +482,24 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                     )
                 $ \blockFinal -> do
                       logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
-                      flip
-                              onException
-                              (logInfo
-                                  "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
-                              )
-                          $ withTransaction @txn txnIsolationLvl conn
+                      withTransaction @txn txnIsolationLvl conn
                           $ do
                                 let hoistedMigs
                                         :: NonEmpty (AddedSqlMigration txn)
                                     hoistedMigs =
                                         hoistAddedSqlMigration lift
                                             <$> inTxnMigs blockFinal
-                                forM_ hoistedMigs
-                                    $ applySingleMigration conn
-                                                           (\fp ts duration numStmts apStatus -> lift $ registerMig fp ts duration numStmts apStatus)
-                                                           0
-                                act conn
+                                errorOrOk <- forMExcept hoistedMigs
+                                            $ applySingleMigration conn
+                                                                   (\fp ts duration numStmts apStatus -> lift $ registerMig fp ts duration numStmts apStatus)
+                                                                   0
+                                case errorOrOk of
+                                    Left e -> do
+                                        logInfo
+                                          "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
+                                        pure $ Left e
+                                    Right () -> 
+                                        Right <$> act conn
         logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
         pure res
 
@@ -519,23 +529,24 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                     )
                 $ \blockFinal -> do
                       logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
-                      flip
-                              onException
-                              (logInfo
-                                  "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
-                              )
-                          $ withTransaction txnIsolationLvl conn
+                      withTransaction txnIsolationLvl conn
                           $ do
                                 let hoistedMigs
                                         :: NonEmpty (AddedSqlMigration txn)
                                     hoistedMigs =
                                         hoistAddedSqlMigration lift
                                             <$> inTxnMigs blockFinal
-                                forM_ hoistedMigs
+                                errorOrOk <- forMExcept hoistedMigs
                                     $ applySingleMigration conn
                                                            registerMig
                                                            0
-                                act conn
+                                case errorOrOk of
+                                    Left e -> do
+                                        logInfo
+                                          "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
+                                        pure $ Left e
+                                    Right () -> 
+                                        Right <$> act conn
         logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
         pure res
 
@@ -547,8 +558,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
     runNoTxnMig conn mig registerMig = do
         retryFold @MigrationApplicationFailure
                 retryPolicy
-                (\(previousMig, _) RetryIteration { lastException } ->
-                    case lastException of
+                (\(previousMig, _) RetryIteration { lastError } ->
+                    case lastError of
                         Nothing -> pure (previousMig, 0)
                         Just MigrationApplicationFailure { noTxnMigRetryInstructions }
                             -> case noTxnMigRetryInstructions of
@@ -573,19 +584,26 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 )
                 (mig, 0)
                 (\case
-                    Left lastEx -> do
+                    Left lastErr -> do
                         logError
                             "Failed after all configured retries. Giving up."
-                        throwIO lastEx
+                        -- The warning below would be very nice to have, but we don't want it appearing for new users of codd when they're trying `codd add` for the first time. We should know if this migration application happens during `codd add` and omit the warning below.
+                        -- logWarn "IMPORTANT:\n\
+                        --        \ If this is a database you care about and can't simply recreate (e.g. a Production database), then read the following _very carefully_:\n\
+                        --        \ A no-txn migration failed to be applied completely but may have had some of its statements applied. Your database may have been left in an intermediary state.\n\
+                        --        \ If you think this is a temporary error and that resuming from the exact statement inside the no-txn migration that failed might work, you can just run `codd up` and codd _will resume_ migration application precisely from that last failed statement.\n\
+                        --        \ If you're going to do that, however, do _not_ edit the migration as changing the position of the failed statement inside it will make codd silently continue from the wrong place.\n\
+                        --        \ But if this is not going away merely by resuming application from the last failed statement, one other option you have is to look at the last error above to see how many statements codd applied and which statement failed. This should help you pinpoint the precise failing statement inside the migration, even if it might not be entirely obvious how codd counts statements internally. \n\
+                        --        \ Once you know which statement that is, you can edit the migration and remove that failing statement and all others that come after it. You can then rewrite that part of the migration in a way you think will fix the problem. Just make sure you don't change anything before it. After that you can run `codd up` and codd will resume application after skipping the statements that had been applied, meaning it will resume from the first statement in the rewritten part of the migration."
+                        throwIO lastErr
                     Right ret -> pure ret
                 )
-            $ \(migFinal, numStmtsToSkip) -> do
-                  applySingleMigration
+            $ \(migFinal, numStmtsToSkip) ->
+                  fmap (const Nothing) <$> applySingleMigration
                                       conn
                                       registerMig
                                       numStmtsToSkip
                                       (singleNoTxnMig migFinal)
-                  pure Nothing
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
      | CoddSchemaV3 -- ^ V3 includes the number of SQL statements applied per migration, allowing codd to resume application of even failed no-txn migrations correctly
@@ -1024,8 +1042,16 @@ data MigrationApplicationFailure = MigrationApplicationFailure
     deriving stock Show
 instance Exception MigrationApplicationFailure
 
--- | Applies a single migration and returns the time when it finished being applied. Calls the supplied
--- `registerMigRan` after applying the migration.
+forMExcept :: Monad m => NonEmpty a -> (a -> m (Either e ())) -> m (Either e ())
+forMExcept nl f = go (NE.toList nl)
+    where
+        go [] = pure $ Right ()
+        go (x:xs) = f x >>= \case
+                                Left e -> pure $ Left e
+                                Right () -> go xs
+
+-- | Applies a single migration and returns an error if it failed to be applied or `()` otherwise. Calls the supplied
+-- `registerMigRan` after the migration is applied or fails. Does not throw exceptions coming from SQL errors.
 applySingleMigration
     :: forall m
      . (MonadUnliftIO m, CoddLogger m)
@@ -1034,7 +1060,7 @@ applySingleMigration
     -> Int
         -- ^ Number of countable-runnable statements to skip completely. Useful when retrying no-txn migrations from exactly the statements they last failed in.
     -> AddedSqlMigration m
-    -> m ()
+    -> m (Either MigrationApplicationFailure ())
 applySingleMigration conn registerMigRan numCountableRunnableStmtsToSkip (AddedSqlMigration sqlMig migTimestamp)
     = do
         let fn = migrationName sqlMig
@@ -1168,23 +1194,25 @@ applySingleMigration conn registerMigRan numCountableRunnableStmtsToSkip (AddedS
                                     "<MAGENTA>ROLLBACK</MAGENTA>ed last explicitly started transaction"
                                 pure $ Just $ NoTxnMigMustRestartAfterSkipping
                                     (lastBeginNum - 1) appliedMigrationDuration
-                throwIO $ MigrationApplicationFailure
+                pure $ Left $ MigrationApplicationFailure
                     { sqlStatementEx
                     , noTxnMigRetryInstructions
                     }
-            Nothing -> pure ()
+            Nothing -> do
+                    registerMigRan            fn
+                        migTimestamp
+                        appliedMigrationDuration
+                        appliedMigrationNumStatements
+                        MigrationAppliedSuccessfully
+                    logInfo
+                        $  " (<CYAN>"
+                        <> prettyPrintDuration appliedMigrationDuration
+                        <> "</CYAN>, "
+                        <> Fmt.sformat Fmt.int appliedMigrationNumStatements
+                        <> ")"
+                    pure $ Right ()
 
-        registerMigRan            fn
-            migTimestamp
-            appliedMigrationDuration
-            appliedMigrationNumStatements
-            MigrationAppliedSuccessfully
-        logInfo
-            $  " (<CYAN>"
-            <> prettyPrintDuration appliedMigrationDuration
-            <> "</CYAN>, "
-            <> Fmt.sformat Fmt.int appliedMigrationNumStatements
-            <> ")"
+
   where
     pico_1ns = 1_000
     pico_1ms = 1_000_000_000
