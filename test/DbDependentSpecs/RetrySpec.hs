@@ -2,7 +2,7 @@ module DbDependentSpecs.RetrySpec where
 
 import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
-import           Codd.Internal                  ( MigrationApplicationFailure
+import           Codd.Internal                  ( NoTxnMigrationApplicationFailure
                                                 , withConnection
                                                 )
 import           Codd.Logging                   ( LoggingT(runLoggingT)
@@ -97,7 +97,7 @@ spec = do
                                   testConnTimeout
                                   (const $ pure ())
                               )
-                          `shouldThrow` (\(e :: MigrationApplicationFailure) ->
+                          `shouldThrow` (\(e :: NoTxnMigrationApplicationFailure) ->
                                             "division by zero"
                                                 `List.isInfixOf` show e
 
@@ -148,7 +148,7 @@ spec = do
                                     testConnTimeout
                                     (const $ pure ())
                                 )
-                            `shouldThrow` (\(e :: MigrationApplicationFailure) ->
+                            `shouldThrow` (\(e :: SomeException) ->
                                               "division by zero"
                                                   `List.isInfixOf` show e
 
