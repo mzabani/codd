@@ -530,7 +530,7 @@ spec = do
                 $ runCoddLogger
                 $ do
                       [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
-                          parseMigrationFiles []
+                          parseMigrationFiles mempty
                               $ Left ["test/migrations/normal-parse-test/"]
                       rawFileContents <-
                           liftIO
@@ -558,7 +558,7 @@ spec = do
                 $ runCoddLogger
                 $ do
                       [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
-                          parseMigrationFiles []
+                          parseMigrationFiles mempty
                               $ Left ["test/migrations/no-parse-test/"]
                       rawFileContents <-
                           liftIO

@@ -65,6 +65,23 @@ spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Retry tests" $ do
+            -- aroundTestDbInfo
+            --     $ it
+            --           "In-txn migrations in same database get registered in the same transaction even for a different user"
+            --     $ error "TODO"
+            -- aroundTestDbInfo
+            --     $ it
+            --           "In-txn migrations in different database get registered after all said migrations are committed, not after each one is applied inside a transaction"
+            --     $ error "TODO"
+            -- aroundTestDbInfo
+            --     $ it
+            --           "No-txn migration with failure in COMMIT statement retries from the right place"
+            --     $ error "TODO"
+            -- aroundTestDbInfo
+            --     $ it
+            --           "No-txn migration is resumed from the right statement on a new `codd up` invocation"
+            --     $ error "TODO"
+
             aroundTestDbInfo
                 $ it
                       "Bootstrapping no-txn migration still gets registered if it makes default connection string accessible before failing"
