@@ -25,6 +25,7 @@ import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
 import qualified Data.Map.Strict               as Map
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time                      ( CalendarDiffTime(ctTime)
@@ -48,7 +49,9 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
-import           UnliftIO                       ( liftIO )
+import           UnliftIO                       ( SomeException
+                                                , liftIO
+                                                )
 
 placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
 placeHoldersMig = AddedSqlMigration
@@ -137,6 +140,56 @@ createCountCheckingMig expectedCount migName = SqlMigration
     , migrationCustomConnInfo = Nothing
     , migrationEnvVars        = mempty
     }
+
+alwaysPassingMig, createTableMig, addColumnMig, alwaysFailingMig
+    :: MonadThrow m => AddedSqlMigration m
+alwaysPassingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0001-always-passing.sql"
+                 , migrationSql            = mkValidSql "SELECT 99"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 1)
+createTableMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0002-create-table.sql"
+                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 2)
+addColumnMig = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "0003-add-column.sql"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
+        }
+    (getIncreasingTimestamp 3)
+alwaysFailingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0004-always-failing.sql"
+                 , migrationSql            = mkValidSql "SELECT 5/0"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 4)
+
+changeConnUser
+    :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
+changeConnUser dbInfo newUser mig = mig
+    { addedSqlMig = (addedSqlMig mig)
+                        { migrationCustomConnInfo =
+                            let cinfo = fromMaybe
+                                    (migsConnString dbInfo)
+                                    (migrationCustomConnInfo (addedSqlMig mig))
+                            in  Just cinfo { DB.connectUser = newUser }
+                        }
+    }
+
 
 -- | A migration that uses many different ways of inputting strings in postgres. In theory we'd only need to
 -- test the parser, but we do this to sleep well at night too.
@@ -645,6 +698,59 @@ spec = do
                                           totalRows `shouldBe` 10
 
             describe "Custom connection-string migrations" $ do
+                aroundFreshDatabase
+                    $ it
+                          "In-txn migrations in same database as the default connection string get registered in the same transaction even for a different user"
+                    $ \dbInfo -> do
+                          -- To test this we put three consecutive in-txn migrations on the default database under a different user, where the last migration always fails.
+                          -- Neither of the three migrations should be registered in this scenario, as they were all rolled back.
+                          runCoddLogger
+                                  (applyMigrationsNoCheck
+                                      dbInfo
+                                      (Just
+                                          [ alwaysPassingMig -- Make sure the default connection is available and yet we're not to use it for registering the 3 migrations below
+                                          , changeConnUser dbInfo
+                                                           "codd-test-user"
+                                                           createTableMig
+                                          , changeConnUser dbInfo
+                                                           "codd-test-user"
+                                                           addColumnMig
+                                          , changeConnUser dbInfo
+                                                           "codd-test-user"
+                                                           alwaysFailingMig
+                                          ]
+                                      )
+                                      testConnTimeout
+                                      (const $ pure ())
+                                  )
+                              `shouldThrow` (\(_ :: SomeException) -> True)
+                          allRegisteredMigs :: [String] <-
+                              map DB.fromOnly <$> withConnection
+                                  (migsConnString dbInfo)
+                                  testConnTimeout
+                                  (\conn -> DB.query
+                                      conn
+                                      "SELECT name from codd_schema.sql_migrations"
+                                      ()
+                                  )
+                          allRegisteredMigs
+                              `shouldNotContain` [ migrationName
+                                                       (addedSqlMig @IO
+                                                           createTableMig
+                                                       )
+                                                 ]
+                          allRegisteredMigs
+                              `shouldNotContain` [ migrationName
+                                                       (addedSqlMig @IO
+                                                           addColumnMig
+                                                       )
+                                                 ]
+                          allRegisteredMigs
+                              `shouldNotContain` [ migrationName
+                                                       (addedSqlMig @IO
+                                                           alwaysFailingMig
+                                                       )
+                                                 ]
                 it
                         "applied_at and application_duration registered properly for migrations running before codd_schema is available"
                     $ do
