@@ -7,6 +7,7 @@ import           Codd.Internal                  ( NoTxnMigrationApplicationFailu
                                                 )
 import           Codd.Logging                   ( LoggingT(runLoggingT)
                                                 , Newline(..)
+                                                , runCoddLogger
                                                 )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
@@ -19,10 +20,12 @@ import           Control.Monad                  ( forM_ )
 import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.List                     as List
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( UTCTime )
+import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( aroundFreshDatabase
                                                 , aroundTestDbInfo
                                                 , getIncreasingTimestamp
@@ -41,41 +44,129 @@ import           UnliftIO.Concurrent            ( MVar
                                                 , readMVar
                                                 )
 
-createTableMig, addColumnMig :: MonadThrow m => AddedSqlMigration m
-createTableMig = AddedSqlMigration
-    SqlMigration { migrationName           = "0001-create-table.sql"
-                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
+alwaysPassingMig, createTableMig, addColumnMig, alwaysFailingMig
+    :: MonadThrow m => AddedSqlMigration m
+alwaysPassingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0001-always-passing.sql"
+                 , migrationSql            = mkValidSql "SELECT 99"
                  , migrationInTxn          = True
                  , migrationCustomConnInfo = Nothing
                  , migrationEnvVars        = mempty
                  }
     (getIncreasingTimestamp 1)
+createTableMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0002-create-table.sql"
+                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 2)
 addColumnMig = AddedSqlMigration
     SqlMigration
-        { migrationName           = "0002-add-column.sql"
+        { migrationName           = "0003-add-column.sql"
         , migrationSql            = mkValidSql
                                         "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         , migrationEnvVars        = mempty
         }
-    (getIncreasingTimestamp 2)
+    (getIncreasingTimestamp 3)
+alwaysFailingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0004-always-failing.sql"
+                 , migrationSql            = mkValidSql "SELECT 5/0"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 4)
+
+changeConnUser
+    :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
+changeConnUser dbInfo newUser mig = mig
+    { addedSqlMig = (addedSqlMig mig)
+                        { migrationCustomConnInfo =
+                            let cinfo = fromMaybe
+                                    (migsConnString dbInfo)
+                                    (migrationCustomConnInfo (addedSqlMig mig))
+                            in  Just cinfo { DB.connectUser = newUser }
+                        }
+    }
 
 spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Retry tests" $ do
+            aroundFreshDatabase
+                $ it
+                      "In-txn migrations in same database as the default connection string get registered in the same transaction even for a different user"
+                $ \dbInfo -> do
+                      -- To test this we put three consecutive in-txn migrations on the default database under a different user, where the last migration always fails.
+                      -- Neither of the three migrations should be registered in this scenario, as they were all rolled back.
+                      runCoddLogger
+                              (applyMigrationsNoCheck
+                                  (dbInfo
+                                      { retryPolicy = RetryPolicy
+                                          0
+                                          (ExponentialBackoff
+                                              (realToFrac @Double 0.001)
+                                          )
+                                      }
+                                  )
+                                  (Just
+                                      [ alwaysPassingMig -- Make sure the default connection is available and yet we're not to use it for registering the 3 migrations below
+                                      , changeConnUser dbInfo
+                                                       "codd-test-user"
+                                                       createTableMig
+                                      , changeConnUser dbInfo
+                                                       "codd-test-user"
+                                                       addColumnMig
+                                      , changeConnUser dbInfo
+                                                       "codd-test-user"
+                                                       alwaysFailingMig
+                                      ]
+                                  )
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(_ :: SomeException) -> True)
+                      allRegisteredMigs :: [String] <-
+                          map DB.fromOnly <$> withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn -> DB.query
+                                  conn
+                                  "SELECT name from codd_schema.sql_migrations"
+                                  ()
+                              )
+                      allRegisteredMigs
+                          `shouldNotContain` [ migrationName
+                                                   (addedSqlMig @IO
+                                                       createTableMig
+                                                   )
+                                             ]
+                      allRegisteredMigs
+                          `shouldNotContain` [ migrationName
+                                                   (addedSqlMig @IO addColumnMig
+                                                   )
+                                             ]
+                      allRegisteredMigs
+                          `shouldNotContain` [ migrationName
+                                                   (addedSqlMig @IO
+                                                       alwaysFailingMig
+                                                   )
+                                             ]
             -- aroundTestDbInfo
             --     $ it
-            --           "In-txn migrations in same database get registered in the same transaction even for a different user"
-            --     $ error "TODO"
-            -- aroundTestDbInfo
-            --     $ it
-            --           "In-txn migrations in different database get registered after all said migrations are committed, not after each one is applied inside a transaction"
+            --           "In-txn migrations in non-default database get registered after all said migrations are committed, not after each one is applied inside a transaction"
             --     $ error "TODO"
             -- aroundTestDbInfo
             --     $ it
             --           "No-txn migration with failure in COMMIT statement retries from the right place"
+            --     $ error "TODO"
+            -- aroundTestDbInfo
+            --     $ it
+            --           "No-txn migrations with COPY have countable-runnable statements skipped correctly"
             --     $ error "TODO"
             -- aroundTestDbInfo
             --     $ it
