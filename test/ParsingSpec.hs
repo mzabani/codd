@@ -6,7 +6,7 @@ import           Codd.Internal                  ( BlockOfMigrations(..)
                                                 , parseMigrationFiles
                                                 )
 import           Codd.Internal.MultiQueryStatement
-                                                ( skipNonCountableRunnableStatements
+                                                ( skipCountableRunnableStatements
                                                 )
 import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
@@ -750,7 +750,7 @@ spec = do
                               sqlPiecesWithComments
                       -- Nothing to skip returns same stream
                       S.toList_
-                              (skipNonCountableRunnableStatements
+                              (skipCountableRunnableStatements
                                   0
                                   (S.concat $ S.each sqlPieces)
                               )
@@ -758,7 +758,7 @@ spec = do
 
                       -- We never break COPY apart and comments and white space are ignored up until the first statement not to be skipped
                       S.toList_
-                              (skipNonCountableRunnableStatements
+                              (skipCountableRunnableStatements
                                   n
                                   (S.concat $ S.each sqlPieces)
                               )
@@ -772,7 +772,7 @@ spec = do
                                   , [CommentPiece "/* comment \n \n \n test */"]
                                   ]
                           S.toList_
-                                  (skipNonCountableRunnableStatements
+                                  (skipCountableRunnableStatements
                                       n
                                       (S.concat $ S.each $ clutter ++ sqlPieces)
                                   )

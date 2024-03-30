@@ -4,7 +4,7 @@ module Codd.Internal.MultiQueryStatement
     , multiQueryStatement_
     , runSingleStatementInternal_
     , singleStatement_
-    , skipNonCountableRunnableStatements
+    , skipCountableRunnableStatements
     ) where
 
 import           Codd.Logging                   ( CoddLogger )
@@ -109,9 +109,9 @@ isCountableRunnable = \case
 -- | Skips the first N countable-runnable statements from the stream and any non-countable-runnable pieces
 -- like white space or comments so that the next piece in the stream is the (N+1)th runnable statement
 -- in the original stream.
-skipNonCountableRunnableStatements
+skipCountableRunnableStatements
     :: Monad m => Int -> Stream (Of SqlPiece) m r -> Stream (Of SqlPiece) m r
-skipNonCountableRunnableStatements numCountableRunnableToSkip =
+skipCountableRunnableStatements numCountableRunnableToSkip =
     S.catMaybes
         . S.scan
               (\(skipped, _) p -> if skipped >= numCountableRunnableToSkip
