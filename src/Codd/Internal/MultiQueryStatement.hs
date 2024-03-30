@@ -106,9 +106,9 @@ isCountableRunnable = \case
     CopyFromStdinRows      _ -> False
     CopyFromStdinEnd       _ -> True
 
--- | Skips the first n non countable-runnable statements from the stream.
--- TODO: Test this function in isolation. E.g. one must never fall in a CopyFromStdinRows after skipping any number of statements.
--- But also test basic cases including COMMIT, BEGIN, ROLLBACK, etc.
+-- | Skips the first N countable-runnable statements from the stream and any non-countable-runnable pieces
+-- like white space or comments so that the next piece in the stream is the (N+1)th runnable statement
+-- in the original stream.
 skipNonCountableRunnableStatements
     :: Monad m => Int -> Stream (Of SqlPiece) m r -> Stream (Of SqlPiece) m r
 skipNonCountableRunnableStatements numCountableRunnableToSkip =
@@ -122,7 +122,6 @@ skipNonCountableRunnableStatements numCountableRunnableToSkip =
               )
               (0, Nothing)
               snd
-
 
 runSingleStatementInternal_
     :: MonadUnliftIO m => DB.Connection -> SqlPiece -> m StatementApplied

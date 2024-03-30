@@ -215,11 +215,6 @@ spec = do
                           `shouldBe` 1
 
 
-            -- aroundTestDbInfo
-            --     $ it
-            --           "No-txn migrations with COPY have countable-runnable statements skipped correctly"
-            --     $ error "TODO"
-
             aroundTestDbInfo
                 $ it
                       "Bootstrapping no-txn migration still gets registered if it makes default connection string accessible before failing"
