@@ -145,9 +145,7 @@ instance NotInTxn m => CanStartTxn m (InTxnT m) where
 -- | Runs a function inside a read-write transaction of the desired isolation level,
 -- BEGINning the transaction if not in one, or just running the supplied function otherwise,
 -- even if you are in a different isolation level than the one supplied.
--- If not in a transaction, commits after running `f`. Does not commit otherwise.
--- The first type argument is the desired InTxn monad, as it is helpful for callers to define
--- it for better type inference, while the monad `m` not so much.
+-- If not in a transaction, commits after running `f`, but only if the transaction is still active. Does not commit otherwise.
 withTransaction
     :: forall txn m a
      . (MonadUnliftIO m, CanStartTxn m txn)
@@ -164,8 +162,9 @@ withTransaction isolLvl conn f = do
             execvoid_ conn $ beginStatement isolLvl
             -- Note: once we stop rolling back on exception here, we can relax this function's `MonadUnliftIO`
             -- constraint to just `MonadIO`
-            v <- unTxnT f `onException` liftIO (DB.rollback conn)
-            liftIO $ DB.commit conn
+            v           <- unTxnT f `onException` liftIO (DB.rollback conn)
+            transStatus <- txnStatus conn
+            when (transStatus == PQ.TransInTrans) $ liftIO $ DB.commit conn
             pure v
   where
     assertTxnStatus :: MonadUnliftIO n => PQ.TransactionStatus -> n ()

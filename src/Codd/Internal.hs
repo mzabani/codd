@@ -584,6 +584,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                   NoSkipStatements
                           case errorOrOk of
                               Left e -> do
+                                  liftIO $ DB.rollback conn
                                   logInfo
                                       "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
                                   pure $ Left e
@@ -1308,7 +1309,7 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                                     <> " failed to be applied. Since this failed statement is inside an explicitly started transaction in the migration, codd will resume the next retry or <MAGENTA>codd up</MAGENTA> from the last <GREEN>BEGIN</GREEN>-like statement, which is the "
                                     <> Fmt.sformat Fmt.ords lastBeginNum
                                     <> " statement in this migration"
-                                void $ liftIO $ DB.execute_ conn "ROLLBACK"
+                                liftIO $ DB.rollback conn
                                 registerMigRan
                                     fn
                                     migTimestamp
