@@ -105,14 +105,7 @@ spec = do
                       -- Neither of the three migrations should be registered in this scenario, as they were all rolled back.
                       runCoddLogger
                               (applyMigrationsNoCheck
-                                  (dbInfo
-                                      { retryPolicy = RetryPolicy
-                                          0
-                                          (ExponentialBackoff
-                                              (realToFrac @Double 0.001)
-                                          )
-                                      }
-                                  )
+                                  dbInfo
                                   (Just
                                       [ alwaysPassingMig -- Make sure the default connection is available and yet we're not to use it for registering the 3 migrations below
                                       , changeConnUser dbInfo
@@ -160,17 +153,179 @@ spec = do
             --     $ it
             --           "In-txn migrations in non-default database get registered after all said migrations are committed, not after each one is applied inside a transaction"
             --     $ error "TODO"
-            -- aroundTestDbInfo
-            --     $ it
-            --           "No-txn migration with failure in COMMIT statement retries from the right place"
-            --     $ error "TODO"
+            aroundFreshDatabase
+                $ it
+                      "No-txn migration with failure in COMMIT statement retries from the right place, and so does a new `codd up`"
+                $ \dbInfo0 -> do
+                      -- We want retries to ensure applied statements are not being applied more than once
+                      let
+                          dbInfo = dbInfo0
+                              { retryPolicy = RetryPolicy
+                                  2
+                                  (ExponentialBackoff (realToFrac @Double 0.001)
+                                  )
+                              }
+                      logsmv <- newMVar []
+                      runMVarLogger
+                              logsmv
+                              (applyMigrationsNoCheck
+                                  dbInfo
+                                      { sqlMigrations =
+                                          [ "test/migrations/no-txn-partial-application-test"
+                                          ]
+                                      }
+                                  Nothing
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(_ :: SomeException) -> True)
+                      (appliedMigs :: [(String, Int, Bool)], datatable :: [ DB.Only
+                                Int
+                          ], othertableExists :: DB.Only Bool) <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn ->
+                                  (,,)
+                                      <$> DB.query
+                                              conn
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              ()
+                                      <*> DB.query
+                                              conn
+                                              "SELECT id from somedata order by id"
+                                              ()
+                                      <*> unsafeQuery1
+                                              conn
+                                              "SELECT EXISTS (SELECT FROM pg_tables WHERE tablename='othertablenotexists')"
+                                              ()
+                              )
+                      appliedMigs
+                          `shouldContain` [ ( "2000-01-01-00-00-00-create-table-with-unique-id.sql"
+                                            , 2
+                                            , True
+                                            )
+                                          , ( "2001-01-01-00-00-00-insert-duplicate-inside-explicit-transaction.sql"
+                                            , 3
+                                            , False
+                                            )
+                                          ]
+                      map DB.fromOnly datatable `shouldBe` [1, 2, 3, 4, 5, 6]
+                      othertableExists `shouldBe` DB.Only False
+                      logs <- readMVar logsmv
+
+                      -- We want the statement that failed printed, a line saying how many statements had been applied and also saying from where it will be resumed (these statement numbers _will_ differ in this test)
+                      logs
+                          `shouldSatisfy` any
+                                              (\line ->
+                                                  "COMMIT;"
+                                                      `Text.isInfixOf` line
+                                                      &&               "23505"
+                                                      `Text.isInfixOf` line
+                                              )
+                      length
+                              (filter
+                                  (\line ->
+                                      "7 statements"
+                                          `Text.isInfixOf` line
+                                          &&               "8th failed"
+                                          `Text.isInfixOf` line
+                                          &&               "4th statement"
+                                          `Text.isInfixOf` line
+                                  )
+                                  logs
+                              )
+                          `shouldBe` 3 -- Total amount of attempts
+
+                      -- Now we resume application with a new `codd up` invocation, changing the failed no-txn migration from the 8th statements onwards so it can complete. If codd tries to apply statements that already have been applied, we'd get duplicate key violation exceptions
+                      logsSecondCoddUp <- newMVar []
+                      runMVarLogger logsSecondCoddUp $ applyMigrationsNoCheck
+                          dbInfo
+                          (Just
+                              [ AddedSqlMigration
+                                    SqlMigration
+                                        { migrationName           =
+                                            "2001-01-01-00-00-00-insert-duplicate-inside-explicit-transaction.sql"
+                                        , migrationSql            =
+                                            mkValidSql
+                                                -- This needs to match 2001-01-01-insert-duplicate-inside-explicit-transaction.sql up to the statement right before BEGIN
+                                                "SELECT 4;\n\
+\\n\
+\-- Some comment\n\
+\COPY somedata FROM STDIN WITH (FORMAT csv);\n\
+\4\n\
+\5\n\
+\6\n\
+\\\.\n\
+\\n\
+\-- Another comment\n\
+\\n\
+\SELECT 7;\n\
+\BEGIN; SELECT 3; CREATE TABLE othertablenowwillexist(); COPY somedata FROM STDIN WITH (FORMAT csv);\n7\n8\n9\n\\.\nCOMMIT;"
+                                        , migrationInTxn          = False
+                                        , migrationCustomConnInfo = Nothing
+                                        , migrationEnvVars        = mempty
+                                        }
+                                    (getIncreasingTimestamp 2)
+                              ]
+                          )
+                          testConnTimeout
+                          (const $ pure ())
+                      (appliedMigsSecondTime :: [(String, Int, Bool)], datatableSecondTime :: [ DB.Only
+                                Int
+                          ], othertableExistsSecondTime :: DB.Only Bool) <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn ->
+                                  (,,)
+                                      <$> DB.query
+                                              conn
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              ()
+                                      <*> DB.query
+                                              conn
+                                              "SELECT id from somedata order by id"
+                                              ()
+                                      <*> unsafeQuery1
+                                              conn
+                                              "SELECT EXISTS (SELECT FROM pg_tables WHERE tablename='othertablenowwillexist')"
+                                              ()
+                              )
+                      appliedMigsSecondTime
+                          `shouldContain` [ ( "2000-01-01-00-00-00-create-table-with-unique-id.sql"
+                                            , 2
+                                            , True
+                                            )
+                                          , ( "2001-01-01-00-00-00-insert-duplicate-inside-explicit-transaction.sql"
+                                            , 8
+                                            , True
+                                            )
+                                          ]
+                      map DB.fromOnly datatableSecondTime
+                          `shouldBe` [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                      othertableExistsSecondTime `shouldBe` DB.Only True
+                      logsSecondTime <- readMVar logsSecondCoddUp
+
+                      -- We want the statement that says where we're resuming from to appear exactly once
+                      length
+                              (filter
+                                  (\line ->
+                                      "Resuming application of partially applied"
+                                          `Text.isInfixOf` line
+                                          && "Skipping the first 3 SQL statements"
+                                          `Text.isInfixOf` line
+                                          && "starting application from the 4th statement"
+                                          `Text.isInfixOf` line
+                                  )
+                                  logsSecondTime
+                              )
+                          `shouldBe` 1
+
+
             -- aroundTestDbInfo
             --     $ it
             --           "No-txn migrations with COPY have countable-runnable statements skipped correctly"
-            --     $ error "TODO"
-            -- aroundTestDbInfo
-            --     $ it
-            --           "No-txn migration is resumed from the right statement on a new `codd up` invocation"
             --     $ error "TODO"
 
             aroundTestDbInfo
