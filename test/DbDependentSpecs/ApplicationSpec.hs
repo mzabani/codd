@@ -190,6 +190,18 @@ changeConnUser dbInfo newUser mig = mig
                         }
     }
 
+changeConnDb
+    :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
+changeConnDb dbInfo newDb mig = mig
+    { addedSqlMig = (addedSqlMig mig)
+                        { migrationCustomConnInfo =
+                            let cinfo = fromMaybe
+                                    (migsConnString dbInfo)
+                                    (migrationCustomConnInfo (addedSqlMig mig))
+                            in  Just cinfo { DB.connectDatabase = newDb }
+                        }
+    }
+
 
 -- | A migration that uses many different ways of inputting strings in postgres. In theory we'd only need to
 -- test the parser, but we do this to sleep well at night too.
@@ -699,58 +711,195 @@ spec = do
 
             describe "Custom connection-string migrations" $ do
                 aroundFreshDatabase
-                    $ it
-                          "In-txn migrations in same database as the default connection string get registered in the same transaction even for a different user"
-                    $ \dbInfo -> do
+                    $ forM_ [True, False]
+                    $ \addDefaultConnMig ->
+                          it
+                                  ("In-txn migrations in non-default database get registered after all said migrations are committed, not after each one is applied inside a transaction. Default-conn mig first: "
+                                  ++ show addDefaultConnMig
+                                  )
+                              $ \dbInfo -> do
+                                      -- To test this we put three consecutive in-txn migrations that run on a non-default database, where the last migration always fails.
+                                      -- Neither of the three migrations should be registered in this scenario, as they were all rolled back. In a second time, we run only the first two migrations,
+                                      -- and check they were registered.
+                                    runCoddLogger
+                                            (applyMigrationsNoCheck
+                                                dbInfo
+                                                (  Just
+                                                $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
+                                                   [ alwaysPassingMig
+                                                   | addDefaultConnMig
+                                                   ]
+                                                ++ [ changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       createTableMig
+                                                   , changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       addColumnMig
+                                                   , changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       alwaysFailingMig
+                                                   ]
+                                                )
+                                                testConnTimeout
+                                                (const $ pure ())
+                                            )
+                                        `shouldThrow` (\(_ :: SomeException) ->
+                                                          True
+                                                      )
+                                    allRegisteredMigs :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     createTableMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     addColumnMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
+
+                                    -- If we don't include the third migration, the first two should be applied
+                                    runCoddLogger
+                                        (applyMigrationsNoCheck
+                                            dbInfo
+                                            (  Just
+                                            $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
+                                               [ alwaysPassingMig
+                                               | addDefaultConnMig
+                                               ]
+                                            ++ [ changeConnDb
+                                                   dbInfo
+                                                   "postgres"
+                                                   createTableMig
+                                               , changeConnDb dbInfo
+                                                              "postgres"
+                                                              addColumnMig
+                                               ]
+                                            )
+                                            testConnTimeout
+                                            (const $ pure ())
+                                        )
+                                    allRegisteredMigs2 :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs2
+                                        `shouldContain` [ migrationName
+                                                              (addedSqlMig @IO
+                                                                  createTableMig
+                                                              )
+                                                        ]
+                                    allRegisteredMigs2
+                                        `shouldContain` [ migrationName
+                                                              (addedSqlMig @IO
+                                                                  addColumnMig
+                                                              )
+                                                        ]
+                                    allRegisteredMigs2
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
+                aroundFreshDatabase
+                    $ forM_ [True, False]
+                    $ \addDefaultConnMig ->
+                          it
+                                  ("In-txn migrations in same database as the default connection string get registered in the same transaction even for a different user. Default-conn mig first: "
+                                  ++ show addDefaultConnMig
+                                  )
+                              $ \dbInfo -> do
                           -- To test this we put three consecutive in-txn migrations on the default database under a different user, where the last migration always fails.
                           -- Neither of the three migrations should be registered in this scenario, as they were all rolled back.
-                          runCoddLogger
-                                  (applyMigrationsNoCheck
-                                      dbInfo
-                                      (Just
-                                          [ alwaysPassingMig -- Make sure the default connection is available and yet we're not to use it for registering the 3 migrations below
-                                          , changeConnUser dbInfo
-                                                           "codd-test-user"
-                                                           createTableMig
-                                          , changeConnUser dbInfo
-                                                           "codd-test-user"
-                                                           addColumnMig
-                                          , changeConnUser dbInfo
-                                                           "codd-test-user"
-                                                           alwaysFailingMig
-                                          ]
-                                      )
-                                      testConnTimeout
-                                      (const $ pure ())
-                                  )
-                              `shouldThrow` (\(_ :: SomeException) -> True)
-                          allRegisteredMigs :: [String] <-
-                              map DB.fromOnly <$> withConnection
-                                  (migsConnString dbInfo)
-                                  testConnTimeout
-                                  (\conn -> DB.query
-                                      conn
-                                      "SELECT name from codd_schema.sql_migrations"
-                                      ()
-                                  )
-                          allRegisteredMigs
-                              `shouldNotContain` [ migrationName
-                                                       (addedSqlMig @IO
-                                                           createTableMig
-                                                       )
-                                                 ]
-                          allRegisteredMigs
-                              `shouldNotContain` [ migrationName
-                                                       (addedSqlMig @IO
-                                                           addColumnMig
-                                                       )
-                                                 ]
-                          allRegisteredMigs
-                              `shouldNotContain` [ migrationName
-                                                       (addedSqlMig @IO
-                                                           alwaysFailingMig
-                                                       )
-                                                 ]
+                                    runCoddLogger
+                                            (applyMigrationsNoCheck
+                                                dbInfo
+                                                (  Just
+                                                $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used regardless
+                                                   [ alwaysPassingMig
+                                                   | addDefaultConnMig
+                                                   ]
+                                                ++ [ changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       createTableMig
+                                                   , changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       addColumnMig
+                                                   , changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       alwaysFailingMig
+                                                   ]
+                                                )
+                                                testConnTimeout
+                                                (const $ pure ())
+                                            )
+                                        `shouldThrow` (\(_ :: SomeException) ->
+                                                          True
+                                                      )
+                                    allRegisteredMigs :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     createTableMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     addColumnMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
                 it
                         "applied_at and application_duration registered properly for migrations running before codd_schema is available"
                     $ do
