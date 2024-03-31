@@ -10,10 +10,9 @@ module Codd.Internal.MultiQueryStatement
 import           Codd.Logging                   ( CoddLogger )
 import           Codd.Parsing                   ( SqlPiece(..) )
 import           Codd.Query                     ( txnStatus )
-import           Control.Applicative            ( (<|>) )
-import           Control.Monad                  ( void )
 import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as Text
 import           Data.Text.Encoding             ( encodeUtf8 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
@@ -33,7 +32,10 @@ import qualified Streaming.Prelude             as S
 import           UnliftIO                       ( Exception
                                                 , IOException
                                                 , MonadUnliftIO
+                                                , SomeException
+                                                , fromException
                                                 , handle
+                                                , handleJust
                                                 , liftIO
                                                 )
 
@@ -129,65 +131,45 @@ skipCountableRunnableStatements numCountableRunnableToSkip =
 runSingleStatementInternal_
     :: MonadUnliftIO m => DB.Connection -> SqlPiece -> m StatementApplied
 runSingleStatementInternal_ conn p = case p of
-    CommentPiece           _       -> applied
-    WhiteSpacePiece        _       -> applied
-    BeginTransaction       s       -> singleStatement_ conn s
-    CommitTransaction      s       -> singleStatement_ conn s
-    RollbackTransaction    s       -> singleStatement_ conn s
-    OtherSqlPiece          s       -> singleStatement_ conn s
-    CopyFromStdinStatement copyStm -> do
-        liftIO $ DB.copy_ conn $ DB.Query (encodeUtf8 copyStm)
-        -- Unlike every other SqlPiece, COPY does not fit into a single constructor.
-        -- For counting it doesn't matter if we count `COPY FROM` or the ending of `COPY`.
-        -- For skipping it doesn't matter either which one we count, as we'll skip N countable
-        -- statements when necessary and start from N+1, whatever that is.
-        -- Since the txnStatus here is TransActive (query ongoing), it is simpler
-        -- if we count the ending of `COPY`, as after that the status is TransIdle, so
-        -- callers have one fewer state to deal with.
-        applied
-    CopyFromStdinRows copyRows -> do
-        liftIO $ DB.putCopyData conn $ encodeUtf8 copyRows
-        applied
-    CopyFromStdinEnd _ -> do
-        -- postgresql-simple's putCopyEnd throws a weird exception, so we resort to libpq internals
-        -- This is terrible and we should really be using postgresql-simple as much as possible. TODO: Try again.
-        liftIO $ PGInternal.withConnection conn $ \pqconn -> do
-            copyResult <- PQ.putCopyEnd pqconn Nothing
-            mmsg       <- consumeResults pqconn Nothing
-            case copyResult of
-                PQ.CopyInOk -> do
-                    -- CopyInOk is a possible result even when COPY fails.. oh why?
-                    case mmsg of
-                        Nothing ->
-                            StatementApplied <$> PQ.transactionStatus pqconn
-                        Just msg ->
-                            pure $ StatementErred $ SqlStatementException
-                                ""
-                                DB.SqlError { DB.sqlState       = ""
-                                            , DB.sqlExecStatus  = DB.FatalError
-                                            , DB.sqlErrorMsg    = msg
-                                            , DB.sqlErrorDetail = ""
-                                            , DB.sqlErrorHint   = ""
-                                            }
-                _ -> do
-                    pure $ StatementErred $ SqlStatementException
-                        ""
-                        DB.SqlError { DB.sqlState       = ""
-                                    , DB.sqlExecStatus  = DB.FatalError
-                                    , DB.sqlErrorMsg    = fromMaybe "" mmsg
-                                    , DB.sqlErrorDetail = ""
-                                    , DB.sqlErrorHint   = ""
-                                    }
+    CommentPiece        _ -> applied
+    WhiteSpacePiece     _ -> applied
+    BeginTransaction    s -> singleStatement_ conn s
+    CommitTransaction   s -> singleStatement_ conn s
+    RollbackTransaction s -> singleStatement_ conn s
+    OtherSqlPiece       s -> singleStatement_ conn s
+    CopyFromStdinStatement copyStm ->
+        liftIO
+            $  handleCopyErrors (Just copyStm)
+            $  DB.copy_ conn (DB.Query (encodeUtf8 copyStm))
+            >> applied
+    CopyFromStdinRows copyRows ->
+        -- I haven't seen errors coming from sending rows to the server yet; it seems they only happen
+        -- on `putCopyEnd` or the initial `copy_`. Still, let's be cautious and prepare for it.
+        liftIO
+            $  handleCopyErrors Nothing
+            $  DB.putCopyData conn (encodeUtf8 copyRows)
+            >> applied
+    CopyFromStdinEnd _ ->
+        liftIO $ handleCopyErrors Nothing $ DB.putCopyEnd conn >> applied
   where
-    -- `consumeResults` taken from postgresql-simple's codebase and modified to return the error message
-    consumeResults pqconn !mmsg = do
-        mres      <- PQ.getResult pqconn
-        mmsgAfter <- PQ.errorMessage pqconn
-        let mmsgFinal =
-                mmsg <|> (if mmsgAfter == Just "" then Nothing else mmsgAfter)
-        case mres of
-            Nothing -> pure mmsgFinal
-            Just _  -> consumeResults pqconn mmsgFinal
+    handleCopyErrors (fromMaybe "" -> stmt) = handleJust
+        (\(e :: SomeException) ->
+            -- In my tests, COPY errors are of type `IOException` for `putCopyEnd` and of type `SqlError` for `copy_`.
+            -- Sadly the ones of type `IOException` don't contain e.g. error codes, but at least their message shows the failed statement.
+            -- We transform those into `SqlError` here since all of the codebase is prepared for that.
+                                  case () of
+            ()
+                | Just sqlEx <- fromException @DB.SqlError e -> Just sqlEx
+                | Just ioEx <- fromException @IOException e -> Just DB.SqlError
+                    { DB.sqlState       = ""
+                    , DB.sqlExecStatus  = DB.FatalError
+                    , DB.sqlErrorMsg    = encodeUtf8 $ Text.pack $ show ioEx
+                    , DB.sqlErrorDetail = ""
+                    , DB.sqlErrorHint   = ""
+                    }
+                | otherwise -> Nothing -- Let it blow up if we don't expect it
+        )
+        (pure . StatementErred . SqlStatementException stmt)
     applied :: MonadUnliftIO n => n StatementApplied
     applied = if isCountableRunnable p
         then StatementApplied <$> txnStatus conn
