@@ -2,6 +2,21 @@
 
 # What is Codd?
 
+<!--toc:start-->
+- [What is Codd?](#what-is-codd)
+  - [Installing Codd](#installing-codd)
+    - [1. Self-contained executable](#1-self-contained-executable)
+    - [2. Nix](#2-nix)
+    - [3. Docker](#3-docker)
+  - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
+  - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
+  - [Safety considerations](#safety-considerations)
+  - [Frequently Asked Questions](#frequently-asked-questions)
+    - [Why does taking and restoring a database dump affect my expected codd schema?](#why-does-taking-and-restoring-a-database-dump-affect-my-expected-codd-schema)
+    - [Will codd run out of memory or system resources if my migration files are too large or too many?](#will-codd-run-out-of-memory-or-system-resources-if-my-migration-files-are-too-large-or-too-many)
+    - [Will codd handle SQL errors nicely?](#will-codd-handle-sql-errors-nicely)
+<!--toc:end-->
+
 Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes schema equality checks that practically ensure your development database's schema matches the database schema in every other environment,
 checking table columns' names, types, order, available functions, roles, table privileges, object ownership, row security policies, database encoding [and much more](/docs/DATABASE-EQUALITY.md).
 These schema equality checks happen automatically; you only need to write .sql files and `codd add migration-file.sql` them. No configuration files, JSON, or YAML; just 3 environment variables and .sql files and you can use codd.
@@ -88,23 +103,6 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.  
 ² There can be false positives and false negatives in some cases.  
-
-<!-- vscode-markdown-toc -->
-- [What is Codd?](#what-is-codd)
-  - [Installing Codd](#installing-codd)
-    - [1. Self-contained executable](#1-self-contained-executable)
-    - [2. Nix](#2-nix)
-    - [3. Docker](#3-docker)
-  - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
-  - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
-  - [Safety considerations](#safety-considerations)
-  - [Frequently Asked Questions](#frequently-asked-questions)
-
-<!-- vscode-markdown-toc-config
-	numbering=false
-	autoSave=true
-	/vscode-markdown-toc-config -->
-<!-- /vscode-markdown-toc -->
 
 ## Installing Codd
 
@@ -205,3 +203,9 @@ We recommend following these instructions closely to catch as many possible issu
 
 1. ### Why does taking and restoring a database dump affect my expected codd schema?
    `pg_dump` does not dump all of the schema state that codd checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. We recommend using `pg_dumpall` to preserve more when possible instead. If you've checked with `psql` and everything looks to be the same please report a bug in codd.
+
+2. ### Will codd run out of memory or system resources if my migration files are too large or too many?
+    Most likely not. Codd reads migrations from disk in streaming fashion and keeps in memory only a single statement at a time (modulo the garbage collector, but our CI-run benchmarks show no more than 4MB RAM are ever used on my x86 linux machine even for 1 million statements). For `COPY` statements, codd uses a constant-size buffer to stream read the contents to achieve bounded memory usage while staying fast. Also, codd does not open more than one migration file simultaneously to stay well below typical file handle limits imposed by the shell or operating system, and that is also assured through an automated test that runs in CI with `strace`.
+
+3. ### Will codd handle SQL errors nicely?
+    Codd tries to do the "best possible thing" even in rather unusual situations. It will retry sets of consecutive in-txn migrations atomically so as not to leave your database in an intermediary state. Even for no-txn migrations, codd will retry the failing statement instead of entire migrations, and _even_ if you write explicit `BEGIN..COMMIT` sections in no-txn migrations, codd will be smart enough to retry from the `BEGIN` if a statement inside that section fails. See the [retry examples](/docs/SQL-MIGRATIONS.md#examples) if you're interested. What codd currently cannot handle well is having its connection killed by an external agent while it's applying a _no-txn_ migration, a scenario which should be extremely rare. Basically, we hope you should be able to write your migrations however you want and rely comfortably on the fact that codd should do the reasonable thing when handling errors.

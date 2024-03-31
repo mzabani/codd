@@ -156,18 +156,30 @@ runSingleStatementInternal_ conn p = case p of
         (\(e :: SomeException) ->
             -- In my tests, COPY errors are of type `IOException` for `putCopyEnd` and of type `SqlError` for `copy_`.
             -- Sadly the ones of type `IOException` don't contain e.g. error codes, but at least their message shows the failed statement.
+            -- They also _sometimes_ contain an internal postgresql-simple error concatenated to the actual database error, which isn't great, so we remove it if it's there.
+            -- We should file a bug report to postgresql-simple.
             -- We transform those into `SqlError` here since all of the codebase is prepared for that.
                                   case () of
             ()
-                | Just sqlEx <- fromException @DB.SqlError e -> Just sqlEx
-                | Just ioEx <- fromException @IOException e -> Just DB.SqlError
-                    { DB.sqlState       = ""
-                    , DB.sqlExecStatus  = DB.FatalError
-                    , DB.sqlErrorMsg    = encodeUtf8 $ Text.pack $ show ioEx
-                    , DB.sqlErrorDetail = ""
-                    , DB.sqlErrorHint   = ""
-                    }
-                | otherwise -> Nothing -- Let it blow up if we don't expect it
+                | Just sqlEx <- fromException @DB.SqlError e
+                -> Just sqlEx
+                | Just ioEx <- fromException @IOException e
+                -> let fullError = Text.pack $ show ioEx
+                   in
+                       Just DB.SqlError
+                           { DB.sqlState       = ""
+                           , DB.sqlExecStatus  = DB.FatalError
+                           , DB.sqlErrorMsg    =
+                               encodeUtf8
+                               $ fromMaybe fullError
+                               $ Text.stripPrefix
+                                     "user error (Database.PostgreSQL.Simple.Copy.putCopyEnd: failed to parse command status\nConnection error: ERROR:  "
+                                     fullError
+                           , DB.sqlErrorDetail = ""
+                           , DB.sqlErrorHint   = ""
+                           }
+                | otherwise
+                -> Nothing -- Let it blow up if we don't expect it
         )
         (pure . StatementErred . SqlStatementException stmt)
     applied :: MonadUnliftIO n => n StatementApplied
