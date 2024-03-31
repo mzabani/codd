@@ -10,7 +10,9 @@ module Codd.Internal.MultiQueryStatement
 import           Codd.Logging                   ( CoddLogger )
 import           Codd.Parsing                   ( SqlPiece(..) )
 import           Codd.Query                     ( txnStatus )
+import           Control.Applicative            ( (<|>) )
 import           Control.Monad                  ( void )
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
 import           Data.Text.Encoding             ( encodeUtf8 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
@@ -29,6 +31,7 @@ import qualified Streaming.Internal            as S
 import qualified Streaming.Prelude             as Streaming
 import qualified Streaming.Prelude             as S
 import           UnliftIO                       ( Exception
+                                                , IOException
                                                 , MonadUnliftIO
                                                 , handle
                                                 , liftIO
@@ -146,9 +149,46 @@ runSingleStatementInternal_ conn p = case p of
         liftIO $ DB.putCopyData conn $ encodeUtf8 copyRows
         applied
     CopyFromStdinEnd _ -> do
-        liftIO $ void $ DB.putCopyEnd conn
-        applied
+        -- postgresql-simple's putCopyEnd throws a weird exception, so we resort to libpq internals
+        -- This is terrible and we should really be using postgresql-simple as much as possible. TODO: Try again.
+        liftIO $ PGInternal.withConnection conn $ \pqconn -> do
+            copyResult <- PQ.putCopyEnd pqconn Nothing
+            mmsg       <- consumeResults pqconn Nothing
+            case copyResult of
+                PQ.CopyInOk -> do
+                    -- CopyInOk is a possible result even when COPY fails.. oh why?
+                    case mmsg of
+                        Nothing ->
+                            StatementApplied <$> PQ.transactionStatus pqconn
+                        Just msg ->
+                            pure $ StatementErred $ SqlStatementException
+                                ""
+                                DB.SqlError { DB.sqlState       = ""
+                                            , DB.sqlExecStatus  = DB.FatalError
+                                            , DB.sqlErrorMsg    = msg
+                                            , DB.sqlErrorDetail = ""
+                                            , DB.sqlErrorHint   = ""
+                                            }
+                _ -> do
+                    pure $ StatementErred $ SqlStatementException
+                        ""
+                        DB.SqlError { DB.sqlState       = ""
+                                    , DB.sqlExecStatus  = DB.FatalError
+                                    , DB.sqlErrorMsg    = fromMaybe "" mmsg
+                                    , DB.sqlErrorDetail = ""
+                                    , DB.sqlErrorHint   = ""
+                                    }
   where
+    -- `consumeResults` taken from postgresql-simple's codebase and modified to return the error message
+    consumeResults pqconn !mmsg = do
+        mres      <- PQ.getResult pqconn
+        mmsgAfter <- PQ.errorMessage pqconn
+        let mmsgFinal =
+                mmsg <|> (if mmsgAfter == Just "" then Nothing else mmsgAfter)
+        case mres of
+            Nothing -> pure mmsgFinal
+            Just _  -> consumeResults pqconn mmsgFinal
+    applied :: MonadUnliftIO n => n StatementApplied
     applied = if isCountableRunnable p
         then StatementApplied <$> txnStatus conn
         else pure NotACountableStatement

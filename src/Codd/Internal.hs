@@ -1214,7 +1214,7 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                             initialTxnStatus <- txnStatus conn
                             ((numStmts, mLastBegin, _) :> errorOrDone) <-
                                 Streaming.fold
-                                    (\(!l, !lastBegin, !lastTxnStatus) txnStatusNow ->
+                                    (\(!l, !lastBegin, !lastTxnStatus) !txnStatusNow ->
                                         (l + 1, , txnStatusNow)
                                             $ case
                                                   (lastTxnStatus, txnStatusNow)
@@ -1309,14 +1309,18 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                                     <> " failed to be applied. Since this failed statement is inside an explicitly started transaction in the migration, codd will resume the next retry or <MAGENTA>codd up</MAGENTA> from the last <GREEN>BEGIN</GREEN>-like statement, which is the "
                                     <> Fmt.sformat Fmt.ords lastBeginNum
                                     <> " statement in this migration"
-                                liftIO $ DB.rollback conn
+
+                                -- ROLLBACK if necessary. Notice that if a COMMIT statement fails, a ROLLBACK is redundant. For any other failing statements that is not the case.
+                                finalTxnStatus <- txnStatus conn
+                                when (finalTxnStatus == PQ.TransInError) $ do
+                                    liftIO $ DB.rollback conn
+                                    logInfo
+                                        "<MAGENTA>ROLLBACK</MAGENTA>ed last explicitly started transaction"
                                 registerMigRan
                                     fn
                                     migTimestamp
                                     appliedMigrationDuration
                                     (NoTxnMigrationFailed (lastBeginNum - 1))
-                                logInfo
-                                    "<MAGENTA>ROLLBACK</MAGENTA>ed last explicitly started transaction"
                                 pure $ mkSqlError @s sqlStatementEx
                                                      (lastBeginNum - 1)
             Nothing -> do

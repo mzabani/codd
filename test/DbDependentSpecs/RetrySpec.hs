@@ -5,6 +5,8 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( NoTxnMigrationApplicationFailure
                                                 , withConnection
                                                 )
+import           Codd.Internal.MultiQueryStatement
+                                                ( SqlStatementException )
 import           Codd.Logging                   ( LoggingT(runLoggingT)
                                                 , Newline(..)
                                                 )
@@ -47,6 +49,187 @@ spec = do
         describe "Retry tests" $ do
             aroundFreshDatabase
                 $ it
+                      "In-txn migrations with failure in COPY statement are handled nicely"
+                $ \dbInfo0 -> do
+                      -- This test might seem useless, but postgresql-simple support for COPY errors is not great,
+                      -- and we do quite a bit of sqlError exception handling that means we might forget to ROLLBACK
+                      -- in some cases
+                      let
+                          dbInfo = dbInfo0
+                              { retryPolicy = RetryPolicy
+                                  2
+                                  (ExponentialBackoff (realToFrac @Double 0.001)
+                                  )
+                              }
+                      logsmv <- newMVar []
+                      runMVarLogger
+                              logsmv
+                              (applyMigrationsNoCheck
+                                  dbInfo
+                                      { sqlMigrations =
+                                          [ "test/migrations/in-txn-application-error-with-COPY"
+                                          ]
+                                      }
+                                  Nothing
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(e :: SqlStatementException) ->
+                                            "duplicate key"
+                                                `List.isInfixOf` show e
+                                        )
+                      nonBootstrapAppliedMigs :: [(String, Int, Bool)] <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn -> DB.query
+                                  conn
+                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
+                                  ()
+                              )
+                      nonBootstrapAppliedMigs `shouldBe` []
+                      logs <- readMVar logsmv
+                      length (filter ("ROLLBACK" `Text.isInfixOf`) logs)
+                          `shouldBe` 3
+                      length (filter ("BEGIN" `Text.isInfixOf`) logs)
+                          `shouldBe` 3
+                      length (filter ("COMMIT" `Text.isInfixOf`) logs)
+                          `shouldBe` 0
+
+            aroundFreshDatabase
+                $ it
+                      "No-txn migration with failure in statement not in explicit transaction block retries from the right place"
+                $ \dbInfo0 -> do
+                      -- We want retries to ensure applied statements are not being applied more than once
+                      let
+                          dbInfo = dbInfo0
+                              { retryPolicy = RetryPolicy
+                                  2
+                                  (ExponentialBackoff (realToFrac @Double 0.001)
+                                  )
+                              }
+                      logsmv <- newMVar []
+                      runMVarLogger
+                              logsmv
+                              (applyMigrationsNoCheck
+                                  dbInfo
+                                      { sqlMigrations =
+                                          [ "test/migrations/no-txn-partial-application-error-outside-txn"
+                                          ]
+                                      }
+                                  Nothing
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(e :: NoTxnMigrationApplicationFailure) ->
+                                            "duplicate key"
+                                                `List.isInfixOf` show e
+                                        )
+                      (appliedMigs :: [(String, Int, Bool)], datatable :: [ DB.Only
+                                Int
+                          ]) <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn ->
+                                  (,)
+                                      <$> DB.query
+                                              conn
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              ()
+                                      <*> DB.query
+                                              conn
+                                              "SELECT id from somedata order by id"
+                                              ()
+                              )
+                      logs <- readMVar logsmv
+                      appliedMigs
+                          `shouldContain` [ ( "2000-01-01-00-00-00-create-table-with-unique-id.sql"
+                                            , 2
+                                            , True
+                                            )
+                                          , ( "2001-01-01-00-00-00-insert-duplicate-not-in-explicit-transaction.sql"
+                                            , 1
+                                            , False
+                                            )
+                                          ]
+                      map DB.fromOnly datatable `shouldBe` [1, 2, 3, 4]
+                      length
+                              (filter
+                                  ("duplicate key value violates unique constraint" `Text.isInfixOf`
+                                  )
+                                  logs
+                              )
+                          `shouldBe` 3
+
+            aroundFreshDatabase
+                $ it
+                      "No-txn migration with failure in statement inside BEGIN..COMMIT retries from the right place"
+                $ \dbInfo0 -> do
+                      -- We want retries to ensure applied statements are not being applied more than once
+                      let
+                          dbInfo = dbInfo0
+                              { retryPolicy = RetryPolicy
+                                  2
+                                  (ExponentialBackoff (realToFrac @Double 0.001)
+                                  )
+                              }
+                      logsmv <- newMVar []
+                      runMVarLogger
+                              logsmv
+                              (applyMigrationsNoCheck
+                                  dbInfo
+                                      { sqlMigrations =
+                                          [ "test/migrations/no-txn-partial-application-error-inside-txn"
+                                          ]
+                                      }
+                                  Nothing
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(e :: NoTxnMigrationApplicationFailure) ->
+                                            "duplicate key"
+                                                `List.isInfixOf` show e
+                                        )
+                      (appliedMigs :: [(String, Int, Bool)], datatable :: [ DB.Only
+                                Int
+                          ]) <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn ->
+                                  (,)
+                                      <$> DB.query
+                                              conn
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              ()
+                                      <*> DB.query
+                                              conn
+                                              "SELECT id from somedata order by id"
+                                              ()
+                              )
+                      logs <- readMVar logsmv
+                      appliedMigs
+                          `shouldContain` [ ( "2000-01-01-00-00-00-create-table-with-unique-id.sql"
+                                            , 2
+                                            , True
+                                            )
+                                          , ( "2001-01-01-00-00-00-insert-duplicate-inside-explicit-transaction.sql"
+                                            , 1
+                                            , False
+                                            )
+                                          ]
+                      map DB.fromOnly datatable `shouldBe` [1, 2, 3, 4]
+                      length
+                              (filter
+                                  ("duplicate key value violates unique constraint" `Text.isInfixOf`
+                                  )
+                                  logs
+                              )
+                          `shouldBe` 3
+
+            aroundFreshDatabase
+                $ it
                       "No-txn migration with failure in COMMIT statement retries from the right place, and so does a new `codd up`"
                 $ \dbInfo0 -> do
                       -- We want retries to ensure applied statements are not being applied more than once
@@ -63,14 +246,17 @@ spec = do
                               (applyMigrationsNoCheck
                                   dbInfo
                                       { sqlMigrations =
-                                          [ "test/migrations/no-txn-partial-application-test"
+                                          [ "test/migrations/no-txn-partial-application-error-on-commit"
                                           ]
                                       }
                                   Nothing
                                   testConnTimeout
                                   (const $ pure ())
                               )
-                          `shouldThrow` (\(_ :: SomeException) -> True)
+                          `shouldThrow` (\(e :: NoTxnMigrationApplicationFailure) ->
+                                            "duplicate key"
+                                                `List.isInfixOf` show e
+                                        )
                       (appliedMigs :: [(String, Int, Bool)], datatable :: [ DB.Only
                                 Int
                           ], othertableExists :: DB.Only Bool) <-
