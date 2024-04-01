@@ -98,6 +98,59 @@ spec = do
 
             aroundFreshDatabase
                 $ it
+                      "In-txn migrations with failure in COMMIT are handled nicely"
+                $ \dbInfo0 -> do
+                      let
+                          dbInfo = dbInfo0
+                              { retryPolicy = RetryPolicy
+                                  2
+                                  (ExponentialBackoff (realToFrac @Double 0.001)
+                                  )
+                              }
+                      logsmv <- newMVar []
+                      runMVarLogger
+                              logsmv
+                              (applyMigrationsNoCheck
+                                  dbInfo
+                                      { sqlMigrations =
+                                          [ "test/migrations/in-txn-application-error-on-COMMIT"
+                                          ]
+                                      }
+                                  Nothing
+                                  testConnTimeout
+                                  (const $ pure ())
+                              )
+                          `shouldThrow` (\(e :: SqlStatementException) ->
+                                            "duplicate key"
+                                                `List.isInfixOf` show e
+                                        )
+                      nonBootstrapAppliedMigs :: [(String, Int, Bool)] <-
+                          withConnection
+                              (migsConnString dbInfo)
+                              testConnTimeout
+                              (\conn -> DB.query
+                                  conn
+                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
+                                  ()
+                              )
+                      nonBootstrapAppliedMigs `shouldBe` []
+                      logs <- readMVar logsmv
+                      length (filter ("ROLLBACK" `Text.isInfixOf`) logs)
+                          `shouldBe` 0 -- Instead of ROLLBACK, we see "COMMIT failed" messages
+                      length (filter ("COMMIT failed" `Text.isInfixOf`) logs)
+                          `shouldBe` 3
+                      length
+                              (filter
+                                  ("duplicate key value violates unique constraint" `Text.isInfixOf`
+                                  )
+                                  logs
+                              )
+                          `shouldBe` 3
+                      length (filter ("BEGIN" `Text.isInfixOf`) logs)
+                          `shouldBe` 3
+
+            aroundFreshDatabase
+                $ it
                       "No-txn migration with failure in statement not in explicit transaction block retries from the right place"
                 $ \dbInfo0 -> do
                       -- We want retries to ensure applied statements are not being applied more than once

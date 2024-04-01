@@ -5,7 +5,7 @@ import           Prelude                 hiding ( readFile )
 
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal.MultiQueryStatement
-                                                ( SqlStatementException
+                                                ( SqlStatementException(..)
                                                 , StatementApplied(..)
                                                 , multiQueryStatement_
                                                 , singleStatement_
@@ -495,7 +495,6 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         fromMaybe defaultConnInfo (blockCustomConnInfo block)
                 (_, conn) <- openConn cinfo
 
-
                 -- Create codd_schema and flush previously applied migrations if possible. We do this here
                 -- since we expect _some_ of the migration blocks to use the default connection string, and after
                 -- that we can register migrations were applied.
@@ -527,8 +526,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
         actAfterResult <- case singleInTxnBlockResult of
             Just result -> pure result
             Nothing     -> do
-              -- It is possible to have only non-default-connection-string migrations.
-              -- In that case, we assume the default-connection-string will be valid after those migrations
+              -- It is possible to have only non-default-connection-string migrations, or to have in-txn migrations running on a non-default database last.
+              -- In those cases, we assume the default-connection-string will be valid after those migrations
               -- and use that to register all applied migrations and then run "actionAfter".
                 (_, defaultConn) <- openConn defaultConnInfo
                 createCoddSchemaAndFlushPendingMigrations
@@ -551,46 +550,57 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> DiffTime
            -> MigrationApplicationStatus
            -> txn ()
-           ) -- ^ Using the `txn` monad is right: registering applied migrations happens in the same connection that applies migrations if that is the default-database connection, and should be (but this is not yet implemented) scheduled to be inserted into codd_schema.sql_migrations in the first future opportunity, meaning when this function is called it's merely an in-memory operation, which can also run in `txn`.
+           ) -- ^ Using the `txn` monad is right: registering applied migrations happens in the same connection that applies migrations if that is a default-database connection, and otherwise will be scheduled to be inserted into codd_schema.sql_migrations in the first future opportunity, meaning when this function is called it's merely an in-memory operation, which can also run in `txn`.
         -> m b
-    runInTxnBlock act conn migBlock registerMig = do
-        res <-
+    runInTxnBlock act conn migBlock registerMig =
          -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
-            retryFold
-                    retryPolicy
-                    (\previousBlock RetryIteration { tryNumber } ->
-                        if tryNumber == 0
-                            then pure previousBlock
-                            else reReadBlock previousBlock
-                    )
-                    migBlock
-                    (\case
-                        Left lastEx -> do
-                            logError
-                                "Failed after all configured retries. Giving up."
-                            throwIO lastEx
-                        Right ret -> pure ret
-                    )
-                $ \blockFinal -> do
-                      logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
-                      withTransaction txnIsolationLvl conn $ do
-                          let hoistedMigs :: NonEmpty (AddedSqlMigration txn)
-                              hoistedMigs = hoistAddedSqlMigration lift
-                                  <$> inTxnMigs blockFinal
-                          errorOrOk <-
-                              forMExcept hoistedMigs $ applySingleMigration
-                                  conn
-                                  registerMig
-                                  NoSkipStatements
-                          case errorOrOk of
-                              Left e -> do
-                                  liftIO $ DB.rollback conn
-                                  logInfo
-                                      "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
-                                  pure $ Left e
-                              Right () -> Right <$> act conn
-        logInfo "<MAGENTA>COMMIT</MAGENTA>ed transaction"
-        pure res
+        retryFold
+                retryPolicy
+                (\previousBlock RetryIteration { tryNumber } ->
+                    if tryNumber == 0
+                        then pure previousBlock
+                        else reReadBlock previousBlock
+                )
+                migBlock
+                (\case
+                    Left lastEx -> do
+                        logError
+                            "Failed after all configured retries. Giving up."
+                        throwIO lastEx
+                    Right ret -> pure ret
+                )
+            $ \blockFinal -> do
+                  logInfo "<MAGENTA>BEGIN</MAGENTA>ning transaction"
+                  withTransaction txnIsolationLvl conn $ do
+                      let hoistedMigs :: NonEmpty (AddedSqlMigration txn)
+                          hoistedMigs = hoistAddedSqlMigration lift
+                              <$> inTxnMigs blockFinal
+                      errorOrOk <- forMExcept hoistedMigs $ applySingleMigration
+                          conn
+                          registerMig
+                          NoSkipStatements
+                      case errorOrOk of
+                          Left e -> do
+                              liftIO $ DB.rollback conn
+                              logInfo
+                                  "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
+                              pure $ Left e
+                          Right () -> do
+                              res     <- act conn
+                              -- Also catch exceptions on COMMIT so they're treated as a retriable error
+                              commitE <- try $ liftIO $ DB.execute_ conn
+                                                                    "COMMIT"
+                              case commitE of
+                                  Left e -> do
+                                      let sqlEx =
+                                              SqlStatementException "COMMIT" e
+                                      logError (Text.pack $ show sqlEx)
+                                      logError "COMMIT failed"
+                                      pure $ Left sqlEx
+                                  Right _ -> do
+                                      logInfo
+                                          "<MAGENTA>COMMIT</MAGENTA>ed transaction"
+                                      pure $ Right res
 
     runNoTxnMig
         :: DB.Connection
@@ -600,7 +610,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> DiffTime
            -> MigrationApplicationStatus
            -> m ()
-           ) -- ^ This is `m` instead of `txn` and is correct, unlike in `runInTxnBlock`. See reasons presented there.
+           ) -- ^ This is `m` instead of `txn` and is correct, unlike in `runInTxnBlock`. The reason is that there is no transaction opened by codd for no-txn migrations, and so the function that registers applied migrations needs to start its own transaction.
         -> m (Maybe x)
     runNoTxnMig conn mig registerMig = do
         retryFold
