@@ -1,6 +1,5 @@
 module Codd.AppCommands.AddMigration
-    ( AddMigrationOptions(..)
-    , addMigration
+    ( addMigration
     ) where
 
 import qualified Codd
@@ -15,7 +14,6 @@ import           Codd.Internal                  ( delayedOpenStreamFile
                                                 )
 import           Codd.Logging                   ( CoddLogger
                                                 , logError
-                                                , logInfo
                                                 , logInfoAlways
                                                 )
 import           Codd.Parsing                   ( EnvVars
@@ -51,19 +49,14 @@ import           UnliftIO.Exception             ( SomeException
                                                 )
 import           UnliftIO.Resource              ( runResourceT )
 
-newtype AddMigrationOptions = AddMigrationOptions
-  { dontApply :: Bool
-  }
-
 addMigration
     :: forall m
      . (MonadUnliftIO m, CoddLogger m, MonadThrow m, EnvVars m, NotInTxn m)
     => CoddSettings
-    -> AddMigrationOptions
     -> Maybe FilePath
     -> SqlFilePath
     -> m ()
-addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigrations } AddMigrationOptions { dontApply } destFolder sqlFp@(SqlFilePath fp)
+addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigrations } destFolder sqlFp@(SqlFilePath fp)
     = do
         finalDir <- case (destFolder, sqlMigrations) of
             (Just f, _) -> pure f
@@ -131,25 +124,20 @@ addMigration dbInfo@Codd.CoddSettings { onDiskReps, migsConnString, sqlMigration
 
             finalMigFile <- timestampAndCopyMigrationFile sqlFp finalDir
             addE         <- try $ do
-                unless dontApply $ do
-                    databaseSchemas <- Codd.applyMigrationsNoCheck
-                        dbInfo
-                        Nothing
-                        (secondsToDiffTime 5)
-                        (readRepresentationsFromDbWithSettings dbInfo)
-                    persistRepsToDisk databaseSchemas onDiskRepsDir
+                databaseSchemas <- Codd.applyMigrationsNoCheck
+                    dbInfo
+                    Nothing
+                    (secondsToDiffTime 5)
+                    (readRepresentationsFromDbWithSettings dbInfo)
+                persistRepsToDisk databaseSchemas onDiskRepsDir
 
-                    logInfoAlways
-                        $  "New migration applied and added to "
-                        <> Text.pack finalMigFile
-                    logInfoAlways
-                        $ "Updated expected DB schema representations in the <MAGENTA>"
-                        <> Text.pack onDiskRepsDir
-                        <> "</MAGENTA> folder"
-                when dontApply
-                    $  logInfo
-                    $  "Migration was NOT applied, but was added to "
+                logInfoAlways
+                    $  "New migration applied and added to "
                     <> Text.pack finalMigFile
+                logInfoAlways
+                    $ "Updated expected DB schema representations in the <MAGENTA>"
+                    <> Text.pack onDiskRepsDir
+                    <> "</MAGENTA> folder"
             case addE of
                 Right _ -> do
                     -- Remove original file

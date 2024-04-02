@@ -25,6 +25,7 @@ module Codd.Parsing
     , CoddCommentParseResult(..)
     , EnvVars(..)
     , FileStream(..)
+    , MigrationApplicationStatus(..)
     , SqlPiece(..)
     , ParsedSql(..)
     , PureStream(..)
@@ -150,6 +151,9 @@ data AddedSqlMigration m = AddedSqlMigration
     , addedSqlTimestamp :: DB.UTCTimestamp
     }
 
+-- | Holds applied status and number of applied statements.
+data MigrationApplicationStatus = NoTxnMigrationFailed Int | MigrationAppliedSuccessfully Int
+
 data AppliedMigration = AppliedMigration
     { appliedMigrationName      :: FilePath
     , appliedMigrationTimestamp :: DB.UTCTimestamp
@@ -157,6 +161,7 @@ data AppliedMigration = AppliedMigration
     , appliedMigrationAt        :: UTCTime
     -- ^ When the migration was effectively applied.
     , appliedMigrationDuration  :: DiffTime
+    , appliedMigrationStatus    :: MigrationApplicationStatus
     }
 
 data FileStream m = FileStream

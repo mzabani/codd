@@ -10,34 +10,24 @@ import           Codd.Internal                  ( CoddSchemaVersion(..)
                                                 , detectCoddSchema
                                                 , withConnection
                                                 )
-import           Codd.Internal.MultiQueryStatement
-                                                ( SqlStatementException )
-import           Codd.Logging                   ( LoggingT(runLoggingT)
-                                                , Newline(..)
-                                                , runCoddLogger
-                                                )
+import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 )
 import           Codd.Query                     ( unsafeQuery1 )
 import           Codd.Representations.Types     ( DbRep(..) )
-import           Codd.Types                     ( RetryBackoffPolicy(..)
-                                                , RetryPolicy(..)
-                                                , TxnIsolationLvl(..)
-                                                )
+import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( forM_
                                                 , void
                                                 )
-import           Control.Monad.Reader           ( ReaderT(..) )
 import           Control.Monad.Trans            ( lift )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import qualified Data.Aeson                    as Aeson
-import qualified Data.List                     as List
 import qualified Data.Map.Strict               as Map
+import           Data.Maybe                     ( fromMaybe )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
-import qualified Data.Text.IO                  as Text
 import           Data.Time                      ( CalendarDiffTime(ctTime)
                                                 , UTCTime
                                                 , diffUTCTime
@@ -59,15 +49,8 @@ import           DbUtils                        ( aroundFreshDatabase
 import           Test.Hspec
 import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
-import           UnliftIO                       ( MonadIO
-                                                , hFlush
+import           UnliftIO                       ( SomeException
                                                 , liftIO
-                                                , stdout
-                                                )
-import           UnliftIO.Concurrent            ( MVar
-                                                , modifyMVar_
-                                                , newMVar
-                                                , readMVar
                                                 )
 
 placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
@@ -157,6 +140,68 @@ createCountCheckingMig expectedCount migName = SqlMigration
     , migrationCustomConnInfo = Nothing
     , migrationEnvVars        = mempty
     }
+
+alwaysPassingMig, createTableMig, addColumnMig, alwaysFailingMig
+    :: MonadThrow m => AddedSqlMigration m
+alwaysPassingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0001-always-passing.sql"
+                 , migrationSql            = mkValidSql "SELECT 99"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 1)
+createTableMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0002-create-table.sql"
+                 , migrationSql = mkValidSql "CREATE TABLE anytable ();"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 2)
+addColumnMig = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "0003-add-column.sql"
+        , migrationSql            = mkValidSql
+                                        "ALTER TABLE anytable ADD COLUMN anycolumn TEXT;"
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
+        }
+    (getIncreasingTimestamp 3)
+alwaysFailingMig = AddedSqlMigration
+    SqlMigration { migrationName           = "0004-always-failing.sql"
+                 , migrationSql            = mkValidSql "SELECT 5/0"
+                 , migrationInTxn          = True
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 4)
+
+changeConnUser
+    :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
+changeConnUser dbInfo newUser mig = mig
+    { addedSqlMig = (addedSqlMig mig)
+                        { migrationCustomConnInfo =
+                            let cinfo = fromMaybe
+                                    (migsConnString dbInfo)
+                                    (migrationCustomConnInfo (addedSqlMig mig))
+                            in  Just cinfo { DB.connectUser = newUser }
+                        }
+    }
+
+changeConnDb
+    :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
+changeConnDb dbInfo newDb mig = mig
+    { addedSqlMig = (addedSqlMig mig)
+                        { migrationCustomConnInfo =
+                            let cinfo = fromMaybe
+                                    (migsConnString dbInfo)
+                                    (migrationCustomConnInfo (addedSqlMig mig))
+                            in  Just cinfo { DB.connectDatabase = newDb }
+                        }
+    }
+
 
 -- | A migration that uses many different ways of inputting strings in postgres. In theory we'd only need to
 -- test the parser, but we do this to sleep well at night too.
@@ -663,84 +708,198 @@ spec = do
                                           countTxIds `shouldBe` 4
                                           countInterns `shouldBe` 4
                                           totalRows `shouldBe` 10
-                      context
-                              "Retry Policy retries and backoff work as expected"
-                          $ do
-                                let
-                                    testRetries inTxn emptyTestDbInfo = do
-                                        -- Kind of ugly.. we test behaviour by analyzing logs and
-                                        -- trust that threadDelay is called.
-                                        logsmv <- newMVar []
-                                        runMVarLogger
-                                                logsmv
-                                                (applyMigrationsNoCheck
-                                                    (emptyTestDbInfo
-                                                        { retryPolicy   =
-                                                            RetryPolicy
-                                                                7
-                                                                (ExponentialBackoff
-                                                                    (realToFrac
-                                                                        @Double
-                                                                        0.001
-                                                                    )
-                                                                )
-                                                        , sqlMigrations =
-                                                            [ if inTxn
-                                                                  then
-                                                                      "test/migrations/retry-policy-test-in-txn/"
-                                                                  else
-                                                                      "test/migrations/retry-policy-test-no-txn/"
-                                                            ]
-                                                        }
-                                                    )
-                                                    Nothing
-                                                    testConnTimeout
-                                                    (const $ pure ())
-                                                )
-                                            `shouldThrow` (\(e :: SqlStatementException) ->
-                                                              "division by zero"
-                                                                  `List.isInfixOf` show
-                                                                                       e
-
-                                                                  && "SELECT 7/0"
-                                                                  `List.isInfixOf` show
-                                                                                       e
-                                                          )
-                                        logs <- readMVar logsmv
-                                        length
-                                                (filter
-                                                    ("before next try" `Text.isInfixOf`
-                                                    )
-                                                    logs
-                                                )
-                                            `shouldBe` 7
-                                        -- The last attempt isn't logged because we don't catch exceptions for it
-                                        length
-                                                (filter
-                                                    ("division by zero" `Text.isInfixOf`
-                                                    )
-                                                    logs
-                                                )
-                                            `shouldBe` 7
-                                        forM_ [1 :: Int, 2, 4, 8, 16, 32, 64]
-                                            $ \delay ->
-                                                  length
-                                                          (filter
-                                                              ((  "Waiting "
-                                                               <> Text.pack
-                                                                      (show
-                                                                          delay
-                                                                      )
-                                                               <> "ms"
-                                                               ) `Text.isInfixOf`
-                                                              )
-                                                              logs
-                                                          )
-                                                      `shouldBe` 1
-                                it "For in-txn migrations" $ testRetries True
-                                it "For no-txn migrations" $ testRetries False
 
             describe "Custom connection-string migrations" $ do
+                aroundFreshDatabase
+                    $ forM_ [True, False]
+                    $ \addDefaultConnMig ->
+                          it
+                                  ("In-txn migrations in non-default database get registered after all said migrations are committed, not after each one is applied inside a transaction. Default-conn mig first: "
+                                  ++ show addDefaultConnMig
+                                  )
+                              $ \dbInfo -> do
+                                      -- To test this we put three consecutive in-txn migrations that run on a non-default database, where the last migration always fails.
+                                      -- Neither of the three migrations should be registered in this scenario, as they were all rolled back. In a second time, we run only the first two migrations,
+                                      -- and check they were registered.
+                                    runCoddLogger
+                                            (applyMigrationsNoCheck
+                                                dbInfo
+                                                (  Just
+                                                $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
+                                                   [ alwaysPassingMig
+                                                   | addDefaultConnMig
+                                                   ]
+                                                ++ [ changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       createTableMig
+                                                   , changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       addColumnMig
+                                                   , changeConnDb
+                                                       dbInfo
+                                                       "postgres"
+                                                       alwaysFailingMig
+                                                   ]
+                                                )
+                                                testConnTimeout
+                                                (const $ pure ())
+                                            )
+                                        `shouldThrow` (\(_ :: SomeException) ->
+                                                          True
+                                                      )
+                                    allRegisteredMigs :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     createTableMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     addColumnMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
+
+                                    -- If we don't include the third migration, the first two should be applied
+                                    runCoddLogger
+                                        (applyMigrationsNoCheck
+                                            dbInfo
+                                            (  Just
+                                            $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
+                                               [ alwaysPassingMig
+                                               | addDefaultConnMig
+                                               ]
+                                            ++ [ changeConnDb
+                                                   dbInfo
+                                                   "postgres"
+                                                   createTableMig
+                                               , changeConnDb dbInfo
+                                                              "postgres"
+                                                              addColumnMig
+                                               ]
+                                            )
+                                            testConnTimeout
+                                            (const $ pure ())
+                                        )
+                                    allRegisteredMigs2 :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs2
+                                        `shouldContain` [ migrationName
+                                                              (addedSqlMig @IO
+                                                                  createTableMig
+                                                              )
+                                                        ]
+                                    allRegisteredMigs2
+                                        `shouldContain` [ migrationName
+                                                              (addedSqlMig @IO
+                                                                  addColumnMig
+                                                              )
+                                                        ]
+                                    allRegisteredMigs2
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
+                aroundFreshDatabase
+                    $ forM_ [True, False]
+                    $ \addDefaultConnMig ->
+                          it
+                                  ("In-txn migrations in same database as the default connection string get registered in the same transaction even for a different user. Default-conn mig first: "
+                                  ++ show addDefaultConnMig
+                                  )
+                              $ \dbInfo -> do
+                          -- To test this we put three consecutive in-txn migrations on the default database under a different user, where the last migration always fails.
+                          -- Neither of the three migrations should be registered in this scenario, as they were all rolled back.
+                                    runCoddLogger
+                                            (applyMigrationsNoCheck
+                                                dbInfo
+                                                (  Just
+                                                $
+                                                   -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used regardless
+                                                   [ alwaysPassingMig
+                                                   | addDefaultConnMig
+                                                   ]
+                                                ++ [ changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       createTableMig
+                                                   , changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       addColumnMig
+                                                   , changeConnUser
+                                                       dbInfo
+                                                       "codd-test-user"
+                                                       alwaysFailingMig
+                                                   ]
+                                                )
+                                                testConnTimeout
+                                                (const $ pure ())
+                                            )
+                                        `shouldThrow` (\(_ :: SomeException) ->
+                                                          True
+                                                      )
+                                    allRegisteredMigs :: [String] <-
+                                        map DB.fromOnly <$> withConnection
+                                            (migsConnString dbInfo)
+                                            testConnTimeout
+                                            (\conn -> DB.query
+                                                conn
+                                                "SELECT name from codd_schema.sql_migrations"
+                                                ()
+                                            )
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     createTableMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     addColumnMig
+                                                                 )
+                                                           ]
+                                    allRegisteredMigs
+                                        `shouldNotContain` [ migrationName
+                                                                 (addedSqlMig
+                                                                     @IO
+                                                                     alwaysFailingMig
+                                                                 )
+                                                           ]
                 it
                         "applied_at and application_duration registered properly for migrations running before codd_schema is available"
                     $ do
@@ -1025,21 +1184,3 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                         $ getIncreasingTimestamp 0
                   ]
     pure $ DiverseMigrationOrder migsInOrder
-
-
-runMVarLogger :: MonadIO m => MVar [Text] -> LoggingT m a -> m a
-runMVarLogger logsmv m = runReaderT
-    (runLoggingT m)
-    ( \newline msg -> modifyMVar_
-        logsmv
-        (\l -> do
-            case newline of
-                NoNewline -> do
-                    Text.hPutStr stdout msg
-                    hFlush stdout
-                WithNewline -> Text.hPutStrLn stdout msg
-            pure $ l ++ [msg]
-        )
-    , const True
-    , True
-    )

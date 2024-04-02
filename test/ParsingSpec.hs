@@ -2,7 +2,11 @@
 module ParsingSpec where
 
 import           Codd.Internal                  ( BlockOfMigrations(..)
+                                                , ConsecutiveInTxnMigrations(..)
                                                 , parseMigrationFiles
+                                                )
+import           Codd.Internal.MultiQueryStatement
+                                                ( skipCountableRunnableStatements
                                                 )
 import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
@@ -25,6 +29,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
 import           Control.Monad                  ( forM
                                                 , forM_
                                                 , unless
+                                                , when
                                                 )
 import           Control.Monad.Identity         ( Identity(runIdentity) )
 import           Control.Monad.Trans.Resource   ( MonadThrow(..) )
@@ -40,6 +45,7 @@ import qualified Database.PostgreSQL.Simple    as DB
 import           DbUtils                        ( parseSqlMigrationIO )
 import           EnvironmentSpec                ( ConnStringGen(..) )
 import qualified Streaming.Prelude             as Streaming
+import qualified Streaming.Prelude             as S
 import           System.Random                  ( mkStdGen
                                                 , randomR
                                                 )
@@ -198,6 +204,10 @@ validSqlStatements =
              , CopyFromStdinEnd "\\.\n"
              ]
            ]
+
+newtype ShuffleOfPieces = ShuffleOfPieces [[SqlPiece]] deriving stock Show
+instance Arbitrary ShuffleOfPieces where
+    arbitrary = ShuffleOfPieces <$> shuffle validSqlStatements
 
 genTextStream :: Monad m => Text -> Gen (PureStream m)
 genTextStream t = do
@@ -528,8 +538,8 @@ spec = do
                 $ runResourceT @IO
                 $ runCoddLogger
                 $ do
-                      [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
-                          parseMigrationFiles []
+                      [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
+                          parseMigrationFiles mempty
                               $ Left ["test/migrations/normal-parse-test/"]
                       rawFileContents <-
                           liftIO
@@ -556,8 +566,8 @@ spec = do
                 $ runResourceT @IO
                 $ runCoddLogger
                 $ do
-                      [BlockOfMigrations { allMigs = asqlmig :| [] }] <-
-                          parseMigrationFiles []
+                      [BlockInTxn ConsecutiveInTxnMigrations { inTxnMigs = asqlmig :| [] }] <-
+                          parseMigrationFiles mempty
                               $ Left ["test/migrations/no-parse-test/"]
                       rawFileContents <-
                           liftIO
@@ -728,6 +738,46 @@ spec = do
                       "Testing this by selecting txid_current() might be more effective"
 
         context "Other important behaviours to test" $ do
+            it "Countable-runnable statements counted and skipped correctly"
+                $ property
+                $ \(ShuffleOfPieces sqlPiecesWithComments, n) -> do
+                      let sqlPieces = filter
+                              (\case
+                                  [CommentPiece    _] -> False
+                                  [WhiteSpacePiece _] -> False
+                                  _                   -> True
+                              )
+                              sqlPiecesWithComments
+                      -- Nothing to skip returns same stream
+                      S.toList_
+                              (skipCountableRunnableStatements
+                                  0
+                                  (S.concat $ S.each sqlPieces)
+                              )
+                          `shouldReturn` concat sqlPieces
+
+                      -- We never break COPY apart and comments and white space are ignored up until the first statement not to be skipped
+                      S.toList_
+                              (skipCountableRunnableStatements
+                                  n
+                                  (S.concat $ S.each sqlPieces)
+                              )
+                          `shouldReturn` concat (drop n sqlPieces)
+
+                      -- Comments and whitespace in the beginning are ignored
+                      when (n > 0) $ do
+                          let clutter =
+                                  [ [WhiteSpacePiece "         \n"]
+                                  , [CommentPiece "-- some comment\n"]
+                                  , [CommentPiece "/* comment \n \n \n test */"]
+                                  ]
+                          S.toList_
+                                  (skipCountableRunnableStatements
+                                      n
+                                      (S.concat $ S.each $ clutter ++ sqlPieces)
+                                  )
+                              `shouldReturn` concat (drop n sqlPieces)
+
             it "Empty queries detector works well" $ property $ \randomSeed ->
                 do
                     let emptyQueries =

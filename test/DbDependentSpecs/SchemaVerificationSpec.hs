@@ -4,14 +4,11 @@ import           Codd                           ( applyMigrationsNoCheck )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( withConnection )
 import           Codd.Internal.MultiQueryStatement
-                                                ( InTransaction
-                                                    ( NotInTransaction
-                                                    )
-                                                , multiQueryStatement_
-                                                )
+                                                ( multiQueryStatement_ )
 import           Codd.Logging                   ( runCoddLogger )
 import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , EnvVars
+                                                , ParsedSql(..)
                                                 , PureStream(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
@@ -29,7 +26,6 @@ import           Codd.Representations.Database  ( queryServerMajorVersion
 import           Codd.Representations.Types     ( ObjName(..) )
 import           Codd.Types                     ( SchemaAlgo(..)
                                                 , SchemaSelection(..)
-                                                , singleTryPolicy
                                                 )
 import           Control.Monad                  ( foldM
                                                 , forM
@@ -1552,17 +1548,21 @@ spec = do
                                     case mUndoSql of
                                         Nothing -> pure expectedHashesAfterUndo
                                         Just undoSql -> do
-                                            runCoddLogger
+                                            void
+                                                $ runCoddLogger
                                                 $ withConnection
                                                       connInfo
                                                       testConnTimeout
                                                 $ \conn ->
-                                                      multiQueryStatement_
-                                                              (NotInTransaction
-                                                                  singleTryPolicy
-                                                              )
-                                                              conn
-                                                          $ mkValidSql undoSql
+                                                      Streaming.effects
+                                                          $ multiQueryStatement_
+                                                                conn
+                                                          $ (\(WellParsedSql sqlStream) ->
+                                                                sqlStream
+                                                            )
+                                                                (mkValidSql
+                                                                    undoSql
+                                                                )
                                             hashesAfterUndo <- getHashes
                                                 emptyDbInfo
                                             let
