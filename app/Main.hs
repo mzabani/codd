@@ -1,9 +1,7 @@
 module Main where
 
 import qualified Codd
-import           Codd.AppCommands.AddMigration  ( AddMigrationOptions(..)
-                                                , addMigration
-                                                )
+import           Codd.AppCommands.AddMigration  ( addMigration )
 import           Codd.AppCommands.VerifySchema  ( verifySchema )
 import           Codd.AppCommands.WriteSchema   ( WriteSchemaOpts(..)
                                                 , writeSchema
@@ -24,7 +22,7 @@ import           Options.Applicative
 import qualified System.IO                     as IO
 import qualified Text.Read                     as Text
 
-data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add AddMigrationOptions (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool
+data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool
 
 cmdParser :: Parser Cmd
 cmdParser = hsubparser
@@ -101,13 +99,7 @@ upParser =
 addParser :: Parser Cmd
 addParser =
     Add
-        <$> (AddMigrationOptions <$> switch
-                (  long "no-apply"
-                <> help
-                       "Do not apply any pending migrations, including the one being added."
-                )
-            )
-        <*> optionalStrOption
+        <$> optionalStrOption
                 (  long "dest-folder"
                 <> help
                        "Specify the folder path where the .sql migration shall be put. If unspecified, the first folder in the 'CODD_MIGRATION_DIRS' environment variable will be used"
@@ -191,9 +183,8 @@ doWork dbInfo (Up mCheckSchemas connectTimeout) =
                                                          Nothing
                                                          connectTimeout
                                                          checkSchemas
-doWork dbInfo (Add addOpts destFolder verbosity fp) =
-    runCoddLoggerLevelFilter verbosity
-        $ addMigration dbInfo addOpts destFolder fp
+doWork dbInfo (Add destFolder verbosity fp) =
+    runCoddLoggerLevelFilter verbosity $ addMigration dbInfo destFolder fp
 doWork dbInfo (VerifySchema verbosity fromStdin) =
     runCoddLoggerLevelFilter verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts
