@@ -6,6 +6,7 @@ import           Codd                           ( VerifySchemas(..)
                                                 )
 import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal                  ( CoddSchemaVersion(..)
+                                                , collectPendingMigrations
                                                 , createCoddSchema
                                                 , detectCoddSchema
                                                 , withConnection
@@ -15,7 +16,9 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , SqlMigration(..)
                                                 , hoistAddedSqlMigration
                                                 )
-import           Codd.Query                     ( unsafeQuery1 )
+import           Codd.Query                     ( execvoid_
+                                                , unsafeQuery1
+                                                )
 import           Codd.Representations.Types     ( DbRep(..) )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Monad                  ( forM_
@@ -275,42 +278,73 @@ notStdConfStringsMig = AddedSqlMigration
         }
     (getIncreasingTimestamp 0)
 
+downgradeCoddSchema :: DB.Connection -> CoddSchemaVersion -> IO ()
+downgradeCoddSchema conn targetVersion = go maxBound
+  where
+    go currentSchemaVersion
+        | targetVersion == currentSchemaVersion = pure ()
+        | otherwise = do
+            case currentSchemaVersion of
+                CoddSchemaDoesNotExist -> pure ()
+                CoddSchemaV1           -> do
+                    execvoid_ conn "DROP SCHEMA codd_schema CASCADE"
+
+                CoddSchemaV2 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations DROP COLUMN application_duration"
+                CoddSchemaV3 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations DROP COLUMN num_applied_statements, DROP COLUMN no_txn_failed_at, ALTER COLUMN applied_at SET NOT NULL; \n\
+                    \REVOKE UPDATE ON TABLE codd_schema.sql_migrations FROM PUBLIC;"
+
+            go (pred currentSchemaVersion)
+
 spec :: Spec
 spec = do
     describe "DbDependentSpecs" $ do
         describe "Application tests" $ do
             describe "codd_schema version migrations"
-                $ aroundFreshDatabase
                 $ forM_ [CoddSchemaDoesNotExist .. maxBound]
                 $ \vIntermediary ->
-                      it
-                              (  "codd_schema version migration succeeds from "
-                              ++ show CoddSchemaDoesNotExist
-                              ++ " to "
-                              ++ show vIntermediary
-                              ++ " and then to "
-                              ++ show (maxBound @CoddSchemaVersion)
-                              )
+                      aroundFreshDatabase
+                          $ it
+                                ("codd_schema version migration succeeds from "
+                                ++ show CoddSchemaDoesNotExist
+                                ++ " to "
+                                ++ show vIntermediary
+                                ++ " and then to "
+                                ++ show (maxBound @CoddSchemaVersion)
+                                )
                           $ \emptyTestDbInfo ->
                                 void @IO
                                     $ withConnection
                                           (migsConnString emptyTestDbInfo)
                                           testConnTimeout
                                     $ \conn -> do
-                                          -- Drop the codd_schema that was created by `aroundFreshDatabase`
-                                          void $ DB.execute_
-                                              conn
-                                              "DROP SCHEMA codd_schema CASCADE"
-                                          createCoddSchema vIntermediary
-                                                           Serializable
-                                                           conn
+                                          -- Downgrade the schema created by `aroundFreshDatabase`. We want migrations applied with different versions to exist.
+                                          downgradeCoddSchema conn vIntermediary
                                           detectCoddSchema conn
                                               `shouldReturn` vIntermediary
-                                          createCoddSchema maxBound
-                                                           Serializable
-                                                           conn
+
+                                          -- Test that we can apply migrations in an older state, and that it updates the schema to the latest
+                                          runCoddLogger $ applyMigrationsNoCheck
+                                              emptyTestDbInfo
+                                              -- At least one pending migration so codd updates the schema
+                                              (Just [alwaysPassingMig])
+                                              testConnTimeout
+                                              (const $ pure ())
                                           detectCoddSchema conn
                                               `shouldReturn` maxBound
+
+                                          -- Run `codd up` one more time to ensure test that fetching migrations applied with different schema versions does not fail
+                                          -- This can happen if we e.g. assume `num_applied_statements` is not nullable for V3, but migrations applied with earlier versions
+                                          -- will have that with a NULL value.
+                                          runCoddLogger $ applyMigrationsNoCheck
+                                              emptyTestDbInfo
+                                              (Just [alwaysPassingMig])
+                                              testConnTimeout
+                                              (const $ pure ())
+
 
             describe "With the default database available"
                 $ aroundFreshDatabase
