@@ -124,21 +124,10 @@ createDatabaseMig customConnInfo dbName sleepInSeconds migOrder = SqlMigration
     , migrationEnvVars        = mempty
     }
 
-createCountCheckingMig :: MonadThrow m => Int -> String -> SqlMigration m
-createCountCheckingMig expectedCount migName = SqlMigration
-    { migrationName = "000" <> show expectedCount <> "-" <> migName <> ".sql"
-    , migrationSql            =
-        mkValidSql
-        $ "DO\
-\\n$do$\
-\\nBEGIN\
-\\n   IF (SELECT COUNT(*) <> "
-        <> Text.pack (show expectedCount)
-        <> " FROM codd_schema.sql_migrations) THEN\
-\\n      RAISE 'Not the right count';\
-\\n   END IF;\
-\\nEND\
-\\n$do$;"
+createAlwaysPassingMig :: MonadThrow m => Int -> String -> SqlMigration m
+createAlwaysPassingMig migrationIdx migName = SqlMigration
+    { migrationName = "000" <> show migrationIdx <> "-" <> migName <> ".sql"
+    , migrationSql            = mkValidSql "SELECT 71"
     , migrationInTxn          = False
     , migrationCustomConnInfo = Nothing
     , migrationEnvVars        = mempty
@@ -181,6 +170,27 @@ alwaysFailingMig = AddedSqlMigration
                  }
     (getIncreasingTimestamp 4)
 
+-- | A migration that creates the codd_schema itself (and an old version at that). This is like what a pg dump would have.
+pgDumpEmulatingMig :: MonadThrow m => AddedSqlMigration m
+pgDumpEmulatingMig = AddedSqlMigration
+    SqlMigration
+        { migrationName           = "0010-pg_dump-emulating-mig.sql"
+        , migrationSql            =
+            mkValidSql
+                "CREATE SCHEMA codd_schema; GRANT USAGE ON SCHEMA codd_schema TO PUBLIC;\
+                         \CREATE TABLE codd_schema.sql_migrations ( \
+                        \  id SERIAL PRIMARY KEY\
+                        \, migration_timestamp timestamptz not null\
+                        \, applied_at timestamptz not null \
+                        \, name text not null \
+                        \, unique (name), unique (migration_timestamp));\
+                       \GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
+                       \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
+        , migrationInTxn          = True
+        , migrationCustomConnInfo = Nothing
+        , migrationEnvVars        = mempty
+        }
+    (getIncreasingTimestamp 10)
 changeConnUser
     :: CoddSettings -> String -> AddedSqlMigration m -> AddedSqlMigration m
 changeConnUser dbInfo newUser mig = mig
@@ -296,6 +306,9 @@ downgradeCoddSchema conn targetVersion = go maxBound
                     conn
                     "ALTER TABLE codd_schema.sql_migrations DROP COLUMN num_applied_statements, DROP COLUMN no_txn_failed_at, ALTER COLUMN applied_at SET NOT NULL; \n\
                     \REVOKE UPDATE ON TABLE codd_schema.sql_migrations FROM PUBLIC;"
+                CoddSchemaV4 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations DROP COLUMN txnid, DROP COLUMN connid"
 
             go (pred currentSchemaVersion)
 
@@ -1045,6 +1058,50 @@ spec = do
                                                                  -- 700ms is a conservative value given each duration should be ~ 1 sec
                                                   )
 
+                it
+                        "Allow migrations that create codd_schema themselves if they run sufficiently early in some cases"
+                    $ do
+                          defaultConnInfo <- testConnInfo
+                          testSettings    <- testCoddSettings
+                          bootstrapMig    <- createTestUserMig
+                          finallyDrop "codd-test-db" $ pure () -- TODO: Avoid creating this in the first place.. wrap this test in aroundTestDbInfo to do that.
+
+                          let postgresCinfo = defaultConnInfo
+                                  { DB.connectDatabase = "postgres"
+                                  , DB.connectUser     = "postgres"
+                                  }
+
+                              allMigs =
+                                  map (hoistAddedSqlMigration lift)
+                                      $ fixMigsOrder
+                                            [ bootstrapMig
+                                            , alwaysPassingMig
+                                            , pgDumpEmulatingMig
+                                            ]
+
+                          finalCoddSchemaVersion <-
+                              runCoddLogger $ applyMigrationsNoCheck
+                                  testSettings
+                                  (Just allMigs)
+                                  testConnTimeout
+                                  detectCoddSchema
+                          finalCoddSchemaVersion `shouldBe` maxBound
+                          withConnection defaultConnInfo testConnTimeout
+                              $ \conn -> do
+                                       -- 1. Check that migrations ran
+                                    runMigs :: [FilePath] <-
+                                        map DB.fromOnly
+                                            <$> DB.query
+                                                    conn
+                                                    "SELECT name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                    ()
+                                    runMigs
+                                        `shouldBe` map
+                                                       ( migrationName
+                                                       . addedSqlMig
+                                                       )
+                                                       allMigs
+
                 it "Diverse order of different types of migrations"
                     $ ioProperty
                     $ do
@@ -1066,37 +1123,33 @@ spec = do
                                         $ finallyDrop "new_database_3"
                                         $ void
                                         $ do
-                                              runCoddLogger
-                                                  $ applyMigrationsNoCheck
-                                                        testSettings
-                                                        (Just $ map
-                                                            (hoistAddedSqlMigration
-                                                                lift
+                                              runMigs :: [(Int, FilePath)] <-
+                                                  runCoddLogger
+                                                      $ applyMigrationsNoCheck
+                                                            testSettings
+                                                            (Just $ map
+                                                                (hoistAddedSqlMigration
+                                                                    lift
+                                                                )
+                                                                allMigs
                                                             )
-                                                            allMigs
-                                                        )
-                                                        testConnTimeout
-                                                        (const $ pure ())
-                                              withConnection defaultConnInfo
-                                                             testConnTimeout
-                                                  $ \conn -> do
-                                                  -- Check all migrations were applied in order
-                                                        runMigs :: [ ( Int
-                                                              , FilePath
-                                                              )
-                                                            ] <-
-                                                            DB.query
-                                                                conn
-                                                                "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
-                                                                ()
-                                                        map snd runMigs
-                                                            `shouldBe` map
-                                                                           (migrationName
-                                                                           . addedSqlMig
-                                                                           )
-                                                                           allMigs
-                                                        runMigs
-                                                            `shouldBeStrictlySortedOn` fst
+                                                            testConnTimeout
+                                                            (\conn ->
+                                                                liftIO
+                                                                    $ DB.query
+                                                                          conn
+                                                                          "SELECT id, name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                                                          ()
+                                                            )
+                                              -- Check all migrations were applied in order
+                                              map snd runMigs
+                                                  `shouldBe` map
+                                                                 ( migrationName
+                                                                 . addedSqlMig
+                                                                 )
+                                                                 allMigs
+                                              runMigs
+                                                  `shouldBeStrictlySortedOn` fst
 
 
 -- | Concatenates two lists, generates a shuffle of that
@@ -1115,7 +1168,7 @@ mergeShuffle ll1 ll2 f = go ll1 ll2 (0 :: Int)
             then (f i x :) <$> go xs l2 (i + 1)
             else (f i y :) <$> go l1 ys (i + 1)
 
-data MigToCreate = CreateCoddTestDb | CreateCountCheckingMig Bool | CreateCountCheckingMigDifferentUser Bool | CreateDbCreationMig Int
+data MigToCreate = CreateCoddTestDb | CreatePassingMig Bool | CreatePassingMigDifferentUser Bool | CreateDbCreationMig Int
 
 -- | Holds migrations that test codd_schema's internal management while migrations are applied.
 -- Look at the `diversifyAppCheckMigs` function, which generates migrations that explore a combination space
@@ -1135,26 +1188,6 @@ diversifyAppCheckMigs
     -> AddedSqlMigration m
     -> Gen (DiverseMigrationOrder m)
 diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
-    -- We want to diversify the order of migrations we apply.
-    -- Meaning we want to test regexp-like sequences
-    -- like (custom-connection-mig | default-connection-mig)+
-    -- However, some custom-connection migrations need to run
-    -- in the right relative order between them, and any default-connection
-    -- migrations need to run after the mig that creates "codd-test-db".
-    -- So the format is actually approximately:
-    -- 1. migs <- [create-codd-test-db] ++ Perm{default-conn-migs}
-    -- 2. Merge [create-database-migs] and `migs` into another list
-    --    preserving relative order of migs from each list randomly.
-
-    -- Also, we want - to the extent that is possible - to ensure
-    -- codd_schema.sql_migrations is up-to-date and with rows in
-    -- the correct order.
-    -- We do that by having default-conn-migs check COUNT(*)
-    -- for that table. We also test same-database-migs with different
-    -- users wrt that.
-
-    -- Finally we check the order of migrations in codd_schema.sql_migrations
-    -- after having all migrations applied.
     let postgresCinfo = defaultConnInfo { DB.connectDatabase = "postgres"
                                         , DB.connectUser     = "postgres"
                                         }
@@ -1165,20 +1198,19 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
     -- Otherwise, we'd have count-checking migs as the last migrations
     -- and at the earliest position almost every time, when we could have
     -- custom-connection-string ones there.
-    createDbAndFirstDefaultConnMig <-
-        sequenceA
-            [pure CreateCoddTestDb, CreateCountCheckingMig <$> arbitrary @Bool]
+    createDbAndFirstDefaultConnMig <- sequenceA
+        [pure CreateCoddTestDb, CreatePassingMig <$> arbitrary @Bool]
 
-    countCheckingMigs <- QC.resize 5 $ QC.listOf $ QC.elements
-        [ CreateCountCheckingMig True
-        , CreateCountCheckingMig False
-        , CreateCountCheckingMigDifferentUser True
-        , CreateCountCheckingMigDifferentUser False
+    passingMigs <- QC.resize 5 $ QC.listOf $ QC.elements
+        [ CreatePassingMig True
+        , CreatePassingMig False
+        , CreatePassingMigDifferentUser True
+        , CreatePassingMigDifferentUser False
         ]
 
     migsInOrder <-
         fmap (fixMigsOrder . concat)
-        $ mergeShuffle (createDbAndFirstDefaultConnMig ++ countCheckingMigs)
+        $ mergeShuffle (createDbAndFirstDefaultConnMig ++ passingMigs)
                        (map CreateDbCreationMig [0 .. 3])
         $ \migOrder migType -> case migType of
               CreateCoddTestDb -> [createCoddTestDbMigs]
@@ -1196,19 +1228,19 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                       then ["postgres"]
                       else ["new_database_" <> show (i - 1)]
                   ]
-              CreateCountCheckingMig inTxn ->
+              CreatePassingMig inTxn ->
                   [ AddedSqlMigration
-                        (createCountCheckingMig migOrder "count-checking-mig")
+                        (createAlwaysPassingMig migOrder "passing-mig")
                             { migrationInTxn = inTxn
                             }
                         (getIncreasingTimestamp 0)
                   ]
 
-              CreateCountCheckingMigDifferentUser inTxn ->
+              CreatePassingMigDifferentUser inTxn ->
                   [ AddedSqlMigration
-                            (createCountCheckingMig
+                            (createAlwaysPassingMig
                                     migOrder
-                                    "count-checking-custom-user-mig"
+                                    "passing-custom-user-mig"
                                 )
                                 { migrationCustomConnInfo = Just defaultConnInfo
                                     { DB.connectUser = "codd-test-user"

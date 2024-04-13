@@ -87,6 +87,7 @@ import           Data.Attoparsec.Text           ( Parser
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
+import           Data.Int                       ( Int64 )
 import           Data.Kind                      ( Type )
 import           Data.List                      ( nub
                                                 , sortOn
@@ -162,6 +163,8 @@ data AppliedMigration = AppliedMigration
     -- ^ When the migration was effectively applied.
     , appliedMigrationDuration  :: DiffTime
     , appliedMigrationStatus    :: MigrationApplicationStatus
+    , appliedMigrationTxnId     :: Int64
+    , appliedMigrationConnId    :: Int
     }
 
 data FileStream m = FileStream

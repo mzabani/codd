@@ -1,5 +1,7 @@
 ## Start using Codd in an existing database
 
+TODO: Change this after this PR is implemented so that dumps can be used as migrations!
+
 If you already have a Database and would like to start using codd, here's a guideline to approach the problem. Remember to be very careful if/when making any changes to your Prod DB:
 
 1. Configure your environment variables as explained in the [README](../README.md) and in [CONFIGURATION.md](CONFIGURATION.md).
