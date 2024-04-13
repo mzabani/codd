@@ -34,8 +34,8 @@ module Codd.Parsing
     isCommentPiece,
     isTransactionEndingPiece,
     isWhiteSpacePiece,
-    manyStreaming,
     piecesToText,
+    sqlPieceText,
     parsedSqlText,
     parseSqlMigration,
     parseWithEscapeCharProper,
@@ -43,12 +43,10 @@ module Codd.Parsing
     parseAndClassifyMigration,
     parseMigrationTimestamp,
     parseSqlPiecesStreaming,
-    sqlPieceText,
     substituteEnvVarsInSqlPiecesStream,
     toMigrationTimestamp,
     -- Exported for tests
     ParserState (..),
-    coddConnStringCommentParser,
     copyFromStdinAfterStatementParser,
     parseSqlPiecesStreaming',
   )
@@ -93,6 +91,7 @@ import qualified Data.Attoparsec.Text as Parsec
 import Data.Bifunctor (first)
 import qualified Data.Char as Char
 import qualified Data.DList as DList
+import Data.Int (Int64)
 import Data.Kind (Type)
 import Data.List
   ( nub,
@@ -173,7 +172,9 @@ data AppliedMigration = AppliedMigration
     -- | When the migration was effectively applied.
     appliedMigrationAt :: UTCTime,
     appliedMigrationDuration :: DiffTime,
-    appliedMigrationStatus :: MigrationApplicationStatus
+    appliedMigrationStatus :: MigrationApplicationStatus,
+    appliedMigrationTxnId :: Int64,
+    appliedMigrationConnId :: Int
   }
 
 data FileStream m = FileStream
