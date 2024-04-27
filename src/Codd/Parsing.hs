@@ -87,6 +87,7 @@ import           Data.Attoparsec.Text           ( Parser
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
 import qualified Data.Char                     as Char
+import           Data.Int                       ( Int64 )
 import           Data.Kind                      ( Type )
 import           Data.List                      ( nub
                                                 , sortOn
@@ -105,6 +106,10 @@ import           Data.Time                      ( DiffTime
                                                 )
 import           Data.Time.Clock                ( UTCTime(..) )
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
+import qualified Database.PostgreSQL.Simple.FromField
+                                               as DB
+import qualified Database.PostgreSQL.Simple.FromRow
+                                               as DB
 import qualified Database.PostgreSQL.Simple.Time
                                                as DB
 import           Network.URI                    ( URI(..)
@@ -153,6 +158,16 @@ data AddedSqlMigration m = AddedSqlMigration
 
 -- | Holds applied status and number of applied statements.
 data MigrationApplicationStatus = NoTxnMigrationFailed Int | MigrationAppliedSuccessfully Int
+instance DB.FromRow MigrationApplicationStatus where
+    fromRow = do
+        numAppliedStmts :: Maybe Int   <- DB.field
+        noTxnFailedAt :: Maybe UTCTime <- DB.field
+        case (numAppliedStmts, noTxnFailedAt) of
+            (Nothing, _) -> -- old codd_schema version where only fully applied migs were registered
+                pure $ MigrationAppliedSuccessfully 0
+            (Just n, Nothing) -> pure $ MigrationAppliedSuccessfully n
+            (Just n, Just _ ) -> pure $ NoTxnMigrationFailed n
+
 
 data AppliedMigration = AppliedMigration
     { appliedMigrationName      :: FilePath
@@ -162,6 +177,8 @@ data AppliedMigration = AppliedMigration
     -- ^ When the migration was effectively applied.
     , appliedMigrationDuration  :: DiffTime
     , appliedMigrationStatus    :: MigrationApplicationStatus
+    , appliedMigrationTxnId     :: Int64
+    , appliedMigrationConnId    :: Int
     }
 
 data FileStream m = FileStream

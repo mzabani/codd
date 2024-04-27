@@ -38,6 +38,7 @@ import           Codd.Query                     ( CanStartTxn
                                                 , NotInTxn
                                                 , execvoid_
                                                 , query
+                                                , queryMay
                                                 , txnStatus
                                                 , unsafeQuery1
                                                 , withTransaction
@@ -47,6 +48,7 @@ import           Codd.Representations           ( DbRep
                                                 , readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
+import           Control.Applicative            ( Alternative(..) )
 import           Control.Monad                  ( (>=>)
                                                 , foldM
                                                 , forM
@@ -59,6 +61,7 @@ import           Control.Monad.IO.Class         ( MonadIO(..) )
 import           Control.Monad.Trans            ( MonadTrans(..) )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Functor                   ( (<&>) )
+import           Data.Int                       ( Int64 )
 import           Data.Kind                      ( Type )
 import qualified Data.List                     as List
 import           Data.List                      ( sortOn )
@@ -80,6 +83,8 @@ import           Data.Time                      ( DiffTime
 import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
 import qualified Database.PostgreSQL.Simple.Time
+                                               as DB
+import           Database.PostgreSQL.Simple.ToRow
                                                as DB
 import qualified Formatting                    as Fmt
 import           Streaming                      ( Of(..) )
@@ -118,6 +123,7 @@ import           UnliftIO.MVar                  ( modifyMVar
                                                 , modifyMVar_
                                                 , newMVar
                                                 , readMVar
+                                                , withMVar
                                                 )
 import           UnliftIO.Resource              ( MonadResource
                                                 , ReleaseKey
@@ -307,7 +313,9 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
   -- This function is complex because:
   -- 1. We need to open connections as late as possible due to bootstrapping.
   -- 2. We want to insert into codd_schema.sql_migrations as early as possible even for custom-connection migrations.
-  -- 3. When possible, we want to insert into codd_schema.sql_migrations in the same transaction the migrations are running.
+  -- 3. While the item above says we want to register applied migrations as early as possible, we want to delay that sufficiently to allow for migrations that create codd_schema themselves, so as to allow dumps to be migrations, as long as there is no harm to atomicity.
+  -- 4. We allow migrations to insert into codd_schema.sql_migrations themselves (the reasonable use case here is having dumps as migrations), so we need to skip migrations if a migration registers they were applied.
+  -- 5. When possible, we want to insert into codd_schema.sql_migrations in the same transaction the migrations are running.
         let dbName = Text.pack $ DB.connectDatabase defaultConnInfo
             hoistedBlocks :: [BlockOfMigrations txn] =
                 map (hoistBlockOfMigrations lift) pendingMigs
@@ -316,9 +324,12 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
         -- with MonadUnliftIO.
         connsPerInfo <- newMVar (mempty :: [(DB.ConnectInfo, DB.Connection)])
         unregisteredButAppliedMigs <- newMVar (mempty :: [AppliedMigration])
-        coddSchemaUpToDate <-
-            newMVar $ coddSchemaVersion bootstrapCheck == maxBound
-        let openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
+        lastKnownCoddSchemaVersion <- newMVar $ coddSchemaVersion bootstrapCheck
+        let coddSchemaUpToDate :: forall n . MonadUnliftIO n => n Bool
+            coddSchemaUpToDate =
+                withMVar lastKnownCoddSchemaVersion (pure . (== maxBound))
+
+            openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
             openConn cinfo = flip allocate DB.close $ do
                 mConn <- lookup cinfo <$> readMVar connsPerInfo
                 case mConn of
@@ -330,13 +341,97 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         conn <- connectWithTimeout cinfo connectTimeout
                         pure ((cinfo, conn) : m, conn)
 
-            queryConn :: DB.ConnectInfo -> m (Maybe DB.Connection)
+            queryConn
+                :: forall n
+                 . MonadIO n
+                => DB.ConnectInfo
+                -> n (Maybe DB.Connection)
             queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
+
+-- | Meant to check what the application status of an arbitrary migration is. Used because dumps-as-migrations can insert into codd_schema.sql_migrations themselves,
+-- in which case we should detect that and skip migrations that were collected as pending at an earlier stage.
+-- Returns `Nothing` if the migration has not been applied at all.
+            hasMigBeenApplied
+                :: forall n
+                 . MonadUnliftIO n
+                => Maybe DB.Connection
+                -> FilePath
+                -> n (Maybe MigrationApplicationStatus)
+            hasMigBeenApplied mDefaultDatabaseConn fp = do
+                mDefaultConn             <- queryConn defaultConnInfo
+                minimumCoddSchemaVersion <- readMVar lastKnownCoddSchemaVersion
+                apunregmigs              <- readMVar unregisteredButAppliedMigs
+                let appliedUnreg = List.find
+                        (\apmig -> appliedMigrationName apmig == fp)
+                        apunregmigs
+                case appliedUnreg of
+                    Just m  -> pure $ Just $ appliedMigrationStatus m
+                    Nothing -> -- We use the same connection as the one applying migrations if it's in the default database, otherwise we try to use the default conn if it's available
+                               case mDefaultDatabaseConn <|> mDefaultConn of
+                        Nothing        -> pure Nothing
+                        Just connToUse -> do
+                            -- If in-memory info says codd_schema does not exist, a migration may have created it and we're just not aware yet, so check that.
+                            refinedCoddSchemaVersion <-
+                                if minimumCoddSchemaVersion
+                                    == CoddSchemaDoesNotExist
+                                then
+                                    do
+                                        actualVersion <- detectCoddSchema
+                                            connToUse
+                                        modifyMVar_
+                                            lastKnownCoddSchemaVersion
+                                            (const $ pure actualVersion)
+                                        pure actualVersion
+                                else
+                                    pure minimumCoddSchemaVersion
+                            if refinedCoddSchemaVersion >= CoddSchemaV3
+                                then queryMay
+                                    connToUse
+                                    "SELECT num_applied_statements, no_txn_failed_at FROM codd_schema.sql_migrations WHERE name=?"
+                                    (DB.Only fp)
+                                else if refinedCoddSchemaVersion >= CoddSchemaV1
+                                    then do
+                                        queryMay
+                                            connToUse
+                                            "SELECT 0, NULL::timestamptz FROM codd_schema.sql_migrations WHERE name=?"
+                                            (DB.Only fp)
+                                    else pure Nothing
+
+
+            createCoddSchemaAndFlushPendingMigrationsDefaultConnection
+                :: DB.Connection -> txn ()
+            createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn
+                = do
+                    csUpToDate <- coddSchemaUpToDate
+                    unless csUpToDate $ do
+                        logInfo
+                            "Creating or updating <MAGENTA>codd_schema</MAGENTA>..."
+                        createCoddSchema @txn maxBound
+                                              txnIsolationLvl
+                                              defaultConn
+                        modifyMVar_ lastKnownCoddSchemaVersion
+                                    (const $ pure maxBound)
+                    modifyMVar_ unregisteredButAppliedMigs $ \apmigs -> do
+                        withTransaction @txn txnIsolationLvl defaultConn
+                            $ forM_ apmigs
+                            $ \AppliedMigration {..} ->
+                                  registerRanMigration @txn
+                                      defaultConn
+                                      txnIsolationLvl
+                                      appliedMigrationName
+                                      appliedMigrationTimestamp
+                                      (SpecificTime appliedMigrationAt)
+                                      appliedMigrationDuration
+                                      appliedMigrationStatus
+                                      (SpecificIds appliedMigrationTxnId
+                                                   appliedMigrationConnId
+                                      )
+                        pure []
 
             createCoddSchemaAndFlushPendingMigrations :: m ()
             createCoddSchemaAndFlushPendingMigrations = do
                 mDefaultConn <- queryConn defaultConnInfo
-                csUpToDate   <- readMVar coddSchemaUpToDate
+                csUpToDate   <- coddSchemaUpToDate
                 case mDefaultConn of
                     Just defaultConn -> do
                         unless csUpToDate $ do
@@ -345,7 +440,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             createCoddSchema @txn maxBound
                                                   txnIsolationLvl
                                                   defaultConn
-                            modifyMVar_ coddSchemaUpToDate $ const $ pure True
+                            modifyMVar_ lastKnownCoddSchemaVersion
+                                        (const $ pure maxBound)
                         modifyMVar_ unregisteredButAppliedMigs $ \apmigs -> do
                             withTransaction @txn txnIsolationLvl defaultConn
                                 $ forM_ apmigs
@@ -358,6 +454,10 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                           (SpecificTime appliedMigrationAt)
                                           appliedMigrationDuration
                                           appliedMigrationStatus
+                                          (SpecificIds
+                                              appliedMigrationTxnId
+                                              appliedMigrationConnId
+                                          )
                             pure []
                     Nothing -> pure ()
 
@@ -373,8 +473,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 -> txn ()
             registerAppliedInTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus
                 = do
-                    csReady <- readMVar coddSchemaUpToDate
-                    -- We can insert into codd_schema.sql_migrations with any user
+                    csReady <- coddSchemaUpToDate
+                    -- If we are on the default database, we can insert into codd_schema.sql_migrations with any user
                     if DB.connectDatabase blockConnInfo
                         == DB.connectDatabase defaultConnInfo
                         && csReady
@@ -387,23 +487,26 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             NowInPostgresTime
                             appliedMigrationDuration
                             appliedMigrationStatus
+                            OfCurrentTransaction
                     else
+                        -- If not in the default database, we have to wait until after COMMIT to register that migrations were applied
                         do
-                            appliedAt <-
-                                DB.fromOnly
-                                    <$> unsafeQuery1
-                                            blockConn
-                                            "SELECT clock_timestamp()"
-                                            ()
+                            (appliedMigrationAt, appliedMigrationTxnId, appliedMigrationConnId) <-
+                                unsafeQuery1
+                                    blockConn
+                                    "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
+                                    ()
                             modifyMVar_ unregisteredButAppliedMigs $ \apmigs ->
                                 pure
                                     $  apmigs
                                     ++ [ AppliedMigration
                                              { appliedMigrationName
                                              , appliedMigrationTimestamp
-                                             , appliedMigrationAt = appliedAt
+                                             , appliedMigrationAt
                                              , appliedMigrationDuration
                                              , appliedMigrationStatus
+                                             , appliedMigrationTxnId
+                                             , appliedMigrationConnId
                                              }
                                        ]
 
@@ -420,7 +523,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 -> m ()
             registerAppliedNoTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus
                 = do
-                    csReady <- readMVar coddSchemaUpToDate
+                    csReady <- coddSchemaUpToDate
                     case (appliedMigrationStatus, csReady) of
                         (NoTxnMigrationFailed _, False) -> do
                             -- Super duper ultra extra special case: we try to create codd_schema as a partially-run no-txn migration may have applied statements that make the default connection string accessible. The same isn't possible with in-txn migrations.
@@ -443,12 +546,11 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             )
                         of
                             (Nothing, False) -> do -- No default connection available and migrations running on non-default database
-                                appliedAt <-
-                                    DB.fromOnly
-                                        <$> unsafeQuery1
-                                                blockConn
-                                                "SELECT clock_timestamp()"
-                                                ()
+                                (appliedMigrationAt, appliedMigrationTxnId, appliedMigrationConnId) <-
+                                    unsafeQuery1
+                                        blockConn
+                                        "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
+                                        ()
                                 modifyMVar_ unregisteredButAppliedMigs
                                     $ \apmigs ->
                                           pure
@@ -456,13 +558,19 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                               ++ [ AppliedMigration
                                                        { appliedMigrationName
                                                        , appliedMigrationTimestamp
-                                                       , appliedMigrationAt =
-                                                           appliedAt
+                                                       , appliedMigrationAt
                                                        , appliedMigrationDuration
                                                        , appliedMigrationStatus
+                                                       , appliedMigrationTxnId
+                                                       , appliedMigrationConnId
                                                        }
                                                  ]
                             (Just defaultConn, False) -> do -- Running migrations on non-default database, but default connection is available
+                                (appliedMigrationTxnId, appliedMigrationConnId) <-
+                                    unsafeQuery1
+                                        blockConn
+                                        "SELECT txid_current(), pg_backend_pid()"
+                                        ()
                                 void
                                     $ withTransaction @txn txnIsolationLvl
                                                            defaultConn
@@ -474,6 +582,10 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                           NowInPostgresTime
                                           appliedMigrationDuration
                                           appliedMigrationStatus
+                                          (SpecificIds
+                                              appliedMigrationTxnId
+                                              appliedMigrationConnId
+                                          )
                             (_, True) -> do -- Migrations running on default database means we can register them here if codd_schema exists and is up to date
                                 void
                                     $ withTransaction @txn txnIsolationLvl
@@ -486,6 +598,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                           NowInPostgresTime
                                           appliedMigrationDuration
                                           appliedMigrationStatus
+                                          OfCurrentTransaction
 
 
 
@@ -493,32 +606,51 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
             (\_ block -> do
                 let cinfo =
                         fromMaybe defaultConnInfo (blockCustomConnInfo block)
+                    isDefaultConn     = cinfo == defaultConnInfo
+                    connUsesDefaultDb = DB.connectDatabase cinfo
+                        == DB.connectDatabase defaultConnInfo
                 (_, conn) <- openConn cinfo
 
-                -- Create codd_schema and flush previously applied migrations if possible. We do this here
-                -- since we expect _some_ of the migration blocks to use the default connection string, and after
-                -- that we can register migrations were applied.
-                createCoddSchemaAndFlushPendingMigrations
-
-                case
-                        ( block
-                        , isOneShotApplication defaultConnInfo pendingMigs
-                        )
-                    of
-                        (BlockInTxn inTxnBlock, True) -> runInTxnBlock
-                            (fmap Just . actionAfter hoistedBlocks)
+                case block of
+                    BlockInTxn inTxnBlock -> do
+                        unless isDefaultConn
+                               createCoddSchemaAndFlushPendingMigrations
+                        runInTxnBlock
+                            (do
+                                -- Creating codd_schema inside the same transaction as migrations increases atomicity
+                                -- and also allows for migrations themselves to create codd_schema, which is useful because then users
+                                -- can have dumps as migrations
+                                when isDefaultConn
+                                    $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection
+                                          conn
+                                if isOneShotApplication defaultConnInfo
+                                                        pendingMigs
+                                then
+                                    Just <$> actionAfter hoistedBlocks conn
+                                else
+                                    pure Nothing
+                            )
                             conn
                             inTxnBlock
                             (registerAppliedInTxnMig conn cinfo)
-                        (BlockInTxn inTxnBlock, False) -> runInTxnBlock
-                            (const $ pure Nothing)
-                            conn
-                            inTxnBlock
-                            (registerAppliedInTxnMig conn cinfo)
-                        (BlockNoTxn noTxnBlock, _) -> runNoTxnMig
+                            (hasMigBeenApplied
+                                (if connUsesDefaultDb
+                                    then Just conn
+                                    else Nothing
+                                )
+                            )
+                    BlockNoTxn noTxnBlock -> do
+                        createCoddSchemaAndFlushPendingMigrations
+                        runNoTxnMig
                             conn
                             noTxnBlock
                             (registerAppliedNoTxnMig conn cinfo)
+                            (hasMigBeenApplied
+                                (if connUsesDefaultDb
+                                    then Just conn
+                                    else Nothing
+                                )
+                            )
             )
             Nothing
             pendingMigs
@@ -542,7 +674,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
 
   where
     runInTxnBlock
-        :: (DB.Connection -> txn b)
+        :: txn b
         -> DB.Connection
         -> ConsecutiveInTxnMigrations m
         -> (  FilePath
@@ -551,8 +683,9 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> MigrationApplicationStatus
            -> txn ()
            ) -- ^ Using the `txn` monad is right: registering applied migrations happens in the same connection that applies migrations if that is a default-database connection, and otherwise will be scheduled to be inserted into codd_schema.sql_migrations in the first future opportunity, meaning when this function is called it's merely an in-memory operation, which can also run in `txn`.
+        -> (FilePath -> txn (Maybe MigrationApplicationStatus)) -- ^ Function to check if a migration has been applied
         -> m b
-    runInTxnBlock act conn migBlock registerMig =
+    runInTxnBlock act conn migBlock registerMig hasMigBeenApplied =
          -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
         retryFold
                 retryPolicy
@@ -575,10 +708,25 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                       let hoistedMigs :: NonEmpty (AddedSqlMigration txn)
                           hoistedMigs = hoistAddedSqlMigration lift
                               <$> inTxnMigs blockFinal
-                      errorOrOk <- forMExcept hoistedMigs $ applySingleMigration
-                          conn
-                          registerMig
-                          NoSkipStatements
+                      errorOrOk <- forMExcept hoistedMigs $ \mig -> do
+                          let migname = migrationName $ addedSqlMig mig
+                          appStatus <- hasMigBeenApplied migname
+                          case appStatus of
+                              Just (NoTxnMigrationFailed _) ->
+                                  error
+                                      $ migname
+                                      ++ " is an in-txn migration, yet when I look in codd_schema.sql_migrations it's registered as a partially applied no-txn migration. If you aren't messing with codd's internals, this is a bug. Otherwise you're trying to do something unsupported."
+                              Just _ -> do
+                                  logInfo
+                                      (  "<YELLOW>Skipping</YELLOW> "
+                                      <> Text.pack migname
+                                      )
+                                  pure (Right ())
+                              Nothing -> applySingleMigration
+                                  conn
+                                  registerMig
+                                  NoSkipStatements
+                                  mig
                       case errorOrOk of
                           Left e -> do
                               liftIO $ DB.rollback conn
@@ -586,7 +734,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                   "<MAGENTA>ROLLBACK</MAGENTA>ed transaction"
                               pure $ Left e
                           Right () -> do
-                              res     <- act conn
+                              res     <- act
                               -- Also catch exceptions on COMMIT so they're treated as a retriable error
                               commitE <- try $ liftIO $ DB.execute_ conn
                                                                     "COMMIT"
@@ -610,29 +758,43 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
            -> DiffTime
            -> MigrationApplicationStatus
            -> m ()
-           ) -- ^ This is `m` instead of `txn` and is correct, unlike in `runInTxnBlock`. The reason is that there is no transaction opened by codd for no-txn migrations, and so the function that registers applied migrations needs to start its own transaction.
+           ) -- ^ This is `m` instead of `txn` and is correct. The reason is that there is no transaction opened by codd for no-txn migrations, and so the function that registers applied migrations needs to start its own transaction.
+        -> (FilePath -> m (Maybe MigrationApplicationStatus)) -- ^ Function to check if a migration has been applied
         -> m (Maybe x)
-    runNoTxnMig conn mig registerMig = do
+    runNoTxnMig conn mig registerMig hasMigBeenApplied = do
+        let migname = migrationName $ addedSqlMig $ singleNoTxnMig mig
         retryFold
                 retryPolicy
                 (\(previousMig, _) RetryIteration { lastError } ->
                     case lastError of
                         Nothing -> do
-                            let numStmtsApplied =
-                                    numStatementsAlreadyApplied mig
-                            when (numStmtsApplied > 0)
-                                $  logWarn
-                                $ "Resuming application of partially applied <YELLOW>no-txn</YELLOW> migration <MAGENTA>"
-                                <> Text.pack
-                                       (migrationName
-                                           (addedSqlMig (singleNoTxnMig mig))
-                                       )
-                                <> "</MAGENTA>. Skipping the first "
-                                <> Fmt.sformat Fmt.int numStmtsApplied
-                                <> " SQL statements, which have already been applied, and starting application from the "
-                                <> Fmt.sformat Fmt.ords (numStmtsApplied + 1)
-                                <> " statement"
-                            pure (previousMig, numStmtsApplied)
+                            -- We recheck application status because dumps-as-migrations can insert into codd_schema.sql_migrations themselves.
+                            recheckedAppStatus <- hasMigBeenApplied migname
+                            case recheckedAppStatus of
+                                Just (MigrationAppliedSuccessfully _) -> do
+                                    -- Here a migration inserted into codd_schema.sql_migrations itself, claiming the migration has been applied.
+                                    -- So we signal it must be skipped with the `Left ()` value
+                                    pure (previousMig, Left ())
+                                _ -> do
+                                    let
+                                        numStmtsApplied =
+                                            case recheckedAppStatus of
+                                                Nothing ->
+                                                    numStatementsAlreadyApplied
+                                                        mig
+                                                Just (NoTxnMigrationFailed n)
+                                                    -> n
+                                    when (numStmtsApplied > 0)
+                                        $  logWarn
+                                        $ "Resuming application of partially applied <YELLOW>no-txn</YELLOW> migration <MAGENTA>"
+                                        <> Text.pack migname
+                                        <> "</MAGENTA>. Skipping the first "
+                                        <> Fmt.sformat Fmt.int numStmtsApplied
+                                        <> " SQL statements, which have already been applied, and starting application from the "
+                                        <> Fmt.sformat Fmt.ords
+                                                       (numStmtsApplied + 1)
+                                        <> " statement"
+                                    pure (previousMig, Right numStmtsApplied)
                         Just NoTxnMigrationApplicationFailure { noTxnMigAppliedStatements }
                             -> do
                                 logWarn
@@ -645,9 +807,12 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                            (noTxnMigAppliedStatements + 1)
                                     <> " statement"
                                 freshBlock <- reReadMig previousMig
-                                pure (freshBlock, noTxnMigAppliedStatements)
+                                pure
+                                    ( freshBlock
+                                    , Right noTxnMigAppliedStatements
+                                    )
                 )
-                (mig, 0)
+                (mig, Right 0)
                 (\case
                     Left lastErr -> do
                         logError
@@ -663,15 +828,24 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         throwIO lastErr
                     Right ret -> pure ret
                 )
-            $ \(migFinal, numStmtsToSkip) ->
-                  fmap (const Nothing) <$> applySingleMigration
-                      conn
-                      registerMig
-                      (SkipStatementsNoTxn numStmtsToSkip)
-                      (singleNoTxnMig migFinal)
+            $ \(migFinal, skipInstr) -> do
+                  case skipInstr of
+                      Left () -> do
+                          logInfo
+                              ("<YELLOW>Skipping</YELLOW> " <> Text.pack migname
+                              )
+                          pure (Right Nothing)
+                      Right numStmtsToSkip ->
+                          fmap (const Nothing) <$> applySingleMigration
+                              conn
+                              registerMig
+                              (SkipStatementsNoTxn numStmtsToSkip)
+                              (singleNoTxnMig migFinal)
+
 
 data CoddSchemaVersion = CoddSchemaDoesNotExist | CoddSchemaV1 | CoddSchemaV2 -- ^ V2 includes duration of each migration's application
      | CoddSchemaV3 -- ^ V3 includes the number of SQL statements applied per migration, allowing codd to resume application of even failed no-txn migrations correctly
+     | CoddSchemaV4 -- ^ V4 includes the ID of the transaction and of the connection applying each migration
   deriving stock (Bounded, Enum, Eq, Ord, Show)
 
 detectCoddSchema :: MonadIO m => DB.Connection -> m CoddSchemaVersion
@@ -690,6 +864,8 @@ detectCoddSchema conn = do
             -> pure CoddSchemaV2
         ["id", "migration_timestamp", "applied_at", "name", "application_duration", "num_applied_statements", "no_txn_failed_at"]
             -> pure CoddSchemaV3
+        ["id", "migration_timestamp", "applied_at", "name", "application_duration", "num_applied_statements", "no_txn_failed_at", "txnid", "connid"]
+            -> pure CoddSchemaV4
         _ ->
             error
                 $ "Internal codd error. Unless you've manually modified the codd_schema.sql_migrations table, this is a bug in codd. Please report it and include the following as column names in your report: "
@@ -697,7 +873,7 @@ detectCoddSchema conn = do
 
 createCoddSchema
     :: forall txn m
-     . (MonadUnliftIO m, NotInTxn m, txn ~ InTxnT m)
+     . (MonadUnliftIO m, CanStartTxn m txn, MonadUnliftIO txn)
     => CoddSchemaVersion
     -- ^ Desired schema version. This should always be `maxBound` in the app; it's meant to assume other values only in tests
     -> TxnIsolationLvl
@@ -747,7 +923,10 @@ createCoddSchema targetVersion txnIsolationLvl conn =
                     "ALTER TABLE codd_schema.sql_migrations ADD COLUMN num_applied_statements INT, ADD COLUMN no_txn_failed_at timestamptz, ALTER COLUMN applied_at DROP NOT NULL, ADD CONSTRAINT no_txn_mig_applied_or_failed CHECK ((applied_at IS NULL) <> (no_txn_failed_at IS NULL)); \n\
                     \ -- Grant UPDATE so in-txn migrations running under different users can register themselves atomically \n\
                     \GRANT UPDATE ON TABLE codd_schema.sql_migrations TO PUBLIC;"
-                CoddSchemaV3 -> pure ()
+                CoddSchemaV3 -> execvoid_
+                    conn
+                    "ALTER TABLE codd_schema.sql_migrations ADD COLUMN txnid BIGINT DEFAULT txid_current(), ADD COLUMN connid INT DEFAULT pg_backend_pid()"
+                CoddSchemaV4 -> pure ()
 
             -- `succ` is a partial function, but it should never throw in this context
             go (succ currentSchemaVersion)
@@ -810,6 +989,10 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
                             withTransaction @(InTxnT m) txnIsolationLvl conn
                                 $ do
                                       case v of
+                                          CoddSchemaV4 -> query
+                                              conn
+                                              "SELECT name, no_txn_failed_at IS NULL, COALESCE(num_applied_statements, 0) FROM codd_schema.sql_migrations"
+                                              ()
                                           CoddSchemaV3 -> query
                                               conn
                                               "SELECT name, no_txn_failed_at IS NULL, COALESCE(num_applied_statements, 0) FROM codd_schema.sql_migrations"
@@ -1387,6 +1570,11 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
 -- applied, so we wouldn't be able to use NowInPostgresTime by the time codd_schema is created.
 data MigrationLastStatementAppliedAt = NowInPostgresTime | SpecificTime UTCTime
 
+-- | This type exists because we want to register the txnId and connId that was effectively the one that applied statements in each migration (no-txn migration have a different txnId for each statement, but that's orthogonal),
+-- and some migrations are applied in separate connections or before codd_schema is ready, so they query these IDs from the database at that time in those cases. When codd_schema is ready and the migration runs in the default
+-- database, callers will call us with `OfCurrentTransaction`, issuing one less statement per migration (not really a performance gain, but less log spamming).
+data MigrationTxnAndConnIds = OfCurrentTransaction | SpecificIds Int64 Int
+
 -- | Registers in the DB that a migration with supplied name and timestamp
 --   has been either successfully applied or partially failed (the latter only makes sense for no-txn migrations).
 --   Will throw an error if codd_schema hasn't yet been created.
@@ -1401,9 +1589,12 @@ registerRanMigration
     -> MigrationLastStatementAppliedAt -- ^ The time the last statement of the migration was applied or when it failed.
     -> DiffTime
     -> MigrationApplicationStatus
+    -> MigrationTxnAndConnIds
     -> m UTCTime
-registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration apStatus
-    = let (args, numAppliedStatements, timestampValue) =
+registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDuration apStatus txnConnIds
+    = let
+          -- Ugly splicing and dicing follows..
+          (args1, numAppliedStatements, timestampValue) =
               case (appliedAt, apStatus) of
                   (NowInPostgresTime, NoTxnMigrationFailed numStmts) ->
                       ("?, ?, clock_timestamp()", numStmts, Nothing)
@@ -1413,26 +1604,37 @@ registerRanMigration conn isolLvl fn migTimestamp appliedAt appliedMigrationDura
                       ("?, NULL, ?", numStmts, Just t)
                   (SpecificTime t, MigrationAppliedSuccessfully numStmts) ->
                       ("?, ?, NULL", numStmts, Just t)
+          (cols2, args2, txnConnIdsRow) = case txnConnIds of
+              OfCurrentTransaction -> (")", "", DB.toRow ())
+              SpecificIds txnId connId ->
+                  (", txnid, connid)", ", ?, ?", DB.toRow (txnId, connId))
       in
           withTransaction @txn isolLvl conn $ DB.fromOnly <$> unsafeQuery1
               conn
-              ("INSERT INTO codd_schema.sql_migrations as m (migration_timestamp, name, application_duration, num_applied_statements, applied_at, no_txn_failed_at) \
+              ("INSERT INTO codd_schema.sql_migrations as m (migration_timestamp, name, application_duration, num_applied_statements, applied_at, no_txn_failed_at"
+              <> cols2
+              <> " \
             \                            SELECT ?, ?, ?, "
-              <> args
+              <> args1
+              <> args2
               <> " \
             \                            ON CONFLICT (name) DO UPDATE \
             \                               SET application_duration=EXCLUDED.application_duration + m.application_duration \
             \                                 , num_applied_statements=EXCLUDED.num_applied_statements \
             \                                 , applied_at=EXCLUDED.applied_at \
             \                                 , no_txn_failed_at=EXCLUDED.no_txn_failed_at \
+            \                                 , txnid=EXCLUDED.txnid \
+            \                                 , connid=EXCLUDED.connid \
             \                            RETURNING COALESCE(applied_at, no_txn_failed_at)"
               )
-              ( migTimestamp
-              , fn
+              (     ( migTimestamp
+                    , fn
                 -- postgresql-simple does not have a `ToField DiffTime` instance :(
-              , realToFrac @Double @NominalDiffTime
-              $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration)
-              / 1_000_000_000_000
-              , numAppliedStatements
-              , timestampValue
+                    , realToFrac @Double @NominalDiffTime
+                    $ fromIntegral (diffTimeToPicoseconds appliedMigrationDuration)
+                    / 1_000_000_000_000
+                    , numAppliedStatements
+                    , timestampValue
+                    )
+              DB.:. txnConnIdsRow
               )
