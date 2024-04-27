@@ -30,6 +30,8 @@ import qualified Data.Aeson                    as Aeson
 import           Data.Int                       ( Int64 )
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                     ( fromMaybe )
+import qualified Data.Set                      as Set
+import           Data.Set                       ( Set )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Data.Time                      ( CalendarDiffTime(ctTime)
@@ -38,6 +40,7 @@ import           Data.Time                      ( CalendarDiffTime(ctTime)
                                                 , secondsToNominalDiffTime
                                                 )
 import qualified Database.PostgreSQL.Simple    as DB
+import           DbDependentSpecs.RetrySpec     ( runMVarLogger )
 import           DbUtils                        ( aroundFreshDatabase
                                                 , cleanupAfterTest
                                                 , createTestUserMig
@@ -56,6 +59,8 @@ import           Test.QuickCheck
 import qualified Test.QuickCheck               as QC
 import           UnliftIO                       ( SomeException
                                                 , liftIO
+                                                , newMVar
+                                                , readMVar
                                                 )
 
 placeHoldersMig, selectMig, copyMig :: MonadThrow m => AddedSqlMigration m
@@ -135,7 +140,7 @@ createAlwaysPassingMig migrationIdx migName = SqlMigration
     , migrationEnvVars        = mempty
     }
 
-alwaysPassingMig, createTableMig, addColumnMig, alwaysFailingMig
+alwaysPassingMig, createTableMig, addColumnMig, alwaysFailingMig, alwaysFailingMigNoTxn
     :: MonadThrow m => AddedSqlMigration m
 alwaysPassingMig = AddedSqlMigration
     SqlMigration { migrationName           = "0001-always-passing.sql"
@@ -171,6 +176,14 @@ alwaysFailingMig = AddedSqlMigration
                  , migrationEnvVars        = mempty
                  }
     (getIncreasingTimestamp 4)
+alwaysFailingMigNoTxn = AddedSqlMigration
+    SqlMigration { migrationName           = "0005-always-failing-no-txn.sql"
+                 , migrationSql            = mkValidSql "SELECT 5/0"
+                 , migrationInTxn          = False
+                 , migrationCustomConnInfo = Nothing
+                 , migrationEnvVars        = mempty
+                 }
+    (getIncreasingTimestamp 5)
 
 -- | A migration that creates the codd_schema itself (and an old version at that). This is like what a pg dump would have.
 pgDumpEmulatingMig :: MonadThrow m => AddedSqlMigration m
@@ -187,7 +200,9 @@ pgDumpEmulatingMig = AddedSqlMigration
                         \, name text not null \
                         \, unique (name), unique (migration_timestamp));\
                        \GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
-                       \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;"
+                       \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;\
+                    \ -- Pretend a migration that always fails was applied. We'll be able to add this migration in our test as codd should skip it \n\
+                    \INSERT INTO codd_schema.sql_migrations (migration_timestamp, applied_at, name) VALUES ('2000-01-01', '2000-01-01', '0004-always-failing.sql'), ('2000-01-02', '2000-01-01 00:00:01', '0005-always-failing-no-txn.sql')"
         , migrationInTxn          = True
         , migrationCustomConnInfo = Nothing
         , migrationEnvVars        = mempty
@@ -1060,13 +1075,14 @@ spec = do
                                                                  -- 700ms is a conservative value given each duration should be ~ 1 sec
                                                   )
 
-                it
-                        "Allow migrations that create codd_schema themselves if they run sufficiently early in some cases"
+                after (const cleanupAfterTest)
+                    $ it
+                          "Allow migrations that create codd_schema themselves if they run sufficiently early in some cases"
                     $ do
                           defaultConnInfo <- testConnInfo
                           testSettings    <- testCoddSettings
                           bootstrapMig    <- createTestUserMig
-                          finallyDrop "codd-test-db" $ pure () -- TODO: Avoid creating this in the first place.. wrap this test in aroundTestDbInfo to do that.
+                          logsmv          <- newMVar []
 
                           let postgresCinfo = defaultConnInfo
                                   { DB.connectDatabase = "postgres"
@@ -1079,10 +1095,12 @@ spec = do
                                             [ bootstrapMig
                                             , alwaysPassingMig
                                             , pgDumpEmulatingMig
+                                            , alwaysFailingMig -- The previous migration pretends this was applied so codd should skip this
+                                            , alwaysFailingMigNoTxn -- The previous migration pretends this was applied so codd should skip this
                                             ]
 
                           finalCoddSchemaVersion <-
-                              runCoddLogger $ applyMigrationsNoCheck
+                              runMVarLogger logsmv $ applyMigrationsNoCheck
                                   testSettings
                                   (Just allMigs)
                                   testConnTimeout
@@ -1090,19 +1108,48 @@ spec = do
                           finalCoddSchemaVersion `shouldBe` maxBound
                           withConnection defaultConnInfo testConnTimeout
                               $ \conn -> do
-                                       -- 1. Check that migrations ran
-                                    runMigs :: [FilePath] <-
-                                        map DB.fromOnly
-                                            <$> DB.query
-                                                    conn
-                                                    "SELECT name FROM codd_schema.sql_migrations ORDER BY applied_at, id"
-                                                    ()
+                                       -- 1. Check that all migrations are registered. Note they might _NOT_ be in the same order of `allMigs` as the dump is registered as applied after skipped migrations
+                                    runMigs :: Set FilePath <-
+                                        Set.fromList
+                                        .   map DB.fromOnly
+                                        <$> DB.query
+                                                conn
+                                                "SELECT name FROM codd_schema.sql_migrations"
+                                                ()
                                     runMigs
-                                        `shouldBe` map
-                                                       ( migrationName
-                                                       . addedSqlMig
+                                        `shouldBe` Set.fromList
+                                                       (map
+                                                           ( migrationName
+                                                           . addedSqlMig
+                                                           )
+                                                           allMigs
                                                        )
-                                                       allMigs
+                          logs <- readMVar logsmv
+                          logs `shouldSatisfy` any
+                              (\l ->
+                                  "Skipping"
+                                      `Text.isInfixOf` l
+                                      &&               Text.pack
+                                                           (migrationName
+                                                               (addedSqlMig @IO
+                                                                   alwaysFailingMig
+                                                               )
+                                                           )
+                                      `Text.isInfixOf` l
+                              )
+                          logs `shouldSatisfy` any
+                              (\l ->
+                                  "Skipping"
+                                      `Text.isInfixOf` l
+                                      &&               Text.pack
+                                                           (migrationName
+                                                               (addedSqlMig @IO
+                                                                   alwaysFailingMigNoTxn
+                                                               )
+                                                           )
+
+                                      `Text.isInfixOf` l
+                              )
 
                 after (const cleanupAfterTest)
                     $ it "Diverse order of different types of migrations"

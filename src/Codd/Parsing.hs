@@ -47,7 +47,9 @@ module Codd.Parsing
     toMigrationTimestamp,
     -- Exported for tests
     ParserState (..),
+    coddConnStringCommentParser,
     copyFromStdinAfterStatementParser,
+    manyStreaming,
     parseSqlPiecesStreaming',
   )
 where
@@ -113,6 +115,7 @@ import Data.Time
   )
 import Data.Time.Clock (UTCTime (..))
 import Database.PostgreSQL.Simple (ConnectInfo (..))
+import qualified Database.PostgreSQL.Simple.FromRow as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import Network.URI
   ( URI (..),
@@ -164,6 +167,17 @@ data AddedSqlMigration m = AddedSqlMigration
 
 -- | Holds applied status and number of applied statements.
 data MigrationApplicationStatus = NoTxnMigrationFailed Int | MigrationAppliedSuccessfully Int
+
+instance DB.FromRow MigrationApplicationStatus where
+  fromRow = do
+    numAppliedStmts :: Maybe Int <- DB.field
+    noTxnFailedAt :: Maybe UTCTime <- DB.field
+    case (numAppliedStmts, noTxnFailedAt) of
+      (Nothing, _) ->
+        -- old codd_schema version where only fully applied migs were registered
+        pure $ MigrationAppliedSuccessfully 0
+      (Just n, Nothing) -> pure $ MigrationAppliedSuccessfully n
+      (Just n, Just _) -> pure $ NoTxnMigrationFailed n
 
 data AppliedMigration = AppliedMigration
   { appliedMigrationName :: FilePath,
