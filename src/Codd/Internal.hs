@@ -48,6 +48,7 @@ import           Codd.Representations           ( DbRep
                                                 , readRepresentationsFromDbWithSettings
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
+import           Control.Applicative            ( Alternative(..) )
 import           Control.Monad                  ( (>=>)
                                                 , foldM
                                                 , forM
@@ -346,14 +347,16 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 -> n (Maybe DB.Connection)
             queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
 
-        -- | Meant to check what the application status of an arbitrary migration is. Used because dumps-as-migrations can insert into codd_schema.sql_migrations themselves,
-        -- in which case we should detect that and skip migrations that were collected as pending at an earlier stage.
+-- | Meant to check what the application status of an arbitrary migration is. Used because dumps-as-migrations can insert into codd_schema.sql_migrations themselves,
+-- in which case we should detect that and skip migrations that were collected as pending at an earlier stage.
+-- Returns `Nothing` if the migration has not been applied at all.
             hasMigBeenApplied
                 :: forall n
                  . MonadUnliftIO n
-                => FilePath
+                => Maybe DB.Connection
+                -> FilePath
                 -> n (Maybe MigrationApplicationStatus)
-            hasMigBeenApplied fp = do
+            hasMigBeenApplied mDefaultDatabaseConn fp = do
                 mDefaultConn             <- queryConn defaultConnInfo
                 minimumCoddSchemaVersion <- readMVar lastKnownCoddSchemaVersion
                 apunregmigs              <- readMVar unregisteredButAppliedMigs
@@ -362,9 +365,10 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         apunregmigs
                 case appliedUnreg of
                     Just m  -> pure $ Just $ appliedMigrationStatus m
-                    Nothing -> case mDefaultConn of
-                        Nothing          -> pure Nothing
-                        Just defaultConn -> do
+                    Nothing -> -- We use the same connection as the one applying migrations if it's in the default database, otherwise we try to use the default conn if it's available
+                               case mDefaultDatabaseConn <|> mDefaultConn of
+                        Nothing        -> pure Nothing
+                        Just connToUse -> do
                             -- If in-memory info says codd_schema does not exist, a migration may have created it and we're just not aware yet, so check that.
                             refinedCoddSchemaVersion <-
                                 if minimumCoddSchemaVersion
@@ -372,7 +376,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                 then
                                     do
                                         actualVersion <- detectCoddSchema
-                                            defaultConn
+                                            connToUse
                                         modifyMVar_
                                             lastKnownCoddSchemaVersion
                                             (const $ pure actualVersion)
@@ -381,13 +385,13 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                     pure minimumCoddSchemaVersion
                             if refinedCoddSchemaVersion >= CoddSchemaV3
                                 then queryMay
-                                    defaultConn
+                                    connToUse
                                     "SELECT num_applied_statements, no_txn_failed_at FROM codd_schema.sql_migrations WHERE name=?"
                                     (DB.Only fp)
                                 else if refinedCoddSchemaVersion >= CoddSchemaV1
                                     then do
                                         queryMay
-                                            defaultConn
+                                            connToUse
                                             "SELECT 0, NULL::timestamptz FROM codd_schema.sql_migrations WHERE name=?"
                                             (DB.Only fp)
                                     else pure Nothing
@@ -601,11 +605,13 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
             (\_ block -> do
                 let cinfo =
                         fromMaybe defaultConnInfo (blockCustomConnInfo block)
+                    isDefaultConn     = cinfo == defaultConnInfo
+                    connUsesDefaultDb = DB.connectDatabase cinfo
+                        == DB.connectDatabase defaultConnInfo
                 (_, conn) <- openConn cinfo
 
                 case block of
                     BlockInTxn inTxnBlock -> do
-                        let isDefaultConn = cinfo == defaultConnInfo
                         unless isDefaultConn
                                createCoddSchemaAndFlushPendingMigrations
                         runInTxnBlock
@@ -626,13 +632,24 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             conn
                             inTxnBlock
                             (registerAppliedInTxnMig conn cinfo)
-                            hasMigBeenApplied
+                            (hasMigBeenApplied
+                                (if connUsesDefaultDb
+                                    then Just conn
+                                    else Nothing
+                                )
+                            )
                     BlockNoTxn noTxnBlock -> do
                         createCoddSchemaAndFlushPendingMigrations
-                        runNoTxnMig conn
-                                    noTxnBlock
-                                    (registerAppliedNoTxnMig conn cinfo)
-                                    hasMigBeenApplied
+                        runNoTxnMig
+                            conn
+                            noTxnBlock
+                            (registerAppliedNoTxnMig conn cinfo)
+                            (hasMigBeenApplied
+                                (if connUsesDefaultDb
+                                    then Just conn
+                                    else Nothing
+                                )
+                            )
             )
             Nothing
             pendingMigs
