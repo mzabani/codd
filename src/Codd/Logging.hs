@@ -14,10 +14,10 @@ module Codd.Logging
     , runCoddLoggerLevelFilter
     ) where
 
+import           Control.Monad                  ( when )
 import           Control.Monad.Reader           ( MonadReader(..)
                                                 , MonadTrans(..)
                                                 , ReaderT(..)
-                                                , when
                                                 )
 import           Control.Monad.Trans.Resource   ( MonadThrow )
 import           Data.Text                      ( Text )
