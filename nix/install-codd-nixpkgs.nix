@@ -15,8 +15,8 @@ let
     (let lock = builtins.fromJSON (builtins.readFile ../flake.lock);
     in fetchTarball {
       url =
-        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-unstable.locked.rev}.tar.gz";
-      sha256 = lock.nodes.nixpkgs-unstable.locked.narHash;
+        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-2311.locked.rev}.tar.gz";
+      sha256 = lock.nodes.nixpkgs-2311.locked.narHash;
     }) { overlays = [ haskellPatchesOverlay ]; };
   pgService = import ./postgres-service.nix {
     pkgs = nixpkgs;

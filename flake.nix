@@ -1,10 +1,10 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/2a1000b835ea4f8186b79e5926c99a80f9e354fc";
-  # When switching away from nixpkgs-unstable, make sure to change
+    "github:input-output-hk/haskell.nix/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2";
+  # When switching away from nixpkgs-23.11, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -95,8 +95,8 @@
                     # `cabal`, `hlint` and `haskell-language-server`
                     shell.tools = {
                       cabal = "latest";
-                      hlint = "3.4.1"; # latest was failing cabal deps bounds
-                      haskell-language-server = "2.4.0.0";
+                      hlint = "latest";
+                      haskell-language-server = "latest";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
@@ -104,7 +104,7 @@
                       ghcid
                       glibcLocales
                       # haskellPackages.brittany # Brittany from the LTS is older than this
-                      proj.hsPkgs.brittany.components.exes.brittany
+                      # proj.hsPkgs.brittany.components.exes.brittany
                       postgres-service
                       postgresql_16
                       run
@@ -130,8 +130,8 @@
                 in proj;
             in {
               # This overlay adds our project to pkgs
-              coddProjectAeson1 = mkProject "stack.yaml" "ghc8107";
-              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc902";
+              coddProjectAeson1 = mkProject "stack.yaml" "ghc902";
+              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc965";
             })
         ];
 
