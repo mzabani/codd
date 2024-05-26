@@ -130,12 +130,12 @@
                 in proj;
             in {
               # This overlay adds our project to pkgs
-              coddProjectAeson1 = mkProject "stack.yaml" "ghc902";
-              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc965";
+              coddProjectOld = mkProject "stack-ghc9.yaml" "ghc902";
+              coddProject = mkProject "stack.yaml" "ghc965";
             })
         ];
 
-        flakeAeson2 = pkgs.coddProjectAeson2.flake {
+        flakeAeson2 = pkgs.coddProject.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
           # Check nixpkgs.lib.systems for more.
@@ -143,7 +143,7 @@
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
         flakeAeson1 =
-          pkgs.coddProjectAeson1.flake { crossPlatforms = p: [ p.musl64 ]; };
+          pkgs.coddProjectOld.flake { crossPlatforms = p: [ p.musl64 ]; };
       in flakeAeson2 // {
         # Built by `nix build .`
         defaultPackage = flakeAeson2.packages."codd:exe:codd";
