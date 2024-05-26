@@ -97,14 +97,13 @@
                       cabal = "latest";
                       hlint = "latest";
                       haskell-language-server = "latest";
+                      fourmolu="latest";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
                       cacert
                       ghcid
                       glibcLocales
-                      # haskellPackages.brittany # Brittany from the LTS is older than this
-                      # proj.hsPkgs.brittany.components.exes.brittany
                       postgres-service
                       postgresql_16
                       run

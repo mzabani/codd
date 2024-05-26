@@ -202,7 +202,6 @@ data BootstrapCheck = BootstrapCheck
     , coddSchemaVersion     :: CoddSchemaVersion
     }
 
--- brittany-disable-next-binding
 -- | Returns info on what kind of bootstrapping will be necessary,
 -- waiting up to the time limit for postgres to be up before throwing
 -- an exception.
