@@ -135,26 +135,26 @@
             })
         ];
 
-        flakeAeson2 = pkgs.coddProject.flake {
+        flakeDefault = pkgs.coddProject.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
           # Check nixpkgs.lib.systems for more.
           # The mingwW64 build still fails, IIRC.
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
-        flakeAeson1 =
+        flakeOld =
           pkgs.coddProjectOld.flake { crossPlatforms = p: [ p.musl64 ]; };
-      in flakeAeson2 // {
+      in flakeDefault // {
         # Built by `nix build .`
-        defaultPackage = flakeAeson2.packages."codd:exe:codd";
+        defaultPackage = flakeDefault.packages."codd:exe:codd";
 
-        # Aeson 1 is supported but only tested to compile without errors,
+        # GHC 9.0 is supported but only tested to compile without errors,
         # not actively tested.
-        # To enter dev shell, run `nix develop .#flakeAeson1.x86_64-linux.devShell`
-        # To build run `nix build .#flakeAeson1.x86_64-linux.codd-musl`
-        flakeAeson1 = flakeAeson1 // {
+        # To enter dev shell, run `nix develop .#flakeOld.x86_64-linux.devShell`
+        # To build run `nix build .#flakeOld.x86_64-linux.codd-musl`
+        flakeOld = flakeOld // {
           codd-musl =
-            flakeAeson1.packages."x86_64-unknown-linux-musl:codd:exe:codd";
+            flakeOld.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
 
         testShells = {
@@ -175,7 +175,7 @@
         dockerImage = import ./nix/docker/codd-exe.nix {
           inherit pkgs;
           codd-exe =
-            flakeAeson2.packages."x86_64-unknown-linux-musl:codd:exe:codd";
+            flakeDefault.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
       });
 }

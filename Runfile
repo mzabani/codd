@@ -8,8 +8,8 @@ ci-tests:
     echo "Testing install script posix compatibility"
     shellcheck --shell=sh nix/install-codd.sh
 
-    echo "Building codd with aeson 1"
-    nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
+    echo "Building codd with older LTS"
+    nix build --no-link .#flakeOld.x86_64-linux.codd-musl
 
     echo "Running tests that don't depend on a database"
     run test-no-db --nix

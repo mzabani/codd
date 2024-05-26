@@ -207,7 +207,6 @@ test-suite codd-test
   main-is: Main.hs
   other-modules:
       AllSpecs
-      AesonValueGen
       DbDependentSpecs.AnalysisSpec
       DbDependentSpecs.AppCommandsSpec
       DbDependentSpecs.ApplicationSpec
@@ -268,20 +267,15 @@ test-suite codd-test
     , hashable
     , hspec
     , hspec-core
-    , hspec-expectations
     , mtl
     , network-uri
     , postgresql-simple
     , QuickCheck
     , random
     , resourcet
-    , scientific
-    , semialign
     , streaming
     , text
     , time
     , typed-process
     , unliftio
-    , unordered-containers
-    , vector
   default-language: Haskell2010

@@ -51,8 +51,8 @@ jobs:
     - name: Build statically linked codd
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
 
-    - name: Build statically linked codd with aeson 1
-      run: nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
+    - name: Build statically linked codd with older LTS
+      run: nix build --no-link .#flakeOld.x86_64-linux.codd-musl
 
     - name: Build statically linked codd's tests
       run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
