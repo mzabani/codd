@@ -1,6 +1,18 @@
 .SHELL = bash
 
 ##
+# Runs benchmarks.
+# OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+benchmarks:
+    set -eo pipefail
+
+    if [ -n "$NIX" ]; then
+        nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+    else
+        cabal run -O2 codd-bench
+    fi
+
+##
 # Runs all tests that CI runs, exactly like CI runs them.
 ci-tests:
     set -eo pipefail
