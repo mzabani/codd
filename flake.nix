@@ -129,7 +129,6 @@
                 in proj;
             in {
               # This overlay adds our project to pkgs
-              coddProjectOld = mkProject "stack-ghc9.yaml" "ghc902";
               coddProject = mkProject "stack.yaml" "ghc965";
             })
         ];
@@ -141,20 +140,9 @@
           # The mingwW64 build still fails, IIRC.
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
-        flakeOld =
-          pkgs.coddProjectOld.flake { crossPlatforms = p: [ p.musl64 ]; };
       in flakeDefault // {
         # Built by `nix build .`
         defaultPackage = flakeDefault.packages."codd:exe:codd";
-
-        # GHC 9.0 is supported but only tested to compile without errors,
-        # not actively tested.
-        # To enter dev shell, run `nix develop .#flakeOld.x86_64-linux.devShell`
-        # To build run `nix build .#flakeOld.x86_64-linux.codd-musl`
-        flakeOld = flakeOld // {
-          codd-musl =
-            flakeOld.packages."x86_64-unknown-linux-musl:codd:exe:codd";
-        };
 
         testShells = {
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
