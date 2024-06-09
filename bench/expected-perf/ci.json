@@ -1,10 +1,10 @@
 {
     "select1TimeAndMemory": [
         1e-5,
-        2
+        6
     ],
     "copyTimeAndMemory": [
         7e-6,
-        4
+        7
     ]
 }

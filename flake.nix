@@ -1,10 +1,10 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/2a1000b835ea4f8186b79e5926c99a80f9e354fc";
-  # When switching away from nixpkgs-unstable, make sure to change
+    "github:input-output-hk/haskell.nix/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2";
+  # When switching away from nixpkgs-23.11, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -95,16 +95,15 @@
                     # `cabal`, `hlint` and `haskell-language-server`
                     shell.tools = {
                       cabal = "latest";
-                      hlint = "3.4.1"; # latest was failing cabal deps bounds
-                      haskell-language-server = "2.4.0.0";
+                      hlint = "latest";
+                      haskell-language-server = "latest";
+                      fourmolu="latest";
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
                       cacert
                       ghcid
                       glibcLocales
-                      # haskellPackages.brittany # Brittany from the LTS is older than this
-                      proj.hsPkgs.brittany.components.exes.brittany
                       postgres-service
                       postgresql_16
                       run
@@ -130,32 +129,20 @@
                 in proj;
             in {
               # This overlay adds our project to pkgs
-              coddProjectAeson1 = mkProject "stack.yaml" "ghc8107";
-              coddProjectAeson2 = mkProject "stack-aeson-2.yaml" "ghc902";
+              coddProject = mkProject "stack.yaml" "ghc965";
             })
         ];
 
-        flakeAeson2 = pkgs.coddProjectAeson2.flake {
+        flakeDefault = pkgs.coddProject.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
           # Check nixpkgs.lib.systems for more.
           # The mingwW64 build still fails, IIRC.
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
-        flakeAeson1 =
-          pkgs.coddProjectAeson1.flake { crossPlatforms = p: [ p.musl64 ]; };
-      in flakeAeson2 // {
+      in flakeDefault // {
         # Built by `nix build .`
-        defaultPackage = flakeAeson2.packages."codd:exe:codd";
-
-        # Aeson 1 is supported but only tested to compile without errors,
-        # not actively tested.
-        # To enter dev shell, run `nix develop .#flakeAeson1.x86_64-linux.devShell`
-        # To build run `nix build .#flakeAeson1.x86_64-linux.codd-musl`
-        flakeAeson1 = flakeAeson1 // {
-          codd-musl =
-            flakeAeson1.packages."x86_64-unknown-linux-musl:codd:exe:codd";
-        };
+        defaultPackage = flakeDefault.packages."codd:exe:codd";
 
         testShells = {
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
@@ -175,7 +162,7 @@
         dockerImage = import ./nix/docker/codd-exe.nix {
           inherit pkgs;
           codd-exe =
-            flakeAeson2.packages."x86_64-unknown-linux-musl:codd:exe:codd";
+            flakeDefault.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
       });
 }

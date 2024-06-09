@@ -1,15 +1,24 @@
 .SHELL = bash
 
 ##
+# Runs benchmarks.
+# OPTION NIX --nix Use a Nix-built test executable instead of compiling with cabal in the user's shell.
+benchmarks:
+    set -eo pipefail
+
+    if [ -n "$NIX" ]; then
+        nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+    else
+        cabal run -O2 codd-bench
+    fi
+
+##
 # Runs all tests that CI runs, exactly like CI runs them.
 ci-tests:
     set -eo pipefail
 
     echo "Testing install script posix compatibility"
     shellcheck --shell=sh nix/install-codd.sh
-
-    echo "Building codd with aeson 1"
-    nix build --no-link .#flakeAeson1.x86_64-linux.codd-musl
 
     echo "Running tests that don't depend on a database"
     run test-no-db --nix
@@ -30,27 +39,18 @@ ci-tests:
     run test-system-resources --nix
 
 ##
-# Formats all Haskell files with brittany.
+# Formats all Haskell files with fourmolu.
 format-hs:
     set -eo pipefail
 
     readarray -d '' FILES < <(git ls-files -z '*.hs')
 
     for f in "${FILES[@]}"; do
-        if [ "$f" = "src/Codd/Representations/Database.hs" ]; then
-            echo "Skipping \"$f\" because of https://github.com/lspitzner/brittany/issues/368"
+        if [ "$f" = "src/Codd/Internal.hs" ]; then
+            echo "Skipping \"$f\" because of some fourmolu bug"
         else
-            echo "Formatting $f..";
-            ERR=""
-            brittany --write-mode inplace --indent 4 "$f" || ERR=$?
-
-            if [ "$ERR" = "60" ]; then
-                echo Ignoring XCpp error
-            elif [ "$ERR" = "61" ]; then
-                echo Ignoring parse error in inline configuration
-            elif [ "$ERR" != "" ]; then
-                exit "$ERR"
-            fi
+            echo "Formatting $f..."
+            fourmolu --mode inplace "$f"
         fi
     done
 
