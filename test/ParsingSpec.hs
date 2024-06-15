@@ -56,6 +56,7 @@ import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
 import           UnliftIO.Resource              ( runResourceT )
+import Debug.Trace (traceShowId)
 
 data RandomSql m = RandomSql
     { unRandomSql  :: PureStream m
@@ -175,21 +176,21 @@ validSqlStatements =
              , CopyFromStdinEnd "\\.\n"
              ]
            , [ CopyFromStdinStatement
-                 "copy \"schema\".employee FROM stdin WITH (FORMAT CSV);\n"
+                 "copy \"schema\".employee FROM stdin \n WITH (FORMAT CSV);\n"
              , CopyFromStdinRows "DATA\n"
              , CopyFromStdinEnd "\\.\n"
              ]
            , [
      -- Fully qualified identifiers part 1 + table without columns, but with one row (this is possible!)
                CopyFromStdinStatement
-                 "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with (FORMAT CSV);\n"
+                 "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with \n (FORMAT CSV);\n"
              , CopyFromStdinRows "\n"
              , CopyFromStdinEnd "\\.\n"
              ]
            , [
     -- Fully qualified identifiers part 2 + specifying columns
                CopyFromStdinStatement
-                 "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
+                 "CoPy \"employee\" \n  (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
              , CopyFromStdinRows "Lots of data\n"
              , CopyFromStdinRows "in\n"
              , CopyFromStdinRows "each line\n"
@@ -198,7 +199,7 @@ validSqlStatements =
            ,
          -- COPY with lots of custom escaping
              [ CopyFromStdinStatement
-                 "COPY whatever FROM STDIN WITH (FORMAT CSV);\n"
+                 "COPY\nwhatever FROM STDIN WITH (FORMAT CSV);\n"
              , CopyFromStdinRows "\\b \\0 \\x1 \\t \\v \\r \\n \\f \\b \n"
              , CopyFromStdinRows "\b \0 \r \t\n" -- I think these characters are actually invalid in COPY according to postgres.
              , CopyFromStdinEnd "\\.\n"
@@ -214,17 +215,20 @@ genTextStream t = do
     n <- arbitrary
     pure $ mkRandStream n t
 
+-- | Generates a stream that yields chunks of arbitrary sizes according to the supplied seed.
 mkRandStream :: Monad m => Int -> Text -> PureStream m
 mkRandStream seed text = PureStream $ go (mkStdGen seed) text
   where
     go g t =
         let
-            (n, g') = randomR (0, len) g
-            remainder =
-                if t == "" then Streaming.yield "" else go g' (Text.drop n t)
+            (n, g') = randomR (1, Text.length t) g
+            (thisChunk, remainder) = Text.splitAt n t
+            -- To make it even harder on the streaming parser, split up chunks where there is white-space
+            withEvenMoreSeparation = [ thisChunk ]
         in
-            Streaming.yield (Text.take n t) <> remainder
-        where len = Text.length t
+            if t == "" then Streaming.yield ""
+            else
+                Streaming.each withEvenMoreSeparation <> go g' remainder
 
 genSql :: Monad m => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do
