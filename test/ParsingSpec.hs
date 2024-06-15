@@ -86,9 +86,9 @@ validSqlStatements =
             (: [])
             [ OtherSqlPiece "SELECT 'so''m -- not a comment' FROM ahahaha;"
             , OtherSqlPiece
-                "SELECT E'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
+                "SELECT\nE'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
             , OtherSqlPiece
-                "SELECT E'Consecutive single quotes are also escaped here ''; see?';"
+                "SELECT \n\n  E'Consecutive single quotes are also escaped here ''; see?'   \n ;"
             , OtherSqlPiece "SELECT E'''20s' = E'\\'20s';"
             , OtherSqlPiece
             $  "DO"
@@ -127,7 +127,7 @@ validSqlStatements =
             , OtherSqlPiece "SELECT 'some''quoted ''string';"
             , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
             , OtherSqlPiece
-                "SELECT 'double quotes \" inside single quotes \" - 2';"
+                "SELECT \n\n 'double quotes \" inside single quotes \" - 2';"
             , OtherSqlPiece
                 "SELECT \"single quotes ' inside double quotes ' - 2\";"
             , OtherSqlPiece
@@ -140,10 +140,10 @@ validSqlStatements =
             , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
             -- Semi-colons inside parenthesised blocks are not statement boundaries
             , OtherSqlPiece
-                "create rule name as on some_event to some_table do (command1; command2; command3;);"
+                "create rule \n name as on \n some_event to \n\n some_table do (command1; command2; command3;);"
             -- String blocks can be opened inside parentheses, just like comments, dollar-quoted strings and others
             , OtherSqlPiece
-                "create rule name as on some_event to some_table do ('abcdef);'; other;);"
+                "create rule name as on some_event to some_table do ('abcdef);'; other;)\n\n;"
             , OtherSqlPiece
                 "some statement with spaces (((U&'d\\0061t\\+000061', 'abc''def' ; ; ; /* comment /* nested */ ((( */ $hey$dollar string$hey$)) 'more''of'; this; ());"
             , OtherSqlPiece
@@ -153,7 +153,7 @@ validSqlStatements =
             , OtherSqlPiece "invalid statement, bad parentheses ()));"
             , BeginTransaction "begin;"
             , BeginTransaction "BEGiN/*a*/;"
-            , BeginTransaction "BEgIN   ;"
+            , BeginTransaction "BEgIN \n  ;"
             , RollbackTransaction "ROllBaCk;"
             , RollbackTransaction "ROllBaCk/*a*/;"
             , RollbackTransaction "ROllBaCk   ;"
@@ -190,7 +190,7 @@ validSqlStatements =
            , [
     -- Fully qualified identifiers part 2 + specifying columns
                CopyFromStdinStatement
-                 "CoPy \"employee\" \n  (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
+                 "CoPy \"employee\" \n  (col1,\"col2\"   , \n\n  col4  ) from stdin with (FORMAT CSV);\n"
              , CopyFromStdinRows "Lots of data\n"
              , CopyFromStdinRows "in\n"
              , CopyFromStdinRows "each line\n"
@@ -224,11 +224,12 @@ mkRandStream seed text = PureStream $ go (mkStdGen seed) text
             (n, g') = randomR (1, Text.length t) g
             (thisChunk, remainder) = Text.splitAt n t
             -- To make it even harder on the streaming parser, split up chunks where there is white-space
-            withEvenMoreSeparation = [ thisChunk ]
+            withEvenMoreSeparation1 = List.intersperse " " $ Text.split (== ' ') thisChunk
+            withEvenMoreSeparation2 = concatMap (List.intersperse "\n" . Text.split (== '\n')) withEvenMoreSeparation1
         in
             if t == "" then Streaming.yield ""
             else
-                Streaming.each withEvenMoreSeparation <> go g' remainder
+                Streaming.each (filter ("" /=) withEvenMoreSeparation2) <> go g' remainder
 
 genSql :: Monad m => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do
