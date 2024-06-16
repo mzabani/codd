@@ -68,7 +68,6 @@ import           Control.Monad.Trans            ( MonadTrans
 import           Control.Monad.Trans.Except     ( runExceptT
                                                 , throwE
                                                 )
-import           Control.Monad.Trans.Resource   ( MonadThrow(throwM) )
 import           Data.Attoparsec.Text           ( Parser
                                                 , asciiCI
                                                 , char
@@ -116,6 +115,7 @@ import           Prelude                 hiding ( takeWhile )
 import           Streaming                      ( MFunctor(hoist)
                                                 , Of(..)
                                                 )
+import qualified Streaming.Internal            as S
 import qualified Streaming.Prelude             as Streaming
 import           Streaming.Prelude              ( Stream )
 import           UnliftIO                       ( IORef
@@ -249,113 +249,59 @@ instance (MonadTrans t, Monad m, EnvVars m) => EnvVars (t m) where
     getEnvVars = lift . getEnvVars
 
 {-# INLINE parseSqlPiecesStreaming #-} -- See Note [Inlining and specialization]
--- | This should be a rough equivalent to `many sqlPieceParser` for Streams.
 parseSqlPiecesStreaming
-    :: forall m
-     . MonadThrow m
+    :: Monad m
     => Stream (Of Text) m ()
     -> Stream (Of SqlPiece) m ()
 parseSqlPiecesStreaming = parseSqlPiecesStreaming' sqlPieceParser
 
 {-# INLINE parseSqlPiecesStreaming' #-} -- See Note [Inlining and specialization]
--- | This should be a rough equivalent to `many parser` for Streams.
 parseSqlPiecesStreaming'
-    :: forall m
-     . MonadThrow m
+    :: forall m. Monad m
     => (ParserState -> Parser ([SqlPiece], ParserState))
     -> Stream (Of Text) m ()
     -> Stream (Of SqlPiece) m ()
-parseSqlPiecesStreaming' parser contents = Streaming.concat parseResultsStream
-  -- NOTE: attoparsec's `parseWith` looks at first glance like it might help, but
-  -- the parser supplied to it is fixed, and we need a state-sensitive parser for each
-  -- chunk, because chunks might be incomplete SQL pieces.
-  where
-    mkErrorMsg errorMsg =
-        "An internal parsing error occurred. This is most likely a bug in codd. Please file a bug report.\
-    \ In the meantime, you can add this migration by writing \"-- codd: no-parse\" as its very first line.\
-    \ The downside is this migration will be in-txn and COPY will not be supported. It will also be put in\
-    \ memory all at once instead of being read and applied in streaming fashion.\
-    \ The more detailed parsing error is: "
-            ++ errorMsg
+parseSqlPiecesStreaming' parser contents = go $ manyStreaming parser OutsideCopy contents
+    where
+        go :: Stream (Of [SqlPiece]) m (Stream (Of Text) m (), ParserState) -> Stream (Of SqlPiece) m ()
+        go = \case
+            S.Step (pieces :> rest) -> Streaming.each pieces <> go rest
+            S.Return (unparsedTextStream, _) -> S.Effect $ do
+                allRemainingText <- Streaming.mconcat_ unparsedTextStream
+                -- If there is white-space at the end of the migration, it would've been parsed as WhiteSpacePiece. If there is valid SQL, then it would've been parsed as some other SQL piece. And so on.
+                -- Thus, if we're here, the end of the migration is either empty text or something we failed to parse. It is almost certainly
+                -- the former, but if it's the latter we return it all in a single OtherSqlPiece to try to be helpful.
+                if allRemainingText == "" then pure $ S.Return ()
+                  else 
+                    pure $ Streaming.yield $ OtherSqlPiece allRemainingText
+            S.Effect eff -> S.Effect $ go <$> eff
 
-    -- | Takes a parser result and does one of:
-    -- 1. Throws an error if it failed. Remember, we assume our SQL parsers can't fail.
-    -- 2. If one `SqlPiece`s was successfuly parsed, great. Because there could still be unconsumed text,
-    --    recursively parse that unconsumed text, and prepend the parsed `SqlPiece` to whatever the recursively
-    --    applied parser returns.
-    -- 3. If the parser didn't fail nor succeed, it wasn't yet fed sufficient input. This then returns
-    --    an empty list of `SqlPiece`s and a parser continuation.
-    -- In all cases, this returns the modified parser state too (one of `OutsideCopy` or `InsideCopy`).
-    handleParseResult
-        :: ParserState
-        -> Text
-        -> Maybe (Parsec.Result ([SqlPiece], ParserState))
-      -- ^ `Nothing` means this text piece is the very first to be parsed.
-      -- `Just` means this is the result of parsing the supplied text piece (second argument
-      -- to this function).
-        -> m
-               ( [SqlPiece]
-               , Maybe
-                     (Text -> Parsec.Result ([SqlPiece], ParserState))
-               , ParserState
-               )
-    handleParseResult !parserState !textPiece !mParseResult =
-        case mParseResult of
-            Nothing -> handleParseResult
-                parserState
-                textPiece
-                (Just $ Parsec.parse (parser parserState) textPiece)
-            Just (Parsec.Fail _ _ errorMsg) ->
-                throwM $ ParsingException textPiece $ mkErrorMsg errorMsg
-            Just (Parsec.Done unconsumedInput (sqlPieces, newParserState)) ->
-                if textPiece == ""
-                    -- Special case: after consuming the empty string "" - which is interpreted as 
-                    -- EOF -, it is possible unconsumed input remained from a previous partial parse.
-                    -- Notice that unconsumed input at the end is probably garbage, but we still want to
-                    -- be defensive and include it (in case there's a problem in the parsers).
-                    -- So we can't forget to return that last unconsumed fragment in that case.
-                    then pure
-                        ( [ sqlPiece
-                          | sqlPiece <- sqlPieces
-                          , sqlPiece /= OtherSqlPiece ""
-                          ]
-                        ++ [ OtherSqlPiece unconsumedInput
-                           | unconsumedInput /= ""
-                           ]
-                        , Nothing
-                        , newParserState
-                        )
-                    else first3 (sqlPieces ++) <$> handleParseResult
-                        newParserState
-                        unconsumedInput
-                        (Just $ Parsec.parse (parser newParserState)
-                                             unconsumedInput
-                        )
-            Just (Parsec.Partial nextContinue) ->
-                pure ([], Just nextContinue, parserState)
-
-    parseResultsStream :: Stream (Of [SqlPiece]) m ()
-    parseResultsStream =
-        Streaming.scanM
-                (\(_, !mContinue, !parserState) !textPiece -> handleParseResult
-                    parserState
-                    textPiece
-                    (mContinue <*> Just textPiece)
-                )
-                (pure ([], Nothing, OutsideCopy))
-                (pure . fst3)
-      -- SQL files' last statement don't need to end with a semi-colon, and because of
-      -- that they could end up as a partial match in those cases.
-      -- When applying parsing continuations the empty string is used to signal/match
-      -- endOfInput. So we append a final empty string to the original stream to
-      -- parse the last SQL statement properly regardless of semi-colon.
-      -- Also, because empty strings are so special, we filter them out from the
-      -- input stream just in case.
-            $  Streaming.filter (/= "") contents
-            <> Streaming.yield ""
-
-    fst3 (a, _, _) = a
-    first3 f (a, b, c) = (f a, b, c)
+{-# INLINE manyStreaming #-} -- See Note [Inlining and specialization]
+-- | This should be equivalent to attoparsec's `many`, but with streams and a stateful parser. Naturally, there are differences in the type signature given the Streaming nature of this function.
+-- It returns as the Stream's result the unparsed text.
+manyStreaming
+    :: Monad m => (s -> Parser (a, s))
+    -> s
+    -> Stream (Of Text) m ()
+    -> Stream (Of a) m (Stream (Of Text) m (), s)
+manyStreaming parser initialState = go initialState [] (Parsec.parse (parser initialState))
+    where
+      go !s !partiallyParsedTexts !parseFunc stream =
+          case stream of
+            S.Step (textPiece :> rest) -> case parseFunc textPiece of
+                Parsec.Fail {} -> S.Return (Streaming.each partiallyParsedTexts <> Streaming.yield textPiece <> rest, s)
+                Parsec.Done !unconsumedInput (!parsedValue, !newParserState) -> S.Step $ parsedValue :> go newParserState [] (Parsec.parse (parser newParserState)) (Streaming.yield unconsumedInput <> rest)
+                Parsec.Partial !continueParsing -> go s (partiallyParsedTexts ++ [textPiece]) continueParsing rest
+            S.Effect m -> S.Effect $ go s partiallyParsedTexts parseFunc <$> m
+            S.Return () ->
+             -- End of stream is EOF, which is represented by the empty string for attoparsec parsers
+             case parseFunc "" of
+                Parsec.Fail {} -> 
+                    S.Return (Streaming.each partiallyParsedTexts, s)
+                Parsec.Done !unconsumedInput (!parsedValue, !newParserState) -> S.Step $ parsedValue :> S.Return (Streaming.yield unconsumedInput, newParserState)
+                Parsec.Partial _ ->
+                    -- What is this case? Partial match on EOF? I suppose it is possible for an arbitrary parser to do this..
+                     S.Return (Streaming.each partiallyParsedTexts, s)
 
 parsedSqlText :: Monad m => ParsedSql m -> m Text
 parsedSqlText (UnparsedSql t) = pure t
@@ -428,7 +374,10 @@ sqlPieceParser parserState = case parserState of
         [CITextToken "ROLLBACK", AllUntilEndOfStatement]
     commitTransactionParser = spaceSeparatedTokensToParser
         [CITextToken "COMMIT", AllUntilEndOfStatement]
-    anySqlPieceParser = spaceSeparatedTokensToParser [AllUntilEndOfStatement]
+    anySqlPieceParser = do
+        arbText <- spaceSeparatedTokensToParser [AllUntilEndOfStatement]
+        when (arbText == "") $ fail "Please report this as a bug in codd: trying to parse empty string as SQL piece"
+        pure arbText
 
 data SqlToken = CITextToken !Text | SqlIdentifier | CommaSeparatedIdentifiers | Optional ![SqlToken] | CustomParserToken (Parser Text) | AllUntilEndOfStatement
 
@@ -1026,7 +975,7 @@ substituteEnvVarsInSqlPiecesStream envVars s =
 -- extracts from them custom options and a custom connection string when
 -- they exist, or returns a good error message otherwise.
 parseAndClassifyMigration
-    :: (MonadThrow m, MigrationStream m s, EnvVars m)
+    :: (Monad m, MigrationStream m s, EnvVars m)
     => s
     -> m
            ( Either
@@ -1166,7 +1115,7 @@ piecesToText = foldr ((<>) . sqlPieceText) ""
 {-# INLINE parseSqlMigration #-} -- See Note [Inlining and specialization]
 parseSqlMigration
     :: forall m s
-     . (MonadThrow m, MigrationStream m s, EnvVars m)
+     . (Monad m, MigrationStream m s, EnvVars m)
     => String
     -> s
     -> m (Either String (SqlMigration m))
@@ -1205,7 +1154,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
 
 
 parseAddedSqlMigration
-    :: (MonadThrow m, MigrationStream m s, EnvVars m)
+    :: (Monad m, MigrationStream m s, EnvVars m)
     => String
     -> s
     -> m (Either String (AddedSqlMigration m))
