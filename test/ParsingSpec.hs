@@ -227,9 +227,9 @@ mkRandStream seed text = PureStream $ go (mkStdGen seed) text
             withEvenMoreSeparation1 = List.intersperse " " $ Text.split (== ' ') thisChunk
             withEvenMoreSeparation2 = concatMap (List.intersperse "\n" . Text.split (== '\n')) withEvenMoreSeparation1
         in
-            if t == "" then Streaming.yield ""
+            if t == "" then Streaming.each []
             else
-                Streaming.each (filter ("" /=) withEvenMoreSeparation2) <> go g' remainder
+                Streaming.each withEvenMoreSeparation2 <> go g' remainder
 
 genSql :: Monad m => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do

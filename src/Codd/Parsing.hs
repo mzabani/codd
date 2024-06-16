@@ -284,8 +284,11 @@ manyStreaming
     -> s
     -> Stream (Of Text) m ()
     -> Stream (Of a) m (Stream (Of Text) m (), s)
-manyStreaming parser initialState = go initialState [] (Parsec.parse (parser initialState))
+manyStreaming parser initialState inputStream = go initialState [] (Parsec.parse (parser initialState)) inputStreamWithoutEmptyStrs
     where
+      -- End-Of-Stream is EOF for us, but attoparsec understands the empty string as EOF, so we filter it out because empty strings
+      -- are perfectly valid chunks for streams and should have no impact on parsing
+      inputStreamWithoutEmptyStrs = Streaming.filter ("" /=) inputStream
       go !s !partiallyParsedTexts !parseFunc stream =
           case stream of
             S.Step (textPiece :> rest) -> case parseFunc textPiece of
