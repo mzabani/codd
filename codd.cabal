@@ -91,6 +91,7 @@ library
     , bytestring
     , clock
     , containers
+    , dlist
     , filepath
     , formatting
     , hashable

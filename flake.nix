@@ -44,7 +44,7 @@
 
                     modules = [{
                       # Set to true to be able to run `cabal --enable-profiling`
-                      enableLibraryProfiling = false;
+                      enableLibraryProfiling = true;
 
                       # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
                       # in codd.cabal
