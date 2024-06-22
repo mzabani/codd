@@ -35,6 +35,7 @@ module Codd.Parsing
     , isCommentPiece
     , isTransactionEndingPiece
     , isWhiteSpacePiece
+    , manyStreaming
     , piecesToText
     , parsedSqlText
     , parseSqlMigration

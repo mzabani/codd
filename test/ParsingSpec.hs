@@ -24,7 +24,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , parseSqlPiecesStreaming'
                                                 , parsedSqlText
                                                 , piecesToText
-                                                , sqlPieceText
+                                                , sqlPieceText, manyStreaming
                                                 )
 import           Control.Monad                  ( forM
                                                 , forM_
@@ -57,6 +57,7 @@ import           UnliftIO                       ( MonadIO
                                                 )
 import           UnliftIO.Resource              ( runResourceT )
 import Debug.Trace (traceShowId)
+import qualified Data.Attoparsec.Text as Parsec
 
 data RandomSql m = RandomSql
     { unRandomSql  :: PureStream m
@@ -374,6 +375,52 @@ groupCopyRows = map concatCopy . List.groupBy
 spec :: Spec
 spec = do
     describe "Parsing tests" $ do
+        context "manyStreaming" $ do
+            it "Successful cases with or without unparsed text at the end" $ property $ \randomInt -> do
+                let expectedParsedList = replicate (min 100 randomInt) "ab"
+                    parseableString :: Text = mconcat expectedParsedList
+                    extraUnparsed :: Text = if even randomInt then "" else "xxxx"
+                    string = parseableString <> extraUnparsed
+                    stream = unPureStream $ mkRandStream randomInt string
+                    parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
+                parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+                let runChecks unparsedText2 parsedList2 = do
+                     parsedList1 `shouldBe` parsedList2
+                     parsedList1 `shouldBe` expectedParsedList
+                     Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+                     unparsedText2 `shouldBe` extraUnparsed
+                        
+                case Parsec.parse (Parsec.many' parser) string of
+                    Parsec.Fail {} -> error "failed to parse"
+                    Parsec.Partial continueParsing -> do
+                        extraUnparsed `shouldBe` ""
+                        case continueParsing "" of -- Pass EOF to say that we're finished
+                            Parsec.Fail {} -> error "nested failed to parse"
+                            Parsec.Partial _ -> error "partial parse not possible"
+                            Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+                    Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+
+            it "Partially parsed at the end still returns unparsed text" $ property $ \randomInt -> do
+                let expectedParsedList = replicate (min 100 randomInt) "ab"
+                    string :: Text = mconcat expectedParsedList <> "a"
+                    stream = unPureStream $ mkRandStream randomInt string
+                    parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
+                parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+                let runChecks unparsedText2 parsedList2 = do
+                     parsedList1 `shouldBe` parsedList2
+                     parsedList1 `shouldBe` expectedParsedList
+                     Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+                     unparsedText2 `shouldBe` "a"
+                        
+                case Parsec.parse (Parsec.many' parser) string of
+                    Parsec.Fail {} -> error "failed to parse"
+                    Parsec.Partial continueParsing -> do
+                        case continueParsing "" of
+                            Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+                            _ -> error "ooops"
+                    Parsec.Done {} -> error "should have been a partial parse"
+
+
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon"
                 $ property
@@ -651,7 +698,7 @@ spec = do
 
         context "Invalid SQL Migrations" $ do
             modifyMaxSuccess (const 10000)
-                $ it "Sql Migration Parser never blocks for random text"
+                $ it "Sql Migration Parser never fails, even for random text"
                 $ do
                       property $ \RandomSql { unRandomSql, fullContents } -> do
                           emig <- parseSqlMigrationIO "any-name.sql" unRandomSql
