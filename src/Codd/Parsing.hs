@@ -35,8 +35,8 @@ module Codd.Parsing
     , isCommentPiece
     , isTransactionEndingPiece
     , isWhiteSpacePiece
+    , manyStreaming
     , piecesToText
-    , sqlPieceText
     , parsedSqlText
     , parseSqlMigration
     , parseWithEscapeCharProper
@@ -44,6 +44,8 @@ module Codd.Parsing
     , parseAndClassifyMigration
     , parseMigrationTimestamp
     , parseSqlPiecesStreaming
+    , sqlPieceText
+    , sqlPieceParser
     , substituteEnvVarsInSqlPiecesStream
     , toMigrationTimestamp
 
@@ -263,11 +265,11 @@ parseSqlPiecesStreaming'
     => (ParserState -> Parser ([SqlPiece], ParserState))
     -> Stream (Of Text) m ()
     -> Stream (Of SqlPiece) m ()
-parseSqlPiecesStreaming' parser contents = go $ manyStreaming parser OutsideCopy contents
+parseSqlPiecesStreaming' parser contents = go $ Streaming.concat $ manyStreaming parser OutsideCopy contents
     where
-        go :: Stream (Of [SqlPiece]) m (Stream (Of Text) m (), ParserState) -> Stream (Of SqlPiece) m ()
+        go :: Stream (Of SqlPiece) m (Stream (Of Text) m (), ParserState) -> Stream (Of SqlPiece) m ()
         go = \case
-            S.Step (!pieces :> rest) -> Streaming.each pieces <> go rest
+            S.Step (sqlPiece :> rest) -> S.Step $ sqlPiece :> go rest
             S.Return (unparsedTextStream, _) -> S.Effect $ do
                 allRemainingText <- Streaming.mconcat_ unparsedTextStream
                 -- If there is white-space at the end of the migration, it would've been parsed as WhiteSpacePiece. If there is valid SQL, then it would've been parsed as some other SQL piece. And so on.
@@ -278,7 +280,7 @@ parseSqlPiecesStreaming' parser contents = go $ manyStreaming parser OutsideCopy
                     pure $ Streaming.yield $ OtherSqlPiece allRemainingText
             S.Effect eff -> S.Effect $ go <$> eff
 
-{-# INLINE manyStreaming #-} -- See Note [Inlining and specialization]
+-- {-# INLINE manyStreaming #-} -- See Note [Inlining and specialization]
 -- | This should be equivalent to attoparsec's `many`, but with streams and a stateful parser. Naturally, there are differences in the type signature given the Streaming nature of this function.
 -- It returns as the Stream's result the unparsed text.
 manyStreaming
@@ -296,7 +298,7 @@ manyStreaming parser initialState inputStream = go initialState DList.empty (Par
       go :: s -> DList.DList Text -> (Text -> Parsec.Result (a,s)) -> Stream (Of Text) m () -> Stream (Of a) m (Stream (Of Text) m (), s)
       go s !partiallyParsedTexts parseFunc stream =
           case stream of
-            S.Step (textPiece :> rest) -> case parseFunc textPiece of
+            S.Step (textPiece :> rest) -> case {-# SCC "parsingReally" #-} parseFunc textPiece of
                 Parsec.Fail {} -> S.Return (Streaming.each (DList.toList partiallyParsedTexts) <> Streaming.yield textPiece <> rest, s)
                 Parsec.Done unconsumedInput (parsedValue, newParserState) -> S.Step $ parsedValue :> go newParserState DList.empty (Parsec.parse (parser newParserState)) (if unconsumedInput == "" then rest else S.Step $ unconsumedInput :> rest)
                 Parsec.Partial continueParsing -> go s (partiallyParsedTexts `DList.snoc` textPiece) continueParsing rest
