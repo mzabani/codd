@@ -35,7 +35,6 @@ module Codd.Parsing
     , isCommentPiece
     , isTransactionEndingPiece
     , isWhiteSpacePiece
-    , manyStreaming
     , piecesToText
     , parsedSqlText
     , parseSqlMigration
@@ -45,7 +44,6 @@ module Codd.Parsing
     , parseMigrationTimestamp
     , parseSqlPiecesStreaming
     , sqlPieceText
-    , sqlPieceParser
     , substituteEnvVarsInSqlPiecesStream
     , toMigrationTimestamp
 
@@ -131,7 +129,6 @@ import           UnliftIO.Resource              ( ReleaseKey
                                                 , release
                                                 )
 import qualified Data.DList as DList
-import Debug.Trace
 
 
 -- | Contains either SQL parsed in pieces or the full original SQL contents
@@ -280,7 +277,7 @@ parseSqlPiecesStreaming' parser contents = go $ Streaming.concat $ manyStreaming
                     pure $ Streaming.yield $ OtherSqlPiece allRemainingText
             S.Effect eff -> S.Effect $ go <$> eff
 
--- {-# INLINE manyStreaming #-} -- See Note [Inlining and specialization]
+{-# INLINE manyStreaming #-} -- See Note [Inlining and specialization]
 -- | This should be equivalent to attoparsec's `many`, but with streams and a stateful parser. Naturally, there are differences in the type signature given the Streaming nature of this function.
 -- It returns as the Stream's result the unparsed text.
 manyStreaming
@@ -298,14 +295,14 @@ manyStreaming parser initialState inputStream = go initialState DList.empty (Par
       go :: s -> DList.DList Text -> (Text -> Parsec.Result (a,s)) -> Stream (Of Text) m () -> Stream (Of a) m (Stream (Of Text) m (), s)
       go s !partiallyParsedTexts parseFunc stream =
           case stream of
-            S.Step (textPiece :> rest) -> case {-# SCC "parsingReally" #-} parseFunc textPiece of
+            S.Step (textPiece :> rest) -> case parseFunc textPiece of
                 Parsec.Fail {} -> S.Return (Streaming.each (DList.toList partiallyParsedTexts) <> Streaming.yield textPiece <> rest, s)
                 Parsec.Done unconsumedInput (parsedValue, newParserState) -> S.Step $ parsedValue :> go newParserState DList.empty (Parsec.parse (parser newParserState)) (if unconsumedInput == "" then rest else S.Step $ unconsumedInput :> rest)
                 Parsec.Partial continueParsing -> go s (partiallyParsedTexts `DList.snoc` textPiece) continueParsing rest
             S.Effect m -> S.Effect $ go s partiallyParsedTexts parseFunc <$> m
             S.Return () ->
              -- End of stream is EOF, which is represented by the empty string for attoparsec parsers
-             traceShow "ALREADY FINISHED" $ case parseFunc "" of
+             case parseFunc "" of
                 Parsec.Fail {} ->
                     S.Return (Streaming.each $ DList.toList partiallyParsedTexts, s)
                 Parsec.Done !unconsumedInput (!parsedValue, !newParserState) -> S.Step $ parsedValue :> S.Return (Streaming.yield unconsumedInput, newParserState)
@@ -1004,7 +1001,7 @@ parseAndClassifyMigration sqlStream = do
         $ Streaming.span (\p -> isCommentPiece p || isWhiteSpacePiece p)
         $ parseSqlPiecesStreaming
         $ migStream sqlStream
-    let firstComments      = filter isCommentPiece $ traceShowId leadingWhiteSpaceAndComments
+    let firstComments      = filter isCommentPiece leadingWhiteSpaceAndComments
         envVarParseResults = mapMaybe
             ( (\case
                   Left  _        -> Nothing

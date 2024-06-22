@@ -162,7 +162,7 @@ fromGcInt =
             )
         . fromInt
 
--- | Given a list with total of some measure (e.g. time) per number of runs, returns the average measure (e.g. time) per individual run.
+-- | Given a list with total of some measure (e.g. time) per number of runs, returns the average measure (e.g. time) per individual run. One example is where each run is parsing of a SQL statement, but each test parses thousands of them.
 avgSamples :: (Measured -> Double) -> [(Double, Measured)] -> Double
 avgSamples _ [] = error "Average of empty list"
 avgSamples f xs = sum (map (f . snd) xs) / sum (map fst xs) -- No need to fret with the implementation: our lists are small
@@ -212,7 +212,7 @@ main = do
             describe "Parsing several sequential 'SELECT 1;' statements" $ do
                 rs :: [(Double, Measured)] <-
                     runIO $
-                        forM [10_000] $
+                        forM [10_000, 100_000, 500_000, 1_000_000] $
                             \n ->
                                 fmap (fromIntegral n,) $
                                     bench ("SELECT 1 " ++ show n) $
@@ -251,7 +251,7 @@ main = do
             describe "Parsing COPY statement" $ do
                 rs :: [(Double, Measured)] <-
                     runIO $
-                        forM [100] $ -- Only large-ish sizes or less memory will be used and we want constant memory usage
+                        forM [100_000, 500_000, 1_000_000] $ -- Only large-ish sizes or less memory will be used and we want constant memory usage
                             \n ->
                                 fmap (fromIntegral n,) $
                                     bench ("COPY " ++ show n) $

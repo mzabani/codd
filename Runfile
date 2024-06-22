@@ -9,7 +9,7 @@ benchmarks:
     if [ -n "$NIX" ]; then
         nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
     else
-        cabal run -O2 codd-bench --enable-profiling --enable-library-profiling -- +RTS -p
+        cabal run -O2 codd-bench
     fi
 
 ##
