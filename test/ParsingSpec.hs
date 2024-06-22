@@ -56,7 +56,6 @@ import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
 import           UnliftIO.Resource              ( runResourceT )
-import Debug.Trace (traceShowId)
 import qualified Data.Attoparsec.Text as Parsec
 
 data RandomSql m = RandomSql
