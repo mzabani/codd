@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use $>" #-}
 module Codd.Environment
     ( CoddSettings(..)
     , getAdminConnInfo
@@ -35,7 +37,7 @@ import           Data.Attoparsec.Text           ( Parser
                                                 )
 import qualified Data.Attoparsec.Text          as Parsec
 import           Data.Bifunctor                 ( first )
-import           Data.Functor                   ( (<&>) )
+import           Data.Functor                   ( (<&>), ($>) )
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as Text
 import           Database.PostgreSQL.Simple     ( ConnectInfo(..) )
@@ -99,10 +101,8 @@ retryPolicyParser = do
 
 txnIsolationLvlParser :: Parser TxnIsolationLvl
 txnIsolationLvlParser =
-    string "db-default"
-        *>  pure DbDefault
-        <|> string "serializable"
-        *>  pure Serializable
+    (string "db-default" $> DbDefault)
+        <|> (string "serializable" $> Serializable)
         <|> string "repeatable read"
         *>  pure RepeatableRead
         <|> string "read committed"
