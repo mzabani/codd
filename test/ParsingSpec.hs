@@ -24,7 +24,7 @@ import           Codd.Parsing                   ( AddedSqlMigration(..)
                                                 , parseSqlPiecesStreaming'
                                                 , parsedSqlText
                                                 , piecesToText
-                                                , sqlPieceText
+                                                , sqlPieceText, manyStreaming
                                                 )
 import           Control.Monad                  ( forM
                                                 , forM_
@@ -56,6 +56,7 @@ import           UnliftIO                       ( MonadIO
                                                 , liftIO
                                                 )
 import           UnliftIO.Resource              ( runResourceT )
+import qualified Data.Attoparsec.Text as Parsec
 
 data RandomSql m = RandomSql
     { unRandomSql  :: PureStream m
@@ -85,9 +86,9 @@ validSqlStatements =
             (: [])
             [ OtherSqlPiece "SELECT 'so''m -- not a comment' FROM ahahaha;"
             , OtherSqlPiece
-                "SELECT E'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
+                "SELECT\nE'so\\'; \\; m -- c-style string, (( not a comment \\\\ \\abc' FROM ahahaha;"
             , OtherSqlPiece
-                "SELECT E'Consecutive single quotes are also escaped here ''; see?';"
+                "SELECT \n\n  E'Consecutive single quotes are also escaped here ''; see?'   \n ;"
             , OtherSqlPiece "SELECT E'''20s' = E'\\'20s';"
             , OtherSqlPiece
             $  "DO"
@@ -126,7 +127,7 @@ validSqlStatements =
             , OtherSqlPiece "SELECT 'some''quoted ''string';"
             , OtherSqlPiece "SELECT \"some\"\"quoted identifier\";"
             , OtherSqlPiece
-                "SELECT 'double quotes \" inside single quotes \" - 2';"
+                "SELECT \n\n 'double quotes \" inside single quotes \" - 2';"
             , OtherSqlPiece
                 "SELECT \"single quotes ' inside double quotes ' - 2\";"
             , OtherSqlPiece
@@ -139,10 +140,10 @@ validSqlStatements =
             , OtherSqlPiece "SELECT (1 - 4) / 5 * 3 / 9.1;"
             -- Semi-colons inside parenthesised blocks are not statement boundaries
             , OtherSqlPiece
-                "create rule name as on some_event to some_table do (command1; command2; command3;);"
+                "create rule \n name as on \n some_event to \n\n some_table do (command1; command2; command3;);"
             -- String blocks can be opened inside parentheses, just like comments, dollar-quoted strings and others
             , OtherSqlPiece
-                "create rule name as on some_event to some_table do ('abcdef);'; other;);"
+                "create rule name as on some_event to some_table do ('abcdef);'; other;)\n\n;"
             , OtherSqlPiece
                 "some statement with spaces (((U&'d\\0061t\\+000061', 'abc''def' ; ; ; /* comment /* nested */ ((( */ $hey$dollar string$hey$)) 'more''of'; this; ());"
             , OtherSqlPiece
@@ -152,7 +153,7 @@ validSqlStatements =
             , OtherSqlPiece "invalid statement, bad parentheses ()));"
             , BeginTransaction "begin;"
             , BeginTransaction "BEGiN/*a*/;"
-            , BeginTransaction "BEgIN   ;"
+            , BeginTransaction "BEgIN \n  ;"
             , RollbackTransaction "ROllBaCk;"
             , RollbackTransaction "ROllBaCk/*a*/;"
             , RollbackTransaction "ROllBaCk   ;"
@@ -175,21 +176,21 @@ validSqlStatements =
              , CopyFromStdinEnd "\\.\n"
              ]
            , [ CopyFromStdinStatement
-                 "copy \"schema\".employee FROM stdin WITH (FORMAT CSV);\n"
+                 "copy \"schema\".employee FROM stdin \n WITH (FORMAT CSV);\n"
              , CopyFromStdinRows "DATA\n"
              , CopyFromStdinEnd "\\.\n"
              ]
            , [
      -- Fully qualified identifiers part 1 + table without columns, but with one row (this is possible!)
                CopyFromStdinStatement
-                 "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with (FORMAT CSV);\n"
+                 "CoPy \"some-database\"   .  \"schema\"  .  employee from stdin with \n (FORMAT CSV);\n"
              , CopyFromStdinRows "\n"
              , CopyFromStdinEnd "\\.\n"
              ]
            , [
     -- Fully qualified identifiers part 2 + specifying columns
                CopyFromStdinStatement
-                 "CoPy \"employee\"   (col1,\"col2\"   ,   col4  ) from stdin with (FORMAT CSV);\n"
+                 "CoPy \"employee\" \n  (col1,\"col2\"   , \n\n  col4  ) from stdin with (FORMAT CSV);\n"
              , CopyFromStdinRows "Lots of data\n"
              , CopyFromStdinRows "in\n"
              , CopyFromStdinRows "each line\n"
@@ -198,7 +199,7 @@ validSqlStatements =
            ,
          -- COPY with lots of custom escaping
              [ CopyFromStdinStatement
-                 "COPY whatever FROM STDIN WITH (FORMAT CSV);\n"
+                 "COPY\nwhatever FROM STDIN WITH (FORMAT CSV);\n"
              , CopyFromStdinRows "\\b \\0 \\x1 \\t \\v \\r \\n \\f \\b \n"
              , CopyFromStdinRows "\b \0 \r \t\n" -- I think these characters are actually invalid in COPY according to postgres.
              , CopyFromStdinEnd "\\.\n"
@@ -214,17 +215,21 @@ genTextStream t = do
     n <- arbitrary
     pure $ mkRandStream n t
 
+-- | Generates a stream that yields chunks of arbitrary sizes according to the supplied seed.
 mkRandStream :: Monad m => Int -> Text -> PureStream m
 mkRandStream seed text = PureStream $ go (mkStdGen seed) text
   where
     go g t =
         let
-            (n, g') = randomR (0, len) g
-            remainder =
-                if t == "" then Streaming.yield "" else go g' (Text.drop n t)
+            (n, g') = randomR (1, Text.length t) g
+            (thisChunk, remainder) = Text.splitAt n t
+            -- To make it even harder on the streaming parser, split up chunks where there is white-space
+            withEvenMoreSeparation1 = List.intersperse " " $ Text.split (== ' ') thisChunk
+            withEvenMoreSeparation2 = concatMap (List.intersperse "\n" . Text.split (== '\n')) withEvenMoreSeparation1
         in
-            Streaming.yield (Text.take n t) <> remainder
-        where len = Text.length t
+            if t == "" then Streaming.each []
+            else
+                Streaming.each withEvenMoreSeparation2 <> go g' remainder
 
 genSql :: Monad m => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do
@@ -369,6 +374,52 @@ groupCopyRows = map concatCopy . List.groupBy
 spec :: Spec
 spec = do
     describe "Parsing tests" $ do
+        context "manyStreaming" $ do
+            it "Successful cases with or without unparsed text at the end" $ property $ \randomInt -> do
+                let expectedParsedList = replicate (min 100 randomInt) "ab"
+                    parseableString :: Text = mconcat expectedParsedList
+                    extraUnparsed :: Text = if even randomInt then "" else "xxxx"
+                    string = parseableString <> extraUnparsed
+                    stream = unPureStream $ mkRandStream randomInt string
+                    parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
+                parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+                let runChecks unparsedText2 parsedList2 = do
+                     parsedList1 `shouldBe` parsedList2
+                     parsedList1 `shouldBe` expectedParsedList
+                     Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+                     unparsedText2 `shouldBe` extraUnparsed
+                        
+                case Parsec.parse (Parsec.many' parser) string of
+                    Parsec.Fail {} -> error "failed to parse"
+                    Parsec.Partial continueParsing -> do
+                        extraUnparsed `shouldBe` ""
+                        case continueParsing "" of -- Pass EOF to say that we're finished
+                            Parsec.Fail {} -> error "nested failed to parse"
+                            Parsec.Partial _ -> error "partial parse not possible"
+                            Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+                    Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+
+            it "Partially parsed at the end still returns unparsed text" $ property $ \randomInt -> do
+                let expectedParsedList = replicate (min 100 randomInt) "ab"
+                    string :: Text = mconcat expectedParsedList <> "a"
+                    stream = unPureStream $ mkRandStream randomInt string
+                    parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
+                parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+                let runChecks unparsedText2 parsedList2 = do
+                     parsedList1 `shouldBe` parsedList2
+                     parsedList1 `shouldBe` expectedParsedList
+                     Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+                     unparsedText2 `shouldBe` "a"
+                        
+                case Parsec.parse (Parsec.many' parser) string of
+                    Parsec.Fail {} -> error "failed to parse"
+                    Parsec.Partial continueParsing -> do
+                        case continueParsing "" of
+                            Parsec.Done unparsedText2 parsedList2 -> runChecks unparsedText2 parsedList2
+                            _ -> error "ooops"
+                    Parsec.Done {} -> error "should have been a partial parse"
+
+
         context "Multi Query Statement Parser" $ do
             it "Single command with and without semi-colon"
                 $ property
@@ -646,7 +697,7 @@ spec = do
 
         context "Invalid SQL Migrations" $ do
             modifyMaxSuccess (const 10000)
-                $ it "Sql Migration Parser never blocks for random text"
+                $ it "Sql Migration Parser never fails, even for random text"
                 $ do
                       property $ \RandomSql { unRandomSql, fullContents } -> do
                           emig <- parseSqlMigrationIO "any-name.sql" unRandomSql

@@ -19,12 +19,16 @@ env:
 
 jobs:
   build-x86_64-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - uses: jlumbroso/free-disk-space@v1.3.1
+      with:
+        tool-cache: true
     
     - uses: cachix/install-nix-action@v24
       with:

@@ -83,7 +83,7 @@ library
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
   ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
   build-depends:
-      aeson
+      aeson >= 2
     , aeson-pretty
     , ansi-terminal
     , attoparsec
@@ -91,6 +91,7 @@ library
     , bytestring
     , clock
     , containers
+    , dlist
     , filepath
     , formatting
     , hashable
@@ -188,7 +189,7 @@ benchmark codd-bench
       TypeOperators
       ViewPatterns
   build-depends:
-    aeson
+    aeson >= 2
     , base
     , codd
     , criterion-measurement >= 0.2.0.0
@@ -259,7 +260,7 @@ test-suite codd-test
   -- build-tools:
   --     hspec-discover
   build-depends:
-      aeson
+      aeson >= 2
     , attoparsec
     , base
     , codd

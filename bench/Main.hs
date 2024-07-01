@@ -162,7 +162,7 @@ fromGcInt =
             )
         . fromInt
 
--- | Given a list with total of some measure (e.g. time) per number of runs, returns the average measure (e.g. time) per individual run.
+-- | Given a list with total of some measure (e.g. time) per number of runs, returns the average measure (e.g. time) per individual run. One example is where each run is parsing of a SQL statement, but each test parses thousands of them.
 avgSamples :: (Measured -> Double) -> [(Double, Measured)] -> Double
 avgSamples _ [] = error "Average of empty list"
 avgSamples f xs = sum (map (f . snd) xs) / sum (map fst xs) -- No need to fret with the implementation: our lists are small
