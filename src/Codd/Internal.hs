@@ -105,7 +105,7 @@ import           UnliftIO                       ( Exception
                                                 , readIORef
                                                 , timeout
                                                 , try
-                                                , writeIORef
+                                                , writeIORef, modifyIORef'
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -118,12 +118,6 @@ import           UnliftIO.Exception             ( IOException
                                                 )
 import           UnliftIO.IO                    ( IOMode(ReadMode)
                                                 , openFile
-                                                )
-import           UnliftIO.MVar                  ( modifyMVar
-                                                , modifyMVar_
-                                                , newMVar
-                                                , readMVar
-                                                , withMVar
                                                 )
 import           UnliftIO.Resource              ( MonadResource
                                                 , ReleaseKey
@@ -319,33 +313,35 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
             hoistedBlocks :: [BlockOfMigrations txn] =
                 map (hoistBlockOfMigrations lift) pendingMigs
 
-        -- Note: We could probably compound this Monad with StateT instead of using an MVar, but IIRC that creates issues
+        -- Note: We could probably compound this Monad with StateT instead of using IORefs, but IIRC that creates issues
         -- with MonadUnliftIO.
-        connsPerInfo <- newMVar (mempty :: [(DB.ConnectInfo, DB.Connection)])
-        unregisteredButAppliedMigs <- newMVar (mempty :: [AppliedMigration])
-        lastKnownCoddSchemaVersion <- newMVar $ coddSchemaVersion bootstrapCheck
+        connsPerInfo <- newIORef (mempty :: [(DB.ConnectInfo, DB.Connection)])
+        unregisteredButAppliedMigs <- newIORef (mempty :: [AppliedMigration])
+        lastKnownCoddSchemaVersion <- newIORef $ coddSchemaVersion bootstrapCheck
         let coddSchemaUpToDate :: forall n . MonadUnliftIO n => n Bool
             coddSchemaUpToDate =
-                withMVar lastKnownCoddSchemaVersion (pure . (== maxBound))
+                (== maxBound) <$> readIORef lastKnownCoddSchemaVersion
 
             openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
             openConn cinfo = flip allocate DB.close $ do
-                mConn <- lookup cinfo <$> readMVar connsPerInfo
+                mConn <- lookup cinfo <$> readIORef connsPerInfo
                 case mConn of
                     Just conn -> pure conn
-                    Nothing   -> modifyMVar connsPerInfo $ \m -> do
+                    Nothing   -> do
+                        currentlyOpenConns <- readIORef connsPerInfo
                         -- print
                         --     $  "Connecting to (TODO: REDACT PASSWORD) "
                         --     <> Text.pack (show cinfo)
                         conn <- connectWithTimeout cinfo connectTimeout
-                        pure ((cinfo, conn) : m, conn)
+                        modifyIORef' connsPerInfo $ const $ (cinfo, conn) : currentlyOpenConns
+                        pure conn
 
             queryConn
                 :: forall n
                  . MonadIO n
                 => DB.ConnectInfo
                 -> n (Maybe DB.Connection)
-            queryConn cinfo = lookup cinfo <$> readMVar connsPerInfo
+            queryConn cinfo = lookup cinfo <$> readIORef connsPerInfo
 
 -- | Meant to check what the application status of an arbitrary migration is. Used because dumps-as-migrations can insert into codd_schema.sql_migrations themselves,
 -- in which case we should detect that and skip migrations that were collected as pending at an earlier stage.
@@ -358,8 +354,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 -> n (Maybe MigrationApplicationStatus)
             hasMigBeenApplied mDefaultDatabaseConn fp = do
                 mDefaultConn             <- queryConn defaultConnInfo
-                minimumCoddSchemaVersion <- readMVar lastKnownCoddSchemaVersion
-                apunregmigs              <- readMVar unregisteredButAppliedMigs
+                minimumCoddSchemaVersion <- readIORef lastKnownCoddSchemaVersion
+                apunregmigs              <- readIORef unregisteredButAppliedMigs
                 let appliedUnreg = List.find
                         (\apmig -> appliedMigrationName apmig == fp)
                         apunregmigs
@@ -377,9 +373,9 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                     do
                                         actualVersion <- detectCoddSchema
                                             connToUse
-                                        modifyMVar_
+                                        modifyIORef'
                                             lastKnownCoddSchemaVersion
-                                            (const $ pure actualVersion)
+                                            (const actualVersion)
                                         pure actualVersion
                                 else
                                     pure minimumCoddSchemaVersion
@@ -408,24 +404,24 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         createCoddSchema @txn maxBound
                                               txnIsolationLvl
                                               defaultConn
-                        modifyMVar_ lastKnownCoddSchemaVersion
-                                    (const $ pure maxBound)
-                    modifyMVar_ unregisteredButAppliedMigs $ \apmigs -> do
-                        withTransaction @txn txnIsolationLvl defaultConn
-                            $ forM_ apmigs
-                            $ \AppliedMigration {..} ->
-                                  registerRanMigration @txn
-                                      defaultConn
-                                      txnIsolationLvl
-                                      appliedMigrationName
-                                      appliedMigrationTimestamp
-                                      (SpecificTime appliedMigrationAt)
-                                      appliedMigrationDuration
-                                      appliedMigrationStatus
-                                      (SpecificIds appliedMigrationTxnId
-                                                   appliedMigrationConnId
-                                      )
-                        pure []
+                        modifyIORef' lastKnownCoddSchemaVersion
+                                    (const maxBound)
+                    apmigs <- readIORef unregisteredButAppliedMigs
+                    withTransaction @txn txnIsolationLvl defaultConn
+                        $ forM_ apmigs
+                        $ \AppliedMigration {..} ->
+                              registerRanMigration @txn
+                                  defaultConn
+                                  txnIsolationLvl
+                                  appliedMigrationName
+                                  appliedMigrationTimestamp
+                                  (SpecificTime appliedMigrationAt)
+                                  appliedMigrationDuration
+                                  appliedMigrationStatus
+                                  (SpecificIds appliedMigrationTxnId
+                                               appliedMigrationConnId
+                                  )
+                    modifyIORef' unregisteredButAppliedMigs $ const []
 
             createCoddSchemaAndFlushPendingMigrations :: m ()
             createCoddSchemaAndFlushPendingMigrations = do
@@ -439,25 +435,25 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             createCoddSchema @txn maxBound
                                                   txnIsolationLvl
                                                   defaultConn
-                            modifyMVar_ lastKnownCoddSchemaVersion
-                                        (const $ pure maxBound)
-                        modifyMVar_ unregisteredButAppliedMigs $ \apmigs -> do
-                            withTransaction @txn txnIsolationLvl defaultConn
-                                $ forM_ apmigs
-                                $ \AppliedMigration {..} ->
-                                      registerRanMigration @txn
-                                          defaultConn
-                                          txnIsolationLvl
-                                          appliedMigrationName
-                                          appliedMigrationTimestamp
-                                          (SpecificTime appliedMigrationAt)
-                                          appliedMigrationDuration
-                                          appliedMigrationStatus
-                                          (SpecificIds
-                                              appliedMigrationTxnId
-                                              appliedMigrationConnId
-                                          )
-                            pure []
+                            modifyIORef' lastKnownCoddSchemaVersion
+                                        (const maxBound)
+                        apmigs <- readIORef unregisteredButAppliedMigs
+                        withTransaction @txn txnIsolationLvl defaultConn
+                            $ forM_ apmigs
+                            $ \AppliedMigration {..} ->
+                                  registerRanMigration @txn
+                                      defaultConn
+                                      txnIsolationLvl
+                                      appliedMigrationName
+                                      appliedMigrationTimestamp
+                                      (SpecificTime appliedMigrationAt)
+                                      appliedMigrationDuration
+                                      appliedMigrationStatus
+                                      (SpecificIds
+                                          appliedMigrationTxnId
+                                          appliedMigrationConnId
+                                      )
+                        modifyIORef' unregisteredButAppliedMigs $ const []
                     Nothing -> pure ()
 
 -- | The function used to register applied migrations for in-txn migrations.
@@ -495,9 +491,8 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                     blockConn
                                     "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
                                     ()
-                            modifyMVar_ unregisteredButAppliedMigs $ \apmigs ->
-                                pure
-                                    $  apmigs
+                            modifyIORef' unregisteredButAppliedMigs $ \apmigs ->
+                                      apmigs
                                     ++ [ AppliedMigration
                                              { appliedMigrationName
                                              , appliedMigrationTimestamp
@@ -550,10 +545,9 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                         blockConn
                                         "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
                                         ()
-                                modifyMVar_ unregisteredButAppliedMigs
+                                modifyIORef' unregisteredButAppliedMigs
                                     $ \apmigs ->
-                                          pure
-                                              $  apmigs
+                                                apmigs
                                               ++ [ AppliedMigration
                                                        { appliedMigrationName
                                                        , appliedMigrationTimestamp
