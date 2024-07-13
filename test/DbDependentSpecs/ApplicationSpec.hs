@@ -1369,18 +1369,10 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
             DB.connectUser = "postgres"
           }
 
-  -- A small number of count-checking migrations is *important*
-  -- to ensure we have statistical diversity in terms of relative
-  -- position between different types of migrations.
-  -- Otherwise, we'd have count-checking migs as the last migrations
-  -- and at the earliest position almost every time, when we could have
-  -- custom-connection-string ones there.
-  createDbAndFirstDefaultConnMig <-
-    sequenceA
-      [pure CreateCoddTestDb, CreatePassingMig <$> arbitrary @Bool]
-
+  numPassingMigs <- chooseInt (0, 5)
+  numCreateOtherDbMigs <- chooseInt (0, 3)
   passingMigs <-
-    QC.resize 5 $
+    QC.resize numPassingMigs $
       QC.listOf $
         QC.elements
           [ CreatePassingMig True,
@@ -1392,8 +1384,8 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
   migsInOrder <-
     fmap (fixMigsOrder . concat)
       $ mergeShuffle
-        (createDbAndFirstDefaultConnMig ++ passingMigs)
-        (map CreateDbCreationMig [0 .. 3])
+        (CreateCoddTestDb : passingMigs)
+        (map CreateDbCreationMig [0 .. numCreateOtherDbMigs])
       $ \migOrder migType -> case migType of
         CreateCoddTestDb -> [createCoddTestDbMigs]
         CreateDbCreationMig i ->
