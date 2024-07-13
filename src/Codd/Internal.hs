@@ -362,13 +362,12 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 case appliedUnreg of
                     Just m  -> pure $ Just $ appliedMigrationStatus m
                     Nothing -> -- We use the same connection as the one applying migrations if it's in the default database, otherwise we try to use the default conn if it's available
-                               case mDefaultDatabaseConn <|> mDefaultConn of
+                      case mDefaultDatabaseConn <|> mDefaultConn of
                         Nothing        -> pure Nothing
                         Just connToUse -> do
                             -- If in-memory info says codd_schema does not exist or is not the latest, a migration may have created it or upgraded it and we're just not aware yet, so check that.
                             refinedCoddSchemaVersion <-
-                                if lastKnownCoddSchemaVersion
-                                            < maxBound
+                                if lastKnownCoddSchemaVersion < maxBound
                                 then
                                     do
                                         actualVersion <- detectCoddSchema
