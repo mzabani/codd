@@ -317,10 +317,10 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
         -- with MonadUnliftIO.
         connsPerInfo <- newIORef (mempty :: [(DB.ConnectInfo, DB.Connection)])
         unregisteredButAppliedMigs <- newIORef (mempty :: [AppliedMigration])
-        lastKnownCoddSchemaVersion <- newIORef $ coddSchemaVersion bootstrapCheck
+        lastKnownCoddSchemaVersionRef <- newIORef $ coddSchemaVersion bootstrapCheck
         let coddSchemaUpToDate :: forall n . MonadUnliftIO n => n Bool
             coddSchemaUpToDate =
-                (== maxBound) <$> readIORef lastKnownCoddSchemaVersion
+                (== maxBound) <$> readIORef lastKnownCoddSchemaVersionRef
 
             openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
             openConn cinfo = flip allocate DB.close $ do
@@ -354,7 +354,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                 -> n (Maybe MigrationApplicationStatus)
             hasMigBeenApplied mDefaultDatabaseConn fp = do
                 mDefaultConn             <- queryConn defaultConnInfo
-                minimumCoddSchemaVersion <- readIORef lastKnownCoddSchemaVersion
+                lastKnownCoddSchemaVersion <- readIORef lastKnownCoddSchemaVersionRef
                 apunregmigs              <- readIORef unregisteredButAppliedMigs
                 let appliedUnreg = List.find
                         (\apmig -> appliedMigrationName apmig == fp)
@@ -365,20 +365,20 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                                case mDefaultDatabaseConn <|> mDefaultConn of
                         Nothing        -> pure Nothing
                         Just connToUse -> do
-                            -- If in-memory info says codd_schema does not exist, a migration may have created it and we're just not aware yet, so check that.
+                            -- If in-memory info says codd_schema does not exist or is not the latest, a migration may have created it or upgraded it and we're just not aware yet, so check that.
                             refinedCoddSchemaVersion <-
-                                if minimumCoddSchemaVersion
-                                    == CoddSchemaDoesNotExist
+                                if lastKnownCoddSchemaVersion
+                                            < maxBound
                                 then
                                     do
                                         actualVersion <- detectCoddSchema
                                             connToUse
                                         modifyIORef'
-                                            lastKnownCoddSchemaVersion
+                                            lastKnownCoddSchemaVersionRef
                                             (const actualVersion)
                                         pure actualVersion
                                 else
-                                    pure minimumCoddSchemaVersion
+                                    pure lastKnownCoddSchemaVersion
                             if refinedCoddSchemaVersion >= CoddSchemaV3
                                 then queryMay
                                     connToUse
@@ -404,7 +404,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                         createCoddSchema @txn maxBound
                                               txnIsolationLvl
                                               defaultConn
-                        modifyIORef' lastKnownCoddSchemaVersion
+                        modifyIORef' lastKnownCoddSchemaVersionRef
                                     (const maxBound)
                     apmigs <- readIORef unregisteredButAppliedMigs
                     withTransaction @txn txnIsolationLvl defaultConn
@@ -435,7 +435,7 @@ applyCollectedMigrations actionAfter CoddSettings { migsConnString = defaultConn
                             createCoddSchema @txn maxBound
                                                   txnIsolationLvl
                                                   defaultConn
-                            modifyIORef' lastKnownCoddSchemaVersion
+                            modifyIORef' lastKnownCoddSchemaVersionRef
                                         (const maxBound)
                         apmigs <- readIORef unregisteredButAppliedMigs
                         withTransaction @txn txnIsolationLvl defaultConn
