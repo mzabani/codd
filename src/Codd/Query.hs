@@ -7,6 +7,7 @@ module Codd.Query
     , query
     , txnStatus
     , unsafeQuery1
+    , queryMay
     , withTransaction
     ) where
 
@@ -57,6 +58,20 @@ unsafeQuery1 conn q r = liftIO $ do
         []  -> error "No results for query1"
         [x] -> return x
         _   -> error "More than one result for query1"
+
+-- | Throws an exception if more one result is returned by the query.
+queryMay
+    :: (DB.FromRow b, MonadIO m, DB.ToRow a)
+    => DB.Connection
+    -> DB.Query
+    -> a
+    -> m (Maybe b)
+queryMay conn q r = liftIO $ do
+    res <- DB.query conn q r
+    case res of
+        []  -> pure Nothing
+        [x] -> pure $ Just x
+        _   -> error "More than one result for queryMay"
 
 
 -- | Returns a Query with a valid "BEGIN" statement that is READ WRITE and has
