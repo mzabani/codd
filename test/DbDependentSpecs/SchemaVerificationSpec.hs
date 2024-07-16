@@ -1207,6 +1207,19 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     "REVOKE ALL ON DOMAIN non_empty_text FROM \"codd-test-user\";"
     $ ChangeEq [("schemas/public/types/non_empty_text", DBothButDifferent)]
 
+  -- Extended statistics
+  (createStats1, _) <-
+    addMig
+      "CREATE STATISTICS test_stat ( dependencies,ndistinct,mcv) ON employee_id, employee_name FROM employee"
+      "DROP STATISTICS test_stat"
+      $ ChangeEq [("schemas/public/tables/employee/statistics/test_stat", DExpectedButNotFound)]
+
+  addMig_
+    "DROP STATISTICS test_stat; CREATE STATISTICS test_stat ( dependencies,ndistinct,mcv) ON employee_name, employee_id FROM employee"
+    ("DROP STATISTICS test_stat; " <> createStats1)
+    $ ChangeEq [("schemas/public/tables/employee/statistics/test_stat", DBothButDifferent)]
+
+  -- ALTER TABLE employee ADD COLUMN anycolumn TEXT;
   -- CRUD
   addMig_
     "INSERT INTO employee (employee_name) VALUES ('Marcelo')"

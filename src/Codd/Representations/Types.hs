@@ -17,6 +17,7 @@ module Codd.Representations.Types
     TableConstraintRep (..),
     TableIndexRep (..),
     TablePolicyRep (..),
+    TableStatisticsRep (..),
     TableTriggerRep (..),
     TypeRep (..),
     detEncodeJSON,
@@ -51,7 +52,7 @@ import Database.PostgreSQL.Simple.ToField
   )
 import GHC.Generics (Generic)
 
-data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType
+data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType | HStatistics
   deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (Hashable)
 
@@ -98,6 +99,7 @@ data TableRep
       (Map ObjName TableTriggerRep)
       (Map ObjName TablePolicyRep)
       (Map ObjName TableIndexRep)
+      (Map ObjName TableStatisticsRep)
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
@@ -137,6 +139,10 @@ data TableIndexRep = TableIndexRep ObjName Value
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+data TableStatisticsRep = TableStatisticsRep ObjName Value
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 data RoleRep = RoleRep ObjName Value
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -165,7 +171,7 @@ instance HasName SchemaRep where
   objName (SchemaRep n _ _ _ _ _ _ _) = n
 
 instance HasName TableRep where
-  objName (TableRep n _ _ _ _ _ _) = n
+  objName (TableRep n _ _ _ _ _ _ _) = n
 
 instance HasName TableColumnRep where
   objName (TableColumnRep n _) = n
@@ -178,6 +184,9 @@ instance HasName TableTriggerRep where
 
 instance HasName TablePolicyRep where
   objName (TablePolicyRep n _) = n
+
+instance HasName TableStatisticsRep where
+  objName (TableStatisticsRep n _) = n
 
 instance HasName TableIndexRep where
   objName (TableIndexRep n _) = n

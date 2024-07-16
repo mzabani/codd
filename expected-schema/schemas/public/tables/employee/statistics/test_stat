@@ -1,0 +1,11 @@
+{
+    "definition": "employee_id, employee_name",
+    "kind": [
+        "d",
+        "f",
+        "m"
+    ],
+    "namespace": "public",
+    "owner": "codd_admin",
+    "table": "employee"
+}
