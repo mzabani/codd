@@ -17,7 +17,6 @@ import Codd.Types
     SqlRole,
   )
 
--- Postgres 13 doesn't seem to have any verifiable new features compared to 12.
 objRepQueryFor ::
   [SqlRole] ->
   SchemaSelection ->
@@ -26,19 +25,6 @@ objRepQueryFor ::
   Maybe ObjName ->
   ObjectRep ->
   DbObjRepresentationQuery
-objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
-  let hq =
-        Pg12.objRepQueryFor
-          allRoles
-          allSchemas
-          schemaAlgoOpts
-          schemaName
-          tableName
-          hobj
-   in case hobj of
-        -- HStatistics ->
-        --   hq
-        --     { repCols = repCols hq ++ [("exprs", "pg_get_expr(stxexprs, stxrelid)")]
-        --     -- TODO: more columns?
-        --     }
-        _ -> hq
+objRepQueryFor =
+  -- Postgres 13 doesn't seem to have any verifiable new features compared to 12.
+  Pg12.objRepQueryFor

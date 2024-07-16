@@ -858,25 +858,30 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                    ]
           }
   HStatistics ->
-    let nonAggCols =
+    DbObjRepresentationQuery
+      { objNameCol = "stxname",
+        repCols =
           [ ("table", "pg_class.relname"),
             ("namespace", "pg_namespace.nspname"),
             ("owner", "pg_roles.rolname"),
             ("kind", sortArrayExpr "stxkind"),
-            ( "definition",
-              "pg_catalog.pg_get_statisticsobjdef_columns(pg_statistic_ext.oid)"
+            ( "columns",
+              "(SELECT ARRAY_AGG(pg_attribute.attname"
+                <> " ORDER BY s._idx)"
+                <> "\n FROM UNNEST(stxkeys"
+                <> ") WITH ORDINALITY s(attnum, _idx)"
+                <> "\n JOIN pg_attribute"
+                <> " ON "
+                <> " pg_attribute.attnum = s.attnum AND pg_attribute.attrelid=pg_class.oid)"
             )
-          ]
-     in DbObjRepresentationQuery
-          { objNameCol = "stxname",
-            repCols = nonAggCols,
-            fromTable = "pg_catalog.pg_statistic_ext",
-            joins =
-              "JOIN pg_catalog.pg_namespace ON pg_statistic_ext.stxnamespace = pg_namespace.oid"
-                <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_statistic_ext.stxrelid"
-                <> "\nJOIN pg_catalog.pg_roles ON pg_roles.oid = pg_statistic_ext.stxowner",
-            nonIdentWhere = Nothing,
-            identWhere =
-              identFilterForTable tableName schemaName,
-            groupByCols = []
-          }
+          ],
+        fromTable = "pg_catalog.pg_statistic_ext",
+        joins =
+          "JOIN pg_catalog.pg_namespace ON pg_statistic_ext.stxnamespace = pg_namespace.oid"
+            <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_statistic_ext.stxrelid"
+            <> "\nJOIN pg_catalog.pg_roles ON pg_roles.oid = pg_statistic_ext.stxowner",
+        nonIdentWhere = Nothing,
+        identWhere =
+          identFilterForTable tableName schemaName,
+        groupByCols = []
+      }

@@ -13,6 +13,7 @@ import Codd.Representations.Database.Pg12
     pronameExpr,
     sortArrayExpr,
   )
+import qualified Codd.Representations.Database.Pg12 as Pg12
 import qualified Codd.Representations.Database.Pg13 as Pg13
 import Codd.Representations.Types
   ( ObjName,
@@ -128,4 +129,18 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                     ["proname", "proargtypes"]
                       ++ map snd nonAggCols
                 }
+        HStatistics ->
+          -- We replace "columns" from the previous version with "definition". The function to obtain that definition
+          -- did not exist in the previous version
+          hq
+            { repCols =
+                [ ("table", "pg_class.relname"),
+                  ("namespace", "pg_namespace.nspname"),
+                  ("owner", "pg_roles.rolname"),
+                  ("kind", Pg12.sortArrayExpr "stxkind"),
+                  ( "definition",
+                    "pg_catalog.pg_get_statisticsobjdef_columns(pg_statistic_ext.oid)"
+                  )
+                ]
+            }
         _ -> hq

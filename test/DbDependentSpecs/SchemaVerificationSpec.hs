@@ -36,6 +36,7 @@ import Control.Monad
   ( foldM,
     forM,
     void,
+    when,
     zipWithM,
   )
 import Control.Monad.State
@@ -1210,16 +1211,24 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
   -- Extended statistics
   (createStats1, _) <-
     addMig
-      "CREATE STATISTICS test_stat ( dependencies,ndistinct,mcv) ON employee_id, employee_name FROM employee"
+      "CREATE STATISTICS test_stat (dependencies,ndistinct) ON employee_id, employee_name FROM employee"
       "DROP STATISTICS test_stat"
       $ ChangeEq [("schemas/public/tables/employee/statistics/test_stat", DExpectedButNotFound)]
 
-  addMig_
-    "DROP STATISTICS test_stat; CREATE STATISTICS test_stat ( dependencies,ndistinct,mcv) ON employee_name, employee_id FROM employee"
-    ("DROP STATISTICS test_stat; " <> createStats1)
+  (dropAndCreateStats2, _) <-
+    addMig
+      -- Changing kinds
+      "DROP STATISTICS test_stat; CREATE STATISTICS test_stat (dependencies,mcv) ON employee_name, employee_id FROM employee"
+      ("DROP STATISTICS test_stat; " <> createStats1)
+      $ ChangeEq [("schemas/public/tables/employee/statistics/test_stat", DBothButDifferent)]
+
+  when (pgVersion >= 14)
+    $ addMig_
+      -- Using an expression
+      "DROP STATISTICS test_stat; CREATE STATISTICS test_stat (dependencies,mcv) ON LOWER(employee_name), employee_id FROM employee"
+      dropAndCreateStats2
     $ ChangeEq [("schemas/public/tables/employee/statistics/test_stat", DBothButDifferent)]
 
-  -- ALTER TABLE employee ADD COLUMN anycolumn TEXT;
   -- CRUD
   addMig_
     "INSERT INTO employee (employee_name) VALUES ('Marcelo')"
