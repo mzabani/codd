@@ -30,8 +30,6 @@ library
       Codd.Representations
       Codd.Representations.Database
       Codd.Representations.Database.Model
-      Codd.Representations.Database.Pg10
-      Codd.Representations.Database.Pg11
       Codd.Representations.Database.Pg12
       Codd.Representations.Database.Pg13
       Codd.Representations.Database.Pg14

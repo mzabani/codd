@@ -1,0 +1,12 @@
+{
+    "definition": "id, popular_name, lower(popular_name), (id * 42)",
+    "kind": [
+        "d",
+        "e",
+        "f",
+        "m"
+    ],
+    "namespace": "public",
+    "owner": "codd_admin",
+    "table": "animals"
+}

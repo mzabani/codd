@@ -40,6 +40,7 @@ instance Arbitrary DbRepsGen where
           <*> uniqueMapOf 1 triggerGen objName
           <*> uniqueMapOf 2 policyGen objName
           <*> uniqueMapOf 3 indexGen objName
+          <*> uniqueMapOf 1 stxGen objName
       viewGen = ViewRep <$> genObjName <*> arbitrary
       routineGen = RoutineRep <$> genObjName <*> arbitrary
       sequenceGen = SequenceRep <$> genObjName <*> arbitrary
@@ -52,6 +53,7 @@ instance Arbitrary DbRepsGen where
       triggerGen = TableTriggerRep <$> genObjName <*> arbitrary
       policyGen = TablePolicyRep <$> genObjName <*> arbitrary
       indexGen = TableIndexRep <$> genObjName <*> arbitrary
+      stxGen = TableStatisticsRep <$> genObjName <*> arbitrary
 
 uniqueListOf :: (Eq b) => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy =
