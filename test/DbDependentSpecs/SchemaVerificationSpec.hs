@@ -1028,6 +1028,9 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     $ ChangeEq
       [("schemas/public/collations/new_collation", DBothButDifferent)]
 
+  (createCol2, _) <- addMig "CREATE COLLATION new_collation_2 (provider = icu, locale = 'de-u-co-phonebk', deterministic = false);" "DROP COLLATION new_collation_2" $ ChangeEq [("schemas/public/collations/new_collation_2", DExpectedButNotFound)]
+  addMig_ "DROP COLLATION new_collation_2; CREATE COLLATION new_collation_2 (provider = icu, locale = 'de-u-co-phonebk', deterministic = true);" ("DROP COLLATION new_collation_2; " <> createCol2) $ ChangeEq [("schemas/public/collations/new_collation_2", DBothButDifferent)]
+
   addMig_
     "ALTER TABLE employee ADD COLUMN employee_surname TEXT;"
     "ALTER TABLE employee DROP COLUMN employee_surname;"
@@ -1041,9 +1044,6 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
           DBothButDifferent
         )
       ]
-
-  -- Deterministic collations were introduced in Pg 12..
-  -- addMig_ (dropColl <> " CREATE COLLATION (locale = 'C.utf8', deterministic = false) new_collation;") dropColl $ ChangeEq [("schemas/public/collations/new_collation", DBothButDifferent )]
 
   -- TYPES
 
