@@ -117,7 +117,7 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                         "proowner"
                         "proacl"
                       <> "_codd_roles_without_grantors ON TRUE",
-                  nonIdentWhere = Nothing,
+                  nonIdentWhere = nonIdentWhere hq,
                   identWhere =
                     Just $
                       "TRUE"
@@ -134,9 +134,7 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
           -- did not exist in the previous version
           hq
             { repCols =
-                [ ("table", "pg_class.relname"),
-                  ("namespace", "pg_namespace.nspname"),
-                  ("owner", "pg_roles.rolname"),
+                [ ("owner", "pg_roles.rolname"),
                   ("kind", Pg12.sortArrayExpr "stxkind"),
                   ( "definition",
                     "pg_catalog.pg_get_statisticsobjdef_columns(pg_statistic_ext.oid)"

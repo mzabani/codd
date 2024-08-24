@@ -16,5 +16,6 @@
     "rowsecurity": false,
     "rowtype": null,
     "shared": false,
-    "unique": true
+    "unique": true,
+    "valid": true
 }
