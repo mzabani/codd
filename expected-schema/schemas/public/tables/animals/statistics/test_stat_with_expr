@@ -6,7 +6,5 @@
         "f",
         "m"
     ],
-    "namespace": "public",
-    "owner": "codd_admin",
-    "table": "animals"
+    "owner": "codd_admin"
 }

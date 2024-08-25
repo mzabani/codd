@@ -24,7 +24,7 @@ import Codd.Types
     SqlRole,
   )
 import qualified Data.List as List
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Database.PostgreSQL.Simple as DB
 
 data CustomPrivileges = IncludeGrantor | DoNotIncludeGrantor
@@ -160,6 +160,7 @@ pgClassRepQuery ::
   Maybe ([SqlRole], QueryFrag) ->
   Maybe ObjName ->
   DbObjRepresentationQuery
+pgClassRepQuery _ Nothing = error "No schema name supplied for pgClassRepQuery. This is an internal bug in codd, please report it."
 pgClassRepQuery mPrivRolesAndKind schemaName =
   DbObjRepresentationQuery
     { objNameCol = "pg_class.relname",
@@ -200,21 +201,14 @@ pgClassRepQuery mPrivRolesAndKind schemaName =
                      <> " _codd_roles ON TRUE"
              )
           <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid",
-      nonIdentWhere = Nothing,
+      nonIdentWhere = Just "pg_class.relpersistence <> 't'",
       identWhere =
         Just $
-          maybe
-            ""
-            (QueryFrag "pg_namespace.nspname=?")
-            (DB.Only <$> schemaName),
+          QueryFrag
+            "pg_namespace.nspname=?"
+            (DB.Only schemaName),
       groupByCols = []
     }
-
---   where
---         -- We need to map pg_class.relkind (as per https://www.postgresql.org/docs/13/catalog-pg-class.html)
---         -- to the kind chars that `acldefault` expects, as in https://www.postgresql.org/docs/13/functions-info.html
---     mapRelKindToPrivKind =
---         "(CASE WHEN pg_class.relkind='S' THEN 's' ELSE 'r' END)"
 
 identFilterForTable :: Maybe ObjName -> Maybe ObjName -> Maybe QueryFrag
 identFilterForTable Nothing _ = error "No table name supplied"
@@ -333,7 +327,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           }
   HTable ->
     let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
-     in hq {nonIdentWhere = Just "relkind IN ('r', 'f', 'p')"}
+     in hq {nonIdentWhere = Just $ fromMaybe "TRUE" (nonIdentWhere hq) <> " AND pg_class.relkind IN ('r', 'f', 'p')"}
   HView ->
     let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
      in hq
@@ -361,19 +355,10 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             <> "\nJOIN pg_catalog.pg_namespace ON pg_class.relnamespace = pg_namespace.oid",
         nonIdentWhere =
           Just $
-            "pg_roles.rolname IS NULL OR "
-              <> ("pg_roles.rolname" `sqlIn` allRoles),
-        identWhere =
-          Just $
-            "TRUE"
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_class.relname = ?")
-                (DB.Only <$> tableName)
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_namespace.nspname = ?")
-                (DB.Only <$> schemaName),
+            "pg_class.relpersistence <> 't' AND (pg_roles.rolname IS NULL OR "
+              <> ("pg_roles.rolname" `sqlIn` allRoles)
+              <> ")",
+        identWhere = identFilterForTable tableName schemaName,
         groupByCols =
           [ "pg_policy.oid",
             "polname",
@@ -410,11 +395,12 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                    \\n LEFT JOIN (SELECT pg_depend.objid AS sequence_oid, owner_col_table.oid AS tableid, pg_attribute.attnum, owner_col_table.relname AS tablename, pg_attribute.attnum AS colnum \
                    \\n      FROM pg_catalog.pg_depend \
                    \\n         JOIN pg_catalog.pg_attribute ON pg_attribute.attrelid=pg_depend.refobjid AND pg_attribute.attnum=pg_depend.refobjsubid \
-                   \\n         JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid) owner_column \
+                   \\n         JOIN pg_catalog.pg_class owner_col_table ON owner_col_table.oid=pg_attribute.attrelid \
+                   \\n         WHERE owner_col_table.relpersistence <> 't') owner_column \
                    \\n            ON owner_column.sequence_oid=pg_class.oid \
                    \\n LEFT JOIN (SELECT attrelid as tableid, attnum, RANK() OVER (PARTITION BY attrelid ORDER BY attnum) AS colorder \
                    \\n      FROM pg_catalog.pg_attribute \
-                   \\n      WHERE NOT pg_attribute.attisdropped AND pg_attribute.attname NOT IN ('cmax', 'cmin', 'ctid', 'tableoid', 'xmax', 'xmin')) owner_col_order USING (tableid, attnum)"
+                   \\n      WHERE NOT pg_attribute.attisdropped AND pg_attribute.attnum >= 1) owner_col_order USING (tableid, attnum)"
           }
   HRoutine ->
     let nonAggCols =
@@ -550,18 +536,8 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             <> "_codd_roles ON TRUE",
         nonIdentWhere =
           Just
-            "NOT pg_attribute.attisdropped AND pg_attribute.attnum >= 1",
-        identWhere =
-          Just $
-            "TRUE"
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_namespace.nspname = ?")
-                (DB.Only <$> schemaName)
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_class.relname = ?")
-                (DB.Only <$> tableName),
+            "pg_class.relpersistence <> 't' AND NOT pg_attribute.attisdropped AND pg_attribute.attnum >= 1",
+        identWhere = identFilterForTable tableName schemaName,
         groupByCols = []
       }
   HTableConstraint ->
@@ -598,28 +574,18 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             <> "\nLEFT JOIN pg_catalog.pg_class pg_class_ind ON pg_class_ind.oid=pg_constraint.conindid"
             <> "\nLEFT JOIN pg_catalog.pg_class pg_class_frel ON pg_class_frel.oid=pg_constraint.confrelid"
             <> "\n LEFT JOIN pg_constraint pg_parent_constraint ON pg_parent_constraint.oid=pg_constraint.conparentid",
-        nonIdentWhere = Nothing,
-        identWhere =
-          Just $
-            "TRUE"
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_namespace.nspname = ?")
-                (DB.Only <$> schemaName)
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_class.relname = ?")
-                (DB.Only <$> tableName),
+        nonIdentWhere = Just "pg_class.relpersistence <> 't'",
+        identWhere = identFilterForTable tableName schemaName,
         groupByCols = []
       }
   HIndex ->
     let hq = pgClassRepQuery Nothing schemaName
      in hq
-          { -- TODO: Lots of columns still missing!! But pg_get_indexdef should do a good enough job for now
-            repCols =
+          { repCols =
               repCols hq
                 ++ [ ("unique", "indisunique"),
                      ("primary", "indisprimary"),
+                     ("valid", "indisvalid"),
                      ("exclusion", "indisexclusion"),
                      ("immediate", "indimmediate"),
                      ( "definition",
@@ -632,6 +598,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
               joins hq
                 <> "\n JOIN pg_catalog.pg_index ON pg_index.indexrelid=pg_class.oid \
                    \\n JOIN pg_catalog.pg_class pg_index_table ON pg_index.indrelid=pg_index_table.oid",
+            nonIdentWhere = Just $ fromMaybe "TRUE" (nonIdentWhere hq) <> "AND indislive",
             identWhere =
               ( <>
                   maybe
@@ -668,25 +635,15 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           ],
         fromTable = "pg_catalog.pg_trigger",
         joins =
-          "JOIN pg_catalog.pg_class pg_trigger_table ON pg_trigger_table.oid=pg_trigger.tgrelid \
-          \\n JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_trigger_table.relnamespace \
+          "JOIN pg_catalog.pg_class ON pg_class.oid=pg_trigger.tgrelid \
+          \\n JOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_class.relnamespace \
           \\n LEFT JOIN pg_catalog.pg_proc ON pg_proc.oid=tgfoid \
           \\n LEFT JOIN pg_catalog.pg_class pg_ref_table ON pg_ref_table.oid=tgconstrrelid \
           \\n LEFT JOIN pg_catalog.pg_class pg_trigger_ind ON pg_trigger_ind.oid=tgconstrindid \
           \\n LEFT JOIN pg_catalog.pg_constraint pg_trigger_constr ON pg_trigger_constr.oid=tgconstraint \
           \\n LEFT JOIN pg_catalog.pg_type pg_trigger_constr_type ON pg_trigger_constr_type.oid=pg_trigger_constr.contypid",
-        nonIdentWhere = Just "NOT tgisinternal",
-        identWhere =
-          Just $
-            "TRUE"
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_namespace.nspname = ?")
-                (DB.Only <$> schemaName)
-              <> maybe
-                ""
-                (QueryFrag "\nAND pg_trigger_table.relname = ?")
-                (DB.Only <$> tableName),
+        nonIdentWhere = Just "NOT tgisinternal AND pg_class.relpersistence <> 't'",
+        identWhere = identFilterForTable tableName schemaName,
         groupByCols = []
       }
   HCollation ->
@@ -844,7 +801,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                 --     so that keeps us safe.
                 --     TODO: actually, it seems possible to grant privileges to table types. This _could_ mean we should include them in
                 --     the expected schema, at least when their types differ from the default.
-                "pg_type.typisdefined AND array_element_type.oid IS NULL AND (pg_class_rel.relkind IS NULL OR pg_class_rel.relkind = 'c')",
+                "pg_type.typisdefined AND array_element_type.oid IS NULL AND (pg_class_rel.relkind IS NULL OR pg_class_rel.relkind = 'c') AND (pg_class_rel.relpersistence IS NULL OR pg_class_rel.relpersistence <> 't')",
             identWhere =
               Just $
                 QueryFrag
@@ -861,9 +818,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
     DbObjRepresentationQuery
       { objNameCol = "stxname",
         repCols =
-          [ ("table", "pg_class.relname"),
-            ("namespace", "pg_namespace.nspname"),
-            ("owner", "pg_roles.rolname"),
+          [ ("owner", "pg_roles.rolname"),
             ("kind", sortArrayExpr "stxkind"),
             ( "columns",
               "(SELECT ARRAY_AGG(pg_attribute.attname"
@@ -880,7 +835,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           "JOIN pg_catalog.pg_namespace ON pg_statistic_ext.stxnamespace = pg_namespace.oid"
             <> "\nJOIN pg_catalog.pg_class ON pg_class.oid = pg_statistic_ext.stxrelid"
             <> "\nJOIN pg_catalog.pg_roles ON pg_roles.oid = pg_statistic_ext.stxowner",
-        nonIdentWhere = Nothing,
+        nonIdentWhere = Just "pg_class.relpersistence <> 't'",
         identWhere =
           identFilterForTable tableName schemaName,
         groupByCols = []
