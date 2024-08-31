@@ -52,7 +52,7 @@ jobs:
       run: df -h
 
     - name: Try to build statically linked codd
-      run: nix build -o static-codd ".#codd:exe:codd"
+      run: nix build -o static-codd ".#codd:exe:codd" || df -h
 
     - name: Check which libs the executable is linked against part 2
       run: otool -L static-codd/bin/codd || ldd static-codd/bin/codd
