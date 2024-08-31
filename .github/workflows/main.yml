@@ -48,9 +48,8 @@ jobs:
           ls /Applications
           brew uninstall google-chrome
           sudo rm -rf /Users/runner/Library/Android
-          sudo rm -rf /Applications/Xcode_14*
-          sudo rm -rf /Applications/Xcode_15*
-          sudo rm -rf /Applications/Xcode_16*
+          sudo rm -rf /Applications/Xcode*
+          sudo rm -rf /Applications/Python*
           ls /Applications
           df -h
 
@@ -59,9 +58,6 @@ jobs:
 
     # - name: Check which libs the executable is linked against
     #   run: otool -L codd/bin/codd || ldd codd/bin/codd
-
-    - name: Disk space
-      run: df -h
 
     - name: Try to build statically linked codd
       run: nix build -o static-codd ".#codd:exe:codd" || df -h
