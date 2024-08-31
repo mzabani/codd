@@ -42,6 +42,18 @@ jobs:
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
+    - name: Recover disk space
+      run: |
+          df -h
+          ls /Applications
+          brew uninstall google-chrome
+          sudo rm -rf /Users/runner/Library/Android
+          sudo rm -rf /Applications/Xcode_14*
+          sudo rm -rf /Applications/Xcode_15*
+          sudo rm -rf /Applications/Xcode_16*
+          ls /Applications
+          df -h
+
     # - name: Build executable used for installer
     #   run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
 
