@@ -42,11 +42,14 @@ jobs:
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
-    - name: Build executable used for installer
-      run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
+    # - name: Build executable used for installer
+    #   run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
 
-    - name: Check which libs the executable is linked against
-      run: otool -L codd/bin/codd || ldd codd/bin/codd
+    # - name: Check which libs the executable is linked against
+    #   run: otool -L codd/bin/codd || ldd codd/bin/codd
+
+    - name: Disk space
+      run: df -h
 
     - name: Try to build statically linked codd
       run: nix build -o static-codd ".#codd:exe:codd"
