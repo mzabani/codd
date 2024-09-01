@@ -1,10 +1,10 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2";
-  # When switching away from nixpkgs-23.11, make sure to change
+    "github:input-output-hk/haskell.nix/b23914a4980324bcdc832b821d3eac593b192a24";
+  # When switching away from nixpkgs-24.05, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2405";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
