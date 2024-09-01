@@ -18,8 +18,7 @@ env:
   CI: 1
 
 jobs:
-  build-x86_64-macos:
-    # This job's purpose is to check the installer works for macos and push to cachix, but nothing else
+  build-aarch64-darwin:
     runs-on: macos-latest
 
     steps:
@@ -62,19 +61,25 @@ jobs:
         # This should work according to https://github.com/NixOS/nixpkgs/pull/235990
         nix build -o static-hello nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.hello
         ./static-hello/bin/hello
-        otool -L ./static-hello/bin/hello || ldd ./static-hello/bin/hello
+        otool -L ./static-hello/bin/hello
+
+    - name: Some haskell package's static build
+      run: |
+        nix build -o static-shellcheck nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.shellcheck
+        ./static-shellcheck-bin/bin/shellcheck
+        otool -L ./static-shellcheck-bin/bin/shellcheck
 
     # - name: Build executable used for installer
     #   run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
 
     # - name: Check which libs the executable is linked against
-    #   run: otool -L codd/bin/codd || ldd codd/bin/codd
+    #   run: otool -L codd/bin/codd
 
     - name: Try to build statically linked codd
       run: nix build -o static-codd ".#codd:exe:codd" || df -h
 
     - name: Check which libs the executable is linked against part 2
-      run: otool -L static-codd/bin/codd || ldd static-codd/bin/codd
+      run: otool -L static-codd/bin/codd
 
     - name: Install codd with nix-env and uninstall it
       run: |
