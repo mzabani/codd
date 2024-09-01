@@ -50,11 +50,13 @@
                       # in codd.cabal
                       packages.codd.components.tests.codd-test.build-tools =
                         [ proj.hsPkgs.hspec-discover ];
-                      }] ++ (if final.stdenv.isDarwin then [] else [
+                      }] ++ ([
                         {
                           packages.codd.components.exes.codd = {
                             dontStrip = false;
-                            configureFlags = [
+                            configureFlags = 
+                              (if final.stdenv.isDarwin then [] else ["--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"]) ++
+                            [
                               # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
                               # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
                               # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
@@ -64,11 +66,10 @@
                               # https://github.com/NixOS/nixpkgs/issues/191920
                               # This doesn't seem like a big issue since we only need libpq and we do run tests against
                               # postgresql-16-the-server.
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              (if final.stdenv.isDarwin then "--ghc-option=-optl=-L${final.pkgsStatic.postgresql.out}/lib" else "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib")
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -76,13 +77,14 @@
 
                           packages.codd.components.tests.codd-test = {
                             dontStrip = false;
-                            configureFlags = [
+                            configureFlags = 
+                              (if final.stdenv.isDarwin then [] else ["--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"]) ++
+                            [
                               # Same as for the executable here
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                              (if final.stdenv.isDarwin then "--ghc-option=-optl=-L${final.pkgsStatic.postgresql.out}/lib" else "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib")
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
