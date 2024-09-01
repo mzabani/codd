@@ -54,6 +54,9 @@ jobs:
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
 
+    - name: Disk space
+      run: df -h
+
     # - name: Build executable used for installer
     #   run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
 
