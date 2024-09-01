@@ -1,10 +1,10 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/b23914a4980324bcdc832b821d3eac593b192a24";
-  # When switching away from nixpkgs-24.05, make sure to change
+    "github:input-output-hk/haskell.nix/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2";
+  # When switching away from nixpkgs-23.11, make sure to change
   # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2405";
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -50,13 +50,11 @@
                       # in codd.cabal
                       packages.codd.components.tests.codd-test.build-tools =
                         [ proj.hsPkgs.hspec-discover ];
-                      }] ++ ([
+                      }] ++ (if final.stdenv.isDarwin then [] else [
                         {
                           packages.codd.components.exes.codd = {
                             dontStrip = false;
-                            configureFlags = 
-                              (if final.stdenv.isDarwin then [] else ["--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"]) ++
-                            [
+                            configureFlags = [
                               # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
                               # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
                               # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
@@ -66,10 +64,11 @@
                               # https://github.com/NixOS/nixpkgs/issues/191920
                               # This doesn't seem like a big issue since we only need libpq and we do run tests against
                               # postgresql-16-the-server.
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              (if final.stdenv.isDarwin then "--ghc-option=-optl=-L${final.pkgsStatic.postgresql.out}/lib" else "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib")
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -77,14 +76,13 @@
 
                           packages.codd.components.tests.codd-test = {
                             dontStrip = false;
-                            configureFlags = 
-                              (if final.stdenv.isDarwin then [] else ["--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"]) ++
-                            [
+                            configureFlags = [
                               # Same as for the executable here
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                               "--ghc-option=-optl=-lssl"
                               "--ghc-option=-optl=-lcrypto"
 
-                              (if final.stdenv.isDarwin then "--ghc-option=-optl=-L${final.pkgsStatic.postgresql.out}/lib" else "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib")
+                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
                               "--ghc-option=-optl=-lpgcommon"
                               "--ghc-option=-optl=-lpgport"
                             ];
@@ -138,9 +136,9 @@
         flakeDefault = pkgs.coddProject.flake {
           # This adds support for `nix build .#x86_64-unknown-linux-musl:codd:exe:codd`
           # and `nix build .#x86_64-w64-mingw32:codd:exe:codd`
-          # Check nixpkgs.lib.systems.examples for more.
+          # Check nixpkgs.lib.systems for more.
           # The mingwW64 build still fails, IIRC.
-          crossPlatforms = p: [ p.musl64 p.mingwW64 p.aarch64-multiplatform-musl p.aarch64-darwin];
+          crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
       in flakeDefault // {
         # Built by `nix build .`

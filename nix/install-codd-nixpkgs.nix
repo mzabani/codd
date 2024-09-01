@@ -3,21 +3,7 @@
 # than a haskell.nix provided one, so it's useful as an installation option.
 # The downside is that library versions are likely not the same as the ones from Stackage LTS.
 let
-  haskellPatchesOverlay = final: prev: {
-    haskellPackages = prev.haskellPackages.override {
-      overrides = hsSelf: hsSuper: {
-        haxl = final.haskell.lib.doJailbreak
-          (final.haskell.lib.markUnbroken hsSuper.haxl);
-      };
-    };
-  };
-  nixpkgs = import
-    (let lock = builtins.fromJSON (builtins.readFile ../flake.lock);
-    in fetchTarball {
-      url =
-        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-2405.locked.rev}.tar.gz";
-      sha256 = lock.nodes.nixpkgs-2405.locked.narHash;
-    }) { overlays = [ haskellPatchesOverlay ]; };
+  nixpkgs = import ./nixpkgs.nix;
   pgService = import ./postgres-service.nix {
     pkgs = nixpkgs;
     postgres = nixpkgs.postgresql_16;

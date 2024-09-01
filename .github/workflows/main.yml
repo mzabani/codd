@@ -56,18 +56,18 @@ jobs:
     - name: Disk space
       run: df -h
 
-    - name: Simpler static build
-      run: |
-        # This should work according to https://github.com/NixOS/nixpkgs/pull/235990
-        nix build -o static-hello nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.hello
-        ./static-hello/bin/hello
-        otool -L ./static-hello/bin/hello
+    # - name: Simpler static build
+    #   run: |
+    #     # This should work according to https://github.com/NixOS/nixpkgs/pull/235990
+    #     nix build -o static-hello nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.hello
+    #     ./static-hello/bin/hello
+    #     otool -L ./static-hello/bin/hello
 
-    - name: Some haskell package's static build
-      run: |
-        nix build -o static-shellcheck nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.shellcheck
-        ./static-shellcheck-bin/bin/shellcheck
-        otool -L ./static-shellcheck-bin/bin/shellcheck
+    # - name: Some haskell package's static build
+    #   run: |
+    #     nix build -o static-shellcheck nixpkgs#legacyPackages.aarch64-darwin.pkgsStatic.shellcheck
+    #     ./static-shellcheck-bin/bin/shellcheck
+    #     otool -L ./static-shellcheck-bin/bin/shellcheck
 
     # - name: Build executable used for installer
     #   run: nix-build -o codd ./nix/install-codd-nixpkgs.nix -A codd
@@ -75,11 +75,24 @@ jobs:
     # - name: Check which libs the executable is linked against
     #   run: otool -L codd/bin/codd
 
-    - name: Try to build statically linked codd
-      run: nix build -o static-codd ".#codd:exe:codd" || df -h
+    - name: Build codd without static linking
+      run: nix build -o static-codd ".#codd:exe:codd"
 
     - name: Check which libs the executable is linked against part 2
       run: otool -L static-codd/bin/codd
+
+    - name: Create darwin bundle
+      run: |
+        nix-env -iA macdylibbundler -f ./nix/nixpkgs.nix
+        # dylibbundler tries to modify the source folder, which fails because it's a nix store path
+        mkdir -p ./codd.app/Contents/MacOS/
+        cp static-codd/bin/codd ./codd.app/Contents/MacOS/codd
+        dylibbundler -od -b -x ./codd.app/Contents/MacOS/codd -d ./codd.app/Contents/libs/ -p @executable_path/../libs/
+        ls -lh -R codd.app
+        otool -L ./codd.app/Contents/MacOS/codd
+        echo Running
+        ./codd.app/Contents/MacOS/codd --help
+        ./codd.app/Contents/MacOS/codd up || echo Failed!
 
     - name: Install codd with nix-env and uninstall it
       run: |
