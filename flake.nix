@@ -50,46 +50,45 @@
                       # in codd.cabal
                       packages.codd.components.tests.codd-test.build-tools =
                         [ proj.hsPkgs.hspec-discover ];
-                      }] ++ (if final.stdenv.isDarwin then [] else [
-                        {
-                          packages.codd.components.exes.codd = {
-                            dontStrip = false;
-                            configureFlags = [
-                              # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
-                              # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
-                              # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
-                              # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
-                              # dynamically linked glibc builds.
-                              # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
-                              # https://github.com/NixOS/nixpkgs/issues/191920
-                              # This doesn't seem like a big issue since we only need libpq and we do run tests against
-                              # postgresql-16-the-server.
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                              "--ghc-option=-optl=-lssl"
-                              "--ghc-option=-optl=-lcrypto"
+                    }] ++ (if final.stdenv.isDarwin then
+                      [ ]
+                    else [{
+                      packages.codd.components.exes.codd = {
+                        dontStrip = false;
+                        configureFlags = [
+                          # I'm not sure how linking works. HMAC_Update and HMAC_Final are two symbols present both in
+                          # libssl.a and libcrypto.a, but without including both linking will fail! It is also present
+                          # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
+                          # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
+                          # dynamically linked glibc builds.
+                          # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
+                          # https://github.com/NixOS/nixpkgs/issues/191920
+                          # This doesn't seem like a big issue since we only need libpq and we do run tests against
+                          # postgresql-16-the-server.
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                          "--ghc-option=-optl=-lssl"
+                          "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                              "--ghc-option=-optl=-lpgcommon"
-                              "--ghc-option=-optl=-lpgport"
-                            ];
-                          };
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-lpgcommon"
+                          "--ghc-option=-optl=-lpgport"
+                        ];
+                      };
 
-                          packages.codd.components.tests.codd-test = {
-                            dontStrip = false;
-                            configureFlags = [
-                              # Same as for the executable here
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
-                              "--ghc-option=-optl=-lssl"
-                              "--ghc-option=-optl=-lcrypto"
+                      packages.codd.components.tests.codd-test = {
+                        dontStrip = false;
+                        configureFlags = [
+                          # Same as for the executable here
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
+                          "--ghc-option=-optl=-lssl"
+                          "--ghc-option=-optl=-lcrypto"
 
-                              "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
-                              "--ghc-option=-optl=-lpgcommon"
-                              "--ghc-option=-optl=-lpgport"
-                            ];
-                          };
-                        }
-                      ]);
-
+                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-lpgcommon"
+                          "--ghc-option=-optl=-lpgport"
+                        ];
+                      };
+                    }]);
 
                     # This is used by `nix develop .` to open a shell for use with
                     # `cabal`, `hlint` and `haskell-language-server`
@@ -97,18 +96,19 @@
                       cabal = "latest";
                       hlint = "latest";
                       haskell-language-server = "latest";
-                      fourmolu="latest";
+                      fourmolu = "latest";
                     };
                     # Non-Haskell shell tools go here
-                    shell.buildInputs = with pkgs; [
-                      cacert
-                      ghcid
-                      glibcLocales
-                      postgres-service
-                      postgresql_16
-                      run
-                      shellcheck
-                    ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
+                    shell.buildInputs = with pkgs;
+                      [
+                        cacert
+                        ghcid
+                        glibcLocales
+                        postgres-service
+                        postgresql_16
+                        run
+                        shellcheck
+                      ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
 
@@ -152,7 +152,8 @@
           pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
         };
 
-        shellWithRunfile = pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
+        shellWithRunfile =
+          pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
 
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
         # build musl packages statically to see if their "normal" builds pass
@@ -164,5 +165,11 @@
           codd-exe =
             flakeDefault.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
+
+        coddDarwinAppBundle = with pkgs;
+          import ./nix/codd-darwin-bundle.nix {
+            codd-exe = flakeDefault.packages."codd:exe:codd";
+            inherit macdylibbundler stdenv zip;
+          };
       });
 }

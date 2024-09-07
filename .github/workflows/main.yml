@@ -82,14 +82,24 @@ jobs:
     - name: Build codd's docker image
       run: nix build --no-link .#dockerImage.x86_64-linux
 
-  build-x86_64-macos:
-    # This job's purpose is to check the installer works for macos and push to cachix, but nothing else
-    runs-on: macos-latest
+  build-aarch64-darwin:
+    runs-on: macos-14
 
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Recover disk space
+      run: |
+          df -h
+          ls /Applications
+          brew uninstall google-chrome
+          sudo rm -rf /Users/runner/Library/Android
+          sudo rm -rf /Applications/Xcode*
+          sudo rm -rf /Applications/Python*
+          ls /Applications
+          df -h
     
     - uses: cachix/install-nix-action@v24
       with:
@@ -106,8 +116,17 @@ jobs:
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
-    - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+    # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
+    # and are a standard for macOS app distribution.
+    - name: Build codd without static linking
+      run: nix build --no-link ".#codd:exe:codd"
+
+    - name: Create macOS app bundle
+      run: |
+        nix build .#coddDarwinAppBundle.aarch64-darwin
+        unzip -l result/codd.zip
+        unzip result/codd.zip -d extracted-bundle
+        ./extracted-bundle/codd.app/Contents/MacOS/codd --help # A smoke test
 
     - name: Install codd with nix-env and uninstall it
       run: |
