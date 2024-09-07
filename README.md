@@ -108,7 +108,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ### 1. Self-contained executable
 
-If you are on x86_64-linux, the easiest thing is to download our self-contained statically linked executable from [Github Releases](https://github.com/mzabani/codd/releases). If you can't use that, there are two other installation methods, described below.
+If you are on x86_64-linux or on aarch64-macOS, the easiest thing is to download our self-contained binaries from [Github Releases](https://github.com/mzabani/codd/releases). If you can't use that, there are two other installation methods, described below.
 
 ### 2. Nix
 
@@ -156,7 +156,7 @@ You can find more about the special migration directives that codd understands [
 Now add this migration by running one of the two commands below:
 
 ````shell
-$ # If you installed codd with Nix
+$ # If you are using the binary releases or if you installed codd with Nix
 $ codd add bootstrap-db.sql
 
 $ # If you're using the docker image with a .env file:
