@@ -49,13 +49,18 @@ jobs:
       run: |
         echo Creating draft release...
         TAG="${{ github.event.inputs.versionToRelease }}"
+
+        # If the curl line below fails, one possibility is that the access token has expired.
+        # If that happens, generate a new Fine-grained personal access token at https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token
+        # Give it the "Contents" repository permissions (write), and then in codd's repository settings change the
+        # CREATE_GITHUB_RELEASE_ACCESS_TOKEN secret to the new token.
         RELEASE_ID=$(curl -L \
           -X POST \
           -H "Accept: application/vnd.github+json" \
           -H "Authorization: Bearer $CREATE_GITHUB_RELEASE_ACCESS_TOKEN" \
           -H "X-GitHub-Api-Version: 2022-11-28" \
           https://api.github.com/repos/mzabani/codd/releases \
-          -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Please manually fill in the description of this release\",\"draft\":true}" | jq .id)
+          -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Description of the release. Please edit before publishing.\",\"draft\":true, \"generate_release_notes\": true}" | jq .id)
         RELEASE_URL="https://uploads.github.com/repos/mzabani/codd/releases/$RELEASE_ID/assets"
 
         echo Attaching aarch64-darwin zip bundle...
