@@ -22,7 +22,7 @@ then
 fi
 
 SRCDIR=$(mktemp -d || echo /tmp/codd-checkout-Y6fRwa_23x)
-git clone --depth 1 -b v0.1.4 https://github.com/mzabani/codd.git "$SRCDIR"
+git clone --depth 1 -b v0.1.5 https://github.com/mzabani/codd.git "$SRCDIR"
 
 nix-env -f "$SRCDIR/nix/install-codd-nixpkgs.nix" \
     --option trusted-substituters 'https://cache.nixos.org https://cache.iog.io https://mzabani.cachix.org' \
