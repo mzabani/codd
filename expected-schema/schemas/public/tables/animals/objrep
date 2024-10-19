@@ -1,6 +1,10 @@
 {
     "accessmethod": "heap",
     "amoptions": null,
+    "columns_in_order": [
+        "id",
+        "popular_name"
+    ],
     "compositetype": null,
     "forcerowsecurity": false,
     "kind": "r",

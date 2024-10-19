@@ -8,7 +8,6 @@
     "inhcount": 0,
     "local": true,
     "notnull": true,
-    "order": 5,
     "privileges": null,
     "type": "boolean"
 }

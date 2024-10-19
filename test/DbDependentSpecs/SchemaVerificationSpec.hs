@@ -258,20 +258,21 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         ),
         ( "schemas/public/tables/employee/cols/deathday",
           DExpectedButNotFound
+        ),
+        ( "schemas/public/tables/employee/objrep",
+          DBothButDifferent -- Column order goes into objrep
         )
       ]
 
-  -- Column order matters because of things like 'SELECT *'
+  -- Column order matters because of things like 'SELECT *' and it goes into the table's objrep
+  -- to reduce number of files changed when rewriting tables and other kinds of changes
   addMig_
     "ALTER TABLE employee DROP COLUMN birthday; ALTER TABLE employee DROP COLUMN deathday; \
     \ ALTER TABLE employee ADD COLUMN deathday DATE; ALTER TABLE employee ADD COLUMN birthday DATE;"
     "ALTER TABLE employee DROP COLUMN birthday; ALTER TABLE employee DROP COLUMN deathday; \
     \ ALTER TABLE employee ADD COLUMN birthday DATE; ALTER TABLE employee ADD COLUMN deathday DATE;"
     $ ChangeEq
-      [ ( "schemas/public/tables/employee/cols/birthday",
-          DBothButDifferent
-        ),
-        ( "schemas/public/tables/employee/cols/deathday",
+      [ ( "schemas/public/tables/employee/objrep",
           DBothButDifferent
         )
       ]
@@ -309,26 +310,14 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
         )
       ]
 
-  -- Recreating a column exactly like it was before will affect column order, which will affect the index and the sequence too
+  -- Recreating a column exactly like it was before will affect column order, which will affect the index, the sequence and the table's objrep too, but not the column reps themselves
   addMig_
     "ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;"
     "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(50) NOT NULL, favorite_number numeric(9,3)); \
     \ ALTER TABLE employee ADD COLUMN deathday DATE DEFAULT '2100-02-04'; ALTER TABLE employee ADD COLUMN birthday TIMESTAMP;"
     $ ChangeEq
-      [ ( "schemas/public/tables/employee/cols/employee_id",
-          DBothButDifferent
-        ),
-        -- Other columns in the same table have their relative order changed as well
-        ( "schemas/public/tables/employee/cols/birthday",
-          DBothButDifferent
-        ),
-        ( "schemas/public/tables/employee/cols/deathday",
-          DBothButDifferent
-        ),
-        ( "schemas/public/tables/employee/cols/employee_name",
-          DBothButDifferent
-        ),
-        ( "schemas/public/tables/employee/cols/favorite_number",
+      [ -- Other columns in the same table have their relative order changed as well
+        ( "schemas/public/tables/employee/objrep",
           DBothButDifferent
         ),
         ( "schemas/public/sequences/employee_employee_id_seq",
@@ -1115,6 +1104,9 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     $ ChangeEq
       [ ( "schemas/public/tables/employee/cols/anycolumn",
           DExpectedButNotFound
+        ),
+        ( "schemas/public/tables/employee/objrep",
+          DBothButDifferent
         )
       ]
 

@@ -1,6 +1,13 @@
 {
     "accessmethod": "heap",
     "amoptions": null,
+    "columns_in_order": [
+        "id",
+        "payer",
+        "receiver",
+        "value",
+        "anonymous"
+    ],
     "compositetype": null,
     "forcerowsecurity": false,
     "kind": "r",
