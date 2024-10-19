@@ -492,7 +492,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
     DbObjRepresentationQuery
       { objNameCol = "attname",
         repCols =
-          [ ("type", "pg_type.typname"),
+          [ ("type", "pg_catalog.format_type(atttypid, atttypmod)"),
             ("notnull", "attnotnull"),
             ("hasdefault", "atthasdef"),
             ( "default",
@@ -501,7 +501,6 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             ("identity", "attidentity"),
             ("local", "attislocal"),
             ("inhcount", "attinhcount"),
-            ("typmod", "atttypmod"),
             ("collation", "pg_collation.collname"),
             ("collation_nsp", "collation_namespace.nspname"),
             ("privileges", "_codd_roles.permissions"),
@@ -522,7 +521,6 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
         joins =
           "JOIN pg_catalog.pg_class ON pg_class.oid=attrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_class.relnamespace"
-            <> "\nLEFT JOIN pg_catalog.pg_type ON pg_type.oid=atttypid"
             <> "\nLEFT JOIN pg_catalog.pg_attrdef ON pg_attrdef.adrelid=pg_class.oid AND pg_attrdef.adnum=pg_attribute.attnum"
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
             <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"

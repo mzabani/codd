@@ -10,6 +10,5 @@
     "notnull": true,
     "order": 3,
     "privileges": null,
-    "type": "text",
-    "typmod": -1
+    "type": "text"
 }

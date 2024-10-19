@@ -10,6 +10,5 @@
     "notnull": false,
     "order": 4,
     "privileges": null,
-    "type": "numeric",
-    "typmod": 655366
+    "type": "numeric(10,2)"
 }
