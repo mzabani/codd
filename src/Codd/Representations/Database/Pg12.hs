@@ -424,8 +424,8 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- is compiled, so we ignore this column in those cases.
             -- Note that this means that functions with different implementations could be considered equal,
             -- but I don't know a good way around this
-            ( "definition_md5",
-              "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
+            ( "definition",
+              "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
             ),
             ("kind", "prokind")
             -- Only include the owner of the function if this

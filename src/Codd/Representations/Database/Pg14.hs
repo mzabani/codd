@@ -66,8 +66,8 @@ objRepQueryFor allRoles allSchemas schemaAlgoOpts schemaName tableName hobj =
                     "pg_catalog.pg_get_function_arguments(pg_proc.oid)"
                   ),
                   ("config", sortArrayExpr "proconfig"),
-                  ( "definition_md5",
-                    "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
+                  ( "definition",
+                    "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
                   ),
                   ("kind", "prokind") -- From Pg11.hs
                   -- Multiranges suffer the same sad fate of weird ownership in AWS RDS as regular ranges
