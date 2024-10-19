@@ -4,7 +4,7 @@
     "collation_nsp": "pg_catalog",
     "comp_type_table": null,
     "composite_type_attrs": "",
-    "constraints": "true;non_whitespace_text_check;CHECK ((TRIM(BOTH FROM VALUE) <> ''::text))",
+    "constraints": "true;non_whitespace_text_check;CHECK (TRIM(BOTH FROM VALUE) <> ''::text)",
     "default": null,
     "delim": ",",
     "domain_basetype": "text",

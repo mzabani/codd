@@ -560,7 +560,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- referenced columns' names, AND because attnum is affected by dropped columns.
             --   , "pg_constraint.conkey"
             --   , "pg_constraint.confkey"
-            ("definition", "pg_get_constraintdef(pg_constraint.oid)"),
+            ("definition", "pg_get_constraintdef(pg_constraint.oid, true)"),
             ( "parent_constraint",
               "pg_parent_constraint.conname"
             )
@@ -729,7 +729,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                        "ARRAY_TO_STRING(ARRAY_AGG(pg_enum.enumlabel::TEXT ORDER BY pg_enum.enumsortorder), ';')"
                      ),
                      ( "constraints",
-                       "ARRAY_TO_STRING(ARRAY_AGG(pg_constraint.convalidated || ';' || pg_constraint.conname || ';' || pg_get_constraintdef(pg_constraint.oid) ORDER BY pg_constraint.conname), ';')"
+                       "ARRAY_TO_STRING(ARRAY_AGG(pg_constraint.convalidated || ';' || pg_constraint.conname || ';' || pg_get_constraintdef(pg_constraint.oid, true) ORDER BY pg_constraint.conname), ';')"
                      )
                    ],
             -- === Do not include:
