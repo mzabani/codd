@@ -192,7 +192,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
 
   -- TABLES AND COLUMNS
   addMig_
-    "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(30))"
+    "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(30), favorite_number numeric(10,2))"
     "DROP TABLE employee"
     $ ChangeEq
       [ ( "schemas/public/sequences/employee_employee_id_seq",
@@ -202,6 +202,9 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
           DExpectedButNotFound
         ),
         ( "schemas/public/tables/employee/cols/employee_name",
+          DExpectedButNotFound
+        ),
+        ( "schemas/public/tables/employee/cols/favorite_number",
           DExpectedButNotFound
         ),
         ( "schemas/public/tables/employee/constraints/employee_pkey",
@@ -225,6 +228,23 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
     $ ChangeEq
       [ ( "schemas/public/tables/employee/cols/employee_name",
+          DBothButDifferent
+        )
+      ]
+
+  addMig_
+    "ALTER TABLE employee ALTER COLUMN favorite_number TYPE numeric(9,2)"
+    "ALTER TABLE employee ALTER COLUMN favorite_number TYPE numeric(10,2)"
+    $ ChangeEq
+      [ ( "schemas/public/tables/employee/cols/favorite_number",
+          DBothButDifferent
+        )
+      ]
+  addMig_
+    "ALTER TABLE employee ALTER COLUMN favorite_number TYPE numeric(9,3)"
+    "ALTER TABLE employee ALTER COLUMN favorite_number TYPE numeric(9,2)"
+    $ ChangeEq
+      [ ( "schemas/public/tables/employee/cols/favorite_number",
           DBothButDifferent
         )
       ]
@@ -292,7 +312,7 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
   -- Recreating a column exactly like it was before will affect column order, which will affect the index and the sequence too
   addMig_
     "ALTER TABLE employee DROP COLUMN employee_id; ALTER TABLE employee ADD COLUMN employee_id SERIAL PRIMARY KEY;"
-    "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(50) NOT NULL); \
+    "DROP TABLE employee; CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(50) NOT NULL, favorite_number numeric(9,3)); \
     \ ALTER TABLE employee ADD COLUMN deathday DATE DEFAULT '2100-02-04'; ALTER TABLE employee ADD COLUMN birthday TIMESTAMP;"
     $ ChangeEq
       [ ( "schemas/public/tables/employee/cols/employee_id",
@@ -306,6 +326,9 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
           DBothButDifferent
         ),
         ( "schemas/public/tables/employee/cols/employee_name",
+          DBothButDifferent
+        ),
+        ( "schemas/public/tables/employee/cols/favorite_number",
           DBothButDifferent
         ),
         ( "schemas/public/sequences/employee_employee_id_seq",
@@ -679,8 +702,8 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
     -- Also, on Pg <= 12, dropping and readding employee_id in the same ALTER TABLE statement
     -- makes Pg create a new sequence with a different name instead of doing what you might expect
     "ALTER SEQUENCE some_seq OWNED BY NONE; \
-    \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN employee_id CASCADE;\
-    \\nALTER TABLE employee ADD COLUMN employee_name VARCHAR(50) NOT NULL, ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
+    \\nALTER TABLE employee DROP COLUMN birthday, DROP COLUMN deathday, DROP COLUMN name, DROP COLUMN favorite_number, DROP COLUMN employee_id CASCADE;\
+    \\nALTER TABLE employee ADD COLUMN employee_name VARCHAR(50) NOT NULL, ADD COLUMN favorite_number numeric(9,3), ADD COLUMN deathday DATE NULL DEFAULT '2100-02-04', \
     \ ADD COLUMN birthday TIMESTAMP, ADD COLUMN employee_id SERIAL PRIMARY KEY, \
     \ ADD COLUMN name TEXT;\
     \\nALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY');\
