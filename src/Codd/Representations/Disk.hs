@@ -8,7 +8,6 @@ where
 import Codd.Representations.Types
 import Control.Monad
   ( forM,
-    forM_,
     unless,
     void,
     when,
@@ -39,13 +38,12 @@ import UnliftIO
     throwIO,
   )
 import UnliftIO.Directory
-  ( copyFile,
-    createDirectoryIfMissing,
+  ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
-    getTemporaryDirectory,
     listDirectory,
     removePathForcibly,
+    renameDirectory,
   )
 import Prelude hiding
   ( readFile,
@@ -174,22 +172,18 @@ toFiles = sortOn fst . frec
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
 persistRepsToDisk :: (HasCallStack, MonadIO m) => DbRep -> FilePath -> m ()
-persistRepsToDisk dbSchema rootDir = do
-  tempDir <- (</> "temp-db-dir") <$> getTemporaryDirectory
-  whenM (doesDirectoryExist tempDir) $ wipeDir tempDir
-  createDirectoryIfMissing False tempDir
+persistRepsToDisk dbSchema schemaDir = do
+  let tempDir = schemaDir </> "../.temp-codd-write-dir-you-can-remove-this"
+  -- renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
+  -- So we remove folders preventively
+  whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
+  whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
+  createDirectoryIfMissing True tempDir
   liftIO $ writeRec tempDir dbSchema
 
-  -- If the directory doesn't exist, we should simply ignore it
-  -- Note: the folder parent to "dir" might not have permissions for us to delete things inside it,
-  -- so we modify only strictly inside "dir"
-  whenM (doesDirectoryExist rootDir) $ wipeDir rootDir
-  -- Important: renameDirectory will fail when the destination is a different partition. So we make a Copy instead.
-  copyDir tempDir rootDir
+  -- renameDirectory fails when the destination is a different partition, but we don't care about that scenario for now
+  renameDirectory tempDir schemaDir
   where
-    wipeDir d = do
-      xs <- listDirectory d
-      forM_ xs $ \x -> removePathForcibly (d </> x)
     writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
     writeRec dir obj =
       void $
@@ -200,13 +194,6 @@ persistRepsToDisk dbSchema rootDir = do
               writeRec (dir </> parentDir) sobj
           )
           (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
-
-readExpectedSchema :: (MonadUnliftIO m) => FilePath -> m DbRep
-readExpectedSchema dir =
-  DbRep
-    <$> readFileRep (dir </> "db-settings")
-    <*> readMultiple (dir </> "schemas") readNamespaceRep
-    <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
@@ -306,21 +293,11 @@ readMultiple dir f = do
     checkDoesNotExist (e :: IOError) = if isDoesNotExistError e then pure (Left ()) else throwIO e
 
 readRepsFromDisk :: (MonadUnliftIO m) => FilePath -> m DbRep
-readRepsFromDisk =
-  readExpectedSchema
-
--- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
-copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()
-copyDir src dst = do
-  createDirectoryIfMissing True dst
-  xs <- listDirectory src
-  forM_ xs $ \name -> do
-    let srcPath = src </> name
-    let dstPath = dst </> name
-    isDirectory <- doesDirectoryExist srcPath
-    if isDirectory
-      then copyDir srcPath dstPath
-      else copyFile srcPath dstPath
+readRepsFromDisk dir =
+  DbRep
+    <$> readFileRep (dir </> "db-settings")
+    <*> readMultiple (dir </> "schemas") readNamespaceRep
+    <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
 
 whenM :: (Monad m) => m Bool -> m () -> m ()
 whenM s r = s >>= flip when r
