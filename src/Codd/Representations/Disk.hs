@@ -13,10 +13,6 @@ import Control.Monad
     void,
     when,
   )
-import Control.Monad.Except
-  ( MonadError (..),
-    runExceptT,
-  )
 import Control.Monad.Identity (runIdentity)
 import Data.Aeson
   ( Value,
@@ -29,19 +25,17 @@ import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Text
-  ( Text,
-    pack,
-    unpack,
-  )
 import qualified Data.Text.IO as Text
 import GHC.Stack (HasCallStack)
 import System.FilePath
   ( takeFileName,
     (</>),
   )
+import System.IO.Error (isDoesNotExistError)
 import UnliftIO
   ( MonadIO (..),
+    MonadUnliftIO,
+    handle,
     throwIO,
   )
 import UnliftIO.Directory
@@ -207,14 +201,14 @@ persistRepsToDisk dbSchema rootDir = do
           )
           (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
 
-readExpectedSchema :: (MonadError Text m, MonadIO m) => FilePath -> m DbRep
+readExpectedSchema :: (MonadUnliftIO m) => FilePath -> m DbRep
 readExpectedSchema dir =
   DbRep
     <$> readFileRep (dir </> "db-settings")
     <*> readMultiple (dir </> "schemas") readNamespaceRep
     <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
 
-readNamespaceRep :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaRep
+readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
   SchemaRep (readObjName dir)
     <$> readFileRep (dir </> "objrep")
@@ -225,12 +219,12 @@ readNamespaceRep dir =
     <*> readMultiple (dir </> "collations") readCollation
     <*> readMultiple (dir </> "types") readType
 
-readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableRep
-readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewRep
-readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineRep
-readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceRep
-readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationRep
-readType :: (MonadError Text m, MonadIO m) => FilePath -> m TypeRep
+readTable :: (MonadUnliftIO m) => FilePath -> m TableRep
+readView :: (MonadUnliftIO m) => FilePath -> m ViewRep
+readRoutine :: (MonadUnliftIO m) => FilePath -> m RoutineRep
+readSequence :: (MonadUnliftIO m) => FilePath -> m SequenceRep
+readCollation :: (MonadUnliftIO m) => FilePath -> m CollationRep
+readType :: (MonadUnliftIO m) => FilePath -> m TypeRep
 readTable dir =
   TableRep (readObjName dir)
     <$> readFileRep (dir </> "objrep")
@@ -265,14 +259,15 @@ readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
 
 readFileRep ::
-  forall m. (MonadError Text m, MonadIO m) => FilePath -> m Value
+  forall m. (MonadUnliftIO m) => FilePath -> m Value
 readFileRep filepath = do
   exists <- liftIO $ doesFileExist filepath
   unless exists $
-    throwError $
-      "File "
-        <> pack filepath
-        <> " was expected but does not exist"
+    throwIO $
+      userError $
+        "File "
+          <> filepath
+          <> " was expected but does not exist"
   -- Careful, LBS.readFile is lazy and does not close
   -- the file handle unless we force the thunk. So we
   -- use BS.readFile to be on the safe side
@@ -288,7 +283,7 @@ readFileRep filepath = do
     $ LBS.fromStrict fileContents
 
 simpleObjRepFileRead ::
-  (MonadError Text m, MonadIO m) =>
+  (MonadUnliftIO m) =>
   (ObjName -> Value -> a) ->
   FilePath ->
   m a
@@ -296,29 +291,23 @@ simpleObjRepFileRead f filepath =
   f (readObjName filepath) <$> readFileRep filepath
 
 readMultiple ::
-  (MonadError Text m, MonadIO m, HasName o) =>
+  (MonadUnliftIO m, HasName o) =>
   FilePath ->
   (FilePath -> m o) ->
   m (Map ObjName o)
 readMultiple dir f = do
-  dirExists <- doesDirectoryExist dir
-  if dirExists
-    then do
-      folders <- filter (/= "objrep") <$> listDirectory dir
+  foldersOrNotOne <- handle checkDoesNotExist $ Right . filter (/= "objrep") <$> listDirectory dir
+  case foldersOrNotOne of
+    Right folders -> do
       objList <- traverse (f . (dir </>)) folders
       return $ listToMap objList
-    else pure Map.empty
+    Left () -> pure Map.empty
+  where
+    checkDoesNotExist (e :: IOError) = if isDoesNotExistError e then pure (Left ()) else throwIO e
 
-readRepsFromDisk :: (MonadIO m) => FilePath -> m DbRep
-readRepsFromDisk dir = do
-  allRepsE <- runExceptT $ readExpectedSchema dir
-  case allRepsE of
-    Left err ->
-      throwIO $
-        userError $
-          "An error happened when reading representations from disk: "
-            <> unpack err
-    Right allReps -> return allReps
+readRepsFromDisk :: (MonadUnliftIO m) => FilePath -> m DbRep
+readRepsFromDisk =
+  readExpectedSchema
 
 -- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
 copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()
