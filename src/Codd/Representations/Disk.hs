@@ -9,7 +9,6 @@ import Codd.Representations.Types
 import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
-    unless,
     void,
     when,
   )
@@ -41,7 +40,6 @@ import UnliftIO
 import UnliftIO.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
-    doesFileExist,
     listDirectory,
     removePathForcibly,
     renameDirectory,
@@ -248,19 +246,12 @@ readObjName = fromPathFrag . takeFileName
 
 readFileRep ::
   forall m. (MonadUnliftIO m) => FilePath -> m Value
-readFileRep filepath = do
-  exists <- liftIO $ doesFileExist filepath
-  unless exists $
-    throwIO $
-      userError $
-        "File "
-          <> filepath
-          <> " was expected but does not exist"
+readFileRep filepath = rethrowIfNotExists $ do
   -- Careful, LBS.readFile is lazy and does not close
   -- the file handle unless we force the thunk, and not closing
   -- file handles can make shells with low ulimits barf.
   -- MacOS has particularly low ulimits.
-  fileContents <- liftIO $ LBS.readFile filepath
+  !fileContents <- liftIO $ LBS.readFile filepath
   !decodedJson <-
     evaluate
       $ fromMaybe
@@ -273,6 +264,19 @@ readFileRep filepath = do
       $ decode
         fileContents
   pure decodedJson
+  where
+    rethrowIfNotExists =
+      handle
+        ( \(e :: IOError) ->
+            if isDoesNotExistError e
+              then
+                throwIO $
+                  userError $
+                    "File "
+                      <> filepath
+                      <> " was expected but does not exist"
+              else throwIO e
+        )
 
 simpleObjRepFileRead ::
   (MonadUnliftIO m) =>
