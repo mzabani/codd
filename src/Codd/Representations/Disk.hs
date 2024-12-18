@@ -6,6 +6,7 @@ module Codd.Representations.Disk
 where
 
 import Codd.Representations.Types
+import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
     unless,
@@ -18,7 +19,6 @@ import Data.Aeson
     decode,
   )
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -34,6 +34,7 @@ import System.IO.Error (isDoesNotExistError)
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
+    evaluate,
     handle,
     throwIO,
   )
@@ -256,18 +257,22 @@ readFileRep filepath = do
           <> filepath
           <> " was expected but does not exist"
   -- Careful, LBS.readFile is lazy and does not close
-  -- the file handle unless we force the thunk. So we
-  -- use BS.readFile to be on the safe side
-  fileContents <- liftIO $ BS.readFile filepath
-  pure
-    $ fromMaybe
-      ( error $
-          "File '"
-            ++ filepath
-            ++ "' was supposed to contain a JSON value"
-      )
-    $ decode
-    $ LBS.fromStrict fileContents
+  -- the file handle unless we force the thunk, and not closing
+  -- file handles can make shells with low ulimits barf.
+  -- MacOS has particularly low ulimits.
+  fileContents <- liftIO $ LBS.readFile filepath
+  !decodedJson <-
+    evaluate
+      $ fromMaybe
+        ( error $
+            "File '"
+              ++ filepath
+              ++ "' was supposed to contain a JSON value"
+        )
+      $ force
+      $ decode
+        fileContents
+  pure decodedJson
 
 simpleObjRepFileRead ::
   (MonadUnliftIO m) =>
