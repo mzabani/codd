@@ -1,6 +1,7 @@
 {
     "accessmethod": "heap",
     "amoptions": null,
+    "columns_in_order": [],
     "compositetype": null,
     "forcerowsecurity": false,
     "kind": "r",

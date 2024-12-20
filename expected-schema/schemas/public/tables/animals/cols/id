@@ -8,8 +8,6 @@
     "inhcount": 0,
     "local": true,
     "notnull": true,
-    "order": 1,
     "privileges": null,
-    "type": "int4",
-    "typmod": -1
+    "type": "integer"
 }

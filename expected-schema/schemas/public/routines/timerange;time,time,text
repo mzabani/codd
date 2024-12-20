@@ -3,7 +3,7 @@
     "argnames": null,
     "args": "time without time zone, time without time zone, text",
     "config": null,
-    "definition_md5": null,
+    "definition": null,
     "kind": "f",
     "lang": "internal",
     "leakproof": false,

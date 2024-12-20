@@ -1,6 +1,12 @@
 {
     "accessmethod": "heap",
     "amoptions": null,
+    "columns_in_order": [
+        "employee_id",
+        "employee_name",
+        "experience",
+        "surname"
+    ],
     "compositetype": null,
     "forcerowsecurity": false,
     "kind": "r",

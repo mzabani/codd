@@ -5,7 +5,7 @@
     "argnames": null,
     "args": "VARIADIC public.timerange[]",
     "config": null,
-    "definition_md5": null,
+    "definition": null,
     "kind": "f",
     "lang": "internal",
     "leakproof": false,

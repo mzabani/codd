@@ -8,8 +8,6 @@
     "inhcount": 0,
     "local": true,
     "notnull": false,
-    "order": 3,
     "privileges": null,
-    "type": "experience",
-    "typmod": -1
+    "type": "public.experience"
 }

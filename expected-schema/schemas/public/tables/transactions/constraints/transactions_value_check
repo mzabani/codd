@@ -1,7 +1,7 @@
 {
     "deferrable": false,
     "deferred": false,
-    "definition": "CHECK ((value > (0)::numeric))",
+    "definition": "CHECK (value > 0::numeric)",
     "fk_deltype": " ",
     "fk_matchtype": " ",
     "fk_ref_table": null,

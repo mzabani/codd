@@ -8,8 +8,6 @@
     "inhcount": 0,
     "local": true,
     "notnull": true,
-    "order": 2,
     "privileges": null,
-    "type": "text",
-    "typmod": -1
+    "type": "text"
 }

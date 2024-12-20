@@ -6,7 +6,7 @@
     ],
     "args": "x time without time zone, y time without time zone",
     "config": null,
-    "definition_md5": "c537e192bed99154c059e7da6626c528",
+    "definition": "SELECT EXTRACT(EPOCH FROM (x - y))",
     "kind": "f",
     "lang": "sql",
     "leakproof": false,

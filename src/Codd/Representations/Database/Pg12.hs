@@ -327,7 +327,13 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
           }
   HTable ->
     let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
-     in hq {nonIdentWhere = Just $ fromMaybe "TRUE" (nonIdentWhere hq) <> " AND pg_class.relkind IN ('r', 'f', 'p')"}
+     in hq
+          { repCols = [("columns_in_order", "COALESCE(columns_per_table.columns_in_order, '{}'::text[])") | not (ignoreColumnOrder schemaAlgoOpts)] ++ repCols hq,
+            nonIdentWhere = Just $ fromMaybe "TRUE" (nonIdentWhere hq) <> " AND pg_class.relkind IN ('r', 'f', 'p')",
+            joins =
+              joins hq
+                <> "\n LEFT JOIN (SELECT attrelid, ARRAY_AGG(attname ORDER BY attnum) AS columns_in_order FROM pg_catalog.pg_attribute WHERE NOT pg_attribute.attisdropped AND pg_attribute.attnum >= 1 GROUP BY attrelid) columns_per_table ON attrelid=pg_class.oid"
+          }
   HView ->
     let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
      in hq
@@ -424,8 +430,8 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- is compiled, so we ignore this column in those cases.
             -- Note that this means that functions with different implementations could be considered equal,
             -- but I don't know a good way around this
-            ( "definition_md5",
-              "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN MD5(prosrc) END"
+            ( "definition",
+              "CASE WHEN pg_language.lanispl OR pg_language.lanname IN ('sql', 'plpgsql') THEN prosrc END"
             ),
             ("kind", "prokind")
             -- Only include the owner of the function if this
@@ -492,7 +498,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
     DbObjRepresentationQuery
       { objNameCol = "attname",
         repCols =
-          [ ("type", "pg_type.typname"),
+          [ ("type", "pg_catalog.format_type(atttypid, atttypmod)"),
             ("notnull", "attnotnull"),
             ("hasdefault", "atthasdef"),
             ( "default",
@@ -501,7 +507,6 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             ("identity", "attidentity"),
             ("local", "attislocal"),
             ("inhcount", "attinhcount"),
-            ("typmod", "atttypmod"),
             ("collation", "pg_collation.collname"),
             ("collation_nsp", "collation_namespace.nspname"),
             ("privileges", "_codd_roles.permissions"),
@@ -509,20 +514,14 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- 1. It's not clear what attoptions and attfdwoptions represent, so we're not including them yet
             -- , sortArrayExpr "attoptions"
             -- , sortArrayExpr "attfdwoptions"
-            -- , "attnum" -- We use a window function instead of attnum because the latter is affected by dropped columns!
-            --               But only if ignore-column-order is not set
+            -- , "attnum" -- We put column orders in table "objrep" instead of in each column file to avoid larger changesets
+            --               when users rewrite tables introducing new columns or changing their order.
             -- 2. Careful! Do not include atthasmissing or attmissingval here. They are internal postgres optimisation features.
-          ]
-            ++ [ ( "order",
-                   "RANK() OVER (PARTITION BY pg_attribute.attrelid ORDER BY pg_attribute.attnum)"
-                 )
-                 | not (ignoreColumnOrder schemaAlgoOpts)
-               ],
+          ],
         fromTable = "pg_catalog.pg_attribute",
         joins =
           "JOIN pg_catalog.pg_class ON pg_class.oid=attrelid"
             <> "\nJOIN pg_catalog.pg_namespace ON pg_namespace.oid=pg_class.relnamespace"
-            <> "\nLEFT JOIN pg_catalog.pg_type ON pg_type.oid=atttypid"
             <> "\nLEFT JOIN pg_catalog.pg_attrdef ON pg_attrdef.adrelid=pg_class.oid AND pg_attrdef.adnum=pg_attribute.attnum"
             <> "\nLEFT JOIN pg_collation ON pg_collation.oid=pg_attribute.attcollation"
             <> "\nLEFT JOIN pg_namespace collation_namespace ON pg_collation.collnamespace=collation_namespace.oid"
@@ -560,7 +559,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
             -- referenced columns' names, AND because attnum is affected by dropped columns.
             --   , "pg_constraint.conkey"
             --   , "pg_constraint.confkey"
-            ("definition", "pg_get_constraintdef(pg_constraint.oid)"),
+            ("definition", "pg_get_constraintdef(pg_constraint.oid, true)"),
             ( "parent_constraint",
               "pg_parent_constraint.conname"
             )
@@ -729,7 +728,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
                        "ARRAY_TO_STRING(ARRAY_AGG(pg_enum.enumlabel::TEXT ORDER BY pg_enum.enumsortorder), ';')"
                      ),
                      ( "constraints",
-                       "ARRAY_TO_STRING(ARRAY_AGG(pg_constraint.convalidated || ';' || pg_constraint.conname || ';' || pg_get_constraintdef(pg_constraint.oid) ORDER BY pg_constraint.conname), ';')"
+                       "ARRAY_TO_STRING(ARRAY_AGG(pg_constraint.convalidated || ';' || pg_constraint.conname || ';' || pg_get_constraintdef(pg_constraint.oid, true) ORDER BY pg_constraint.conname), ';')"
                      )
                    ],
             -- === Do not include:
