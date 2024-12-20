@@ -60,7 +60,7 @@ $ psql -c "SELECT popular_name FROM animals"
 $ psql -c "ALTER TABLE animals ALTER COLUMN popular_name TYPE VARCHAR(30)"
 ALTER TABLE
 $ codd verify-schema
-Error: DB and expected schemas do not match. Differing objects and their current DB schemas are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"order":2,"privileges":null,"type":"varchar","typmod":34}]}
+Error: DB and expected schemas do not match. Differing objects and their current DB schemas are: {"schemas/public/tables/animals/cols/popular_name":["different-schemas",{"collation":"default","collation_nsp":"pg_catalog","default":null,"generated":"","hasdefault":false,"identity":"","inhcount":0,"local":true,"notnull":true,"privileges":null,"type":"character varying(30)"}],"schemas/public/tables/animals/statistics/test_stat_with_expr":["different-schemas",{"definition":"id, popular_name, lower(popular_name::text), (id * 42)","kind":["d","e","f","m"],"owner":"codd_admin"}]}
 ````
 
 </td>
@@ -94,6 +94,18 @@ $ git merge branch-with-conflicting-db-migration
 Auto-merging expected-schema/schemas/public/tables/animals/cols/popular_name
 CONFLICT (content): Merge conflict in expected-schema/schemas/public/tables/animals/cols/popular_name
 Automatic merge failed; fix conflicts and then commit the result.
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Useful diffs</td>
+<td>
+
+````diff
+- "definition": "CHECK (value >= 0::numeric)",
++ "definition": "CHECK (value > 0::numeric)",
 ````
 
 </td>
