@@ -89,6 +89,7 @@ library
     , bytestring
     , clock
     , containers
+    , deepseq
     , dlist
     , filepath
     , formatting
