@@ -7,9 +7,9 @@ import           Codd.Environment               ( CoddSettings(..) )
 import           Codd.Internal.MultiQueryStatement
                                                 ( SqlStatementException(..)
                                                 , StatementApplied(..)
-                                                , multiQueryStatement_
+                                                , applyStatementStream
                                                 , singleStatement_
-                                                , skipCountableRunnableStatements
+                                                , skipCountableRunnableStatements, forceStreamConcurrently
                                                 )
 import           Codd.Internal.Retry            ( RetryIteration(..)
                                                 , retryFold
@@ -78,7 +78,7 @@ import           Data.Time                      ( DiffTime
                                                 , NominalDiffTime
                                                 , UTCTime
                                                 , diffTimeToPicoseconds
-                                                , picosecondsToDiffTime
+                                                
                                                 )
 import qualified Database.PostgreSQL.LibPQ     as PQ
 import qualified Database.PostgreSQL.Simple    as DB
@@ -89,10 +89,6 @@ import           Database.PostgreSQL.Simple.ToRow
 import qualified Formatting                    as Fmt
 import           Streaming                      ( Of(..) )
 import qualified Streaming.Prelude             as Streaming
-import           System.Clock                   ( Clock(Monotonic)
-                                                , TimeSpec(..)
-                                                , getTime
-                                                )
 import           System.Exit                    ( exitFailure )
 import           System.FilePath                ( (</>)
                                                 , takeFileName
@@ -126,6 +122,7 @@ import           UnliftIO.Resource              ( MonadResource
                                                 , release
                                                 , runResourceT
                                                 )
+import Codd.Timing (prettyPrintDuration, timeAction)
 
 dbIdentifier :: Text -> DB.Query
 dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
@@ -1446,7 +1443,8 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                                     , initialTxnStatus
                                     )
                                     id
-                                $ multiQueryStatement_ conn
+                                $ applyStatementStream conn
+                                $ forceStreamConcurrently 3
                                 $ skipCountableRunnableStatements
                                       numCountableRunnableStmtsToSkip
                                       sqlStream
@@ -1523,40 +1521,6 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                     <> prettyPrintDuration appliedMigrationDuration
                     <> "</CYAN>)"
                 pure $ Right ()
-
-
-  where
-    pico_1ns = 1_000
-    pico_1ms = 1_000_000_000
-    pico_1s :: forall a . Num a => a
-    pico_1s = 1_000_000_000_000
-    prettyPrintDuration (fromIntegral @Integer @Double . diffTimeToPicoseconds -> dps)
-        | dps < pico_1ms
-        = Fmt.sformat
-                (Fmt.fixed @Double 2)
-                (fromIntegral @Integer (round (100 * dps / pico_1ms)) / 100)
-            <> "ms"
-        | -- e.g. 0.23ms
-          dps < pico_1s
-        = Fmt.sformat (Fmt.int @Integer) (round $ dps / pico_1ms) <> "ms"
-        | -- e.g. 671ms
-          otherwise
-        = Fmt.sformat
-                (Fmt.fixed @Double 1)
-                (fromIntegral @Integer (round (10 * dps / pico_1s)) / 10)
-            <> "s" -- e.g. 10.5s
-    timeAction f = do
-        before <- liftIO $ getTime Monotonic
-        ret    <- f
-        after  <- liftIO $ getTime Monotonic
-        pure
-            ( ret
-            , picosecondsToDiffTime
-            $ (pico_1s :: Integer)
-            * fromIntegral (sec after - sec before)
-            + (pico_1ns :: Integer)
-            * fromIntegral (nsec after - nsec before)
-            )
 
 -- | This type exists because bootstrapping migrations can't be registered until codd_schema is created. But we want the time when they were applied to truly reflect when they were
 -- applied, so we wouldn't be able to use NowInPostgresTime by the time codd_schema is created.

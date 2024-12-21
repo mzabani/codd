@@ -38,6 +38,7 @@ library
       Codd.Representations.Database.SqlGen
       Codd.Representations.Disk
       Codd.Representations.Types
+      Codd.Timing
       Codd.Internal
       Codd.Internal.MultiQueryStatement
       Codd.Internal.Retry
@@ -146,7 +147,7 @@ executable codd
   -- Disabling the parallel GC seems to make codd perform better in some heavier workloads I've tested.
   -- This makes sense, codd is single-threaded.
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-maxN2 -qg" -Wall -Wincomplete-uni-patterns -Wpartial-fields -optP-Wno-nonportable-include-path
   build-depends:
       base
     , codd
@@ -161,7 +162,7 @@ benchmark codd-bench
   main-is: Main.hs
   hs-source-dirs: bench
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -with-rtsopts=-T -Wall -Wpartial-fields -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-maxN2 -qg -T" -Wall -Wpartial-fields -optP-Wno-nonportable-include-path
   default-extensions:
       BangPatterns
       DeriveAnyClass
@@ -176,6 +177,7 @@ benchmark codd-bench
       GeneralizedNewtypeDeriving
       MultiParamTypeClasses
       NamedFieldPuns
+      NumericUnderscores
       OverloadedStrings
       RankNTypes
       RecordWildCards
@@ -252,7 +254,7 @@ test-suite codd-test
       TypeOperators
       ViewPatterns
   -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-qg -Wunused-packages -optP-Wno-nonportable-include-path
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-maxN2 -qg" -Wunused-packages -optP-Wno-nonportable-include-path
   -- Until https://github.com/input-output-hk/haskell.nix/issues/231 is resolved,
   -- do not include hspec-discover in system-build-tools. We hack around the issue
   -- in flake.nix so both cabal and nix build work.
