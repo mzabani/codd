@@ -121,7 +121,7 @@ jobs:
     - name: Build codd without static linking
       run: nix build --no-link ".#codd:exe:codd"
 
-    - name: Build statically linked codd's tests
+    - name: Build codd's tests
       run: nix build --no-link ".#codd:test:codd-test"
 
     - name: Run tests

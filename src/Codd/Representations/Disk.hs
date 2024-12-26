@@ -9,6 +9,7 @@ import Codd.Representations.Types
 import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
+    forM_,
     void,
     when,
   )
@@ -29,7 +30,7 @@ import System.FilePath
   ( takeFileName,
     (</>),
   )
-import System.IO.Error (isDoesNotExistError)
+import System.IO.Error (isDoesNotExistError, isPermissionError)
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
@@ -40,6 +41,7 @@ import UnliftIO
 import UnliftIO.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
+    getTemporaryDirectory,
     listDirectory,
     removePathForcibly,
     renameDirectory,
@@ -169,20 +171,73 @@ toFiles = sortOn fst . frec
             (\fn h -> pure [(fn, h)])
     prependDir dir = map (first (dir </>))
 
+data HandledIOError = DoesNotExist | PermissionDenied
+
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
-persistRepsToDisk :: (HasCallStack, MonadIO m) => DbRep -> FilePath -> m ()
+persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => DbRep -> FilePath -> m ()
 persistRepsToDisk dbSchema schemaDir = do
-  let tempDir = schemaDir </> "../.temp-codd-write-dir-you-can-remove-this"
-  -- renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
-  -- So we remove folders preventively
-  whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
-  whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
-  createDirectoryIfMissing True tempDir
+  -- We want this function to be fast and as atomic as it can be, but:
+  -- - `renameFile` throws if the target path is in a different partition from the source path
+  -- - The user might not have permissions to delete the target folder but does have permissions to modify its contents
+  -- - Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
+  -- - Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
+  --   separated from "can-create", IIRC.
+  --
+  -- We of course can't handle cases where the user doesn't have privileges of modifying the contents of the expected-schema
+  -- folder, but we do try to optimise for speed when the user has a bit more privileges than necessary, falling back to
+  -- a slower method when they don't.
+
+  tempDir <- getEmptyTempFolder
+  wipePathSafely schemaDir
   liftIO $ writeRec tempDir dbSchema
 
-  -- renameDirectory fails when the destination is a different partition, but we don't care about that scenario for now
-  renameDirectory tempDir schemaDir
+  renameDirectorySafely tempDir schemaDir
   where
+    handleTypicalErrors :: m () -> m (Either HandledIOError ())
+    handleTypicalErrors f =
+      handle
+        ( \(e :: IOError) ->
+            if isPermissionError e
+              then pure (Left PermissionDenied)
+              else
+                if isDoesNotExistError e
+                  then
+                    pure (Left DoesNotExist)
+                  else throwIO e
+        )
+        (Right <$> f)
+    -- \| Returns an empty folder which is probabilistically atomically/quickly rename-able into the expected schema folder,
+    -- but if that's not possible this still returns a usable and empty temporary folder.
+    getEmptyTempFolder :: m FilePath
+    getEmptyTempFolder = do
+      let tempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
+      errBestScenario <- handleTypicalErrors $ removePathForcibly tempDir >> createDirectoryIfMissing True tempDir
+      case errBestScenario of
+        Left PermissionDenied -> liftIO getTemporaryDirectory
+        Left DoesNotExist -> liftIO getTemporaryDirectory
+        Right () -> pure tempDir
+    -- \| Able to remove a path completely if permissions allow, but can otherwise
+    -- fallback to removing every file and subfolder of the supplied path to
+    -- leave it empty (keeping the path alive in that case).
+    wipePathSafely :: FilePath -> m ()
+    wipePathSafely path = do
+      err <- handleTypicalErrors $ removePathForcibly path
+      case err of
+        Right () -> pure ()
+        Left DoesNotExist -> pure ()
+        Left PermissionDenied -> do
+          entries <- listDirectory path
+          forM_ entries $ \x -> removePathForcibly (path </> x)
+
+    -- \| Uses the atomic and fast `renameDirectory`, but handles lack of permissions gracefully by recursively copying
+    -- files and folders from the source to the target and then deleting the source.
+    renameDirectorySafely :: FilePath -> FilePath -> m ()
+    renameDirectorySafely src dst = do
+      err <- handleTypicalErrors $ liftIO $ renameDirectory src dst
+      case err of
+        Right () -> pure ()
+        Left DoesNotExist -> throwIO $ userError "Got a DoesNotExist error while renaming a directory. If you aren't actively modifying paths, please report this as a bug in codd"
+        Left PermissionDenied -> do
     writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
     writeRec dir obj =
       void $
