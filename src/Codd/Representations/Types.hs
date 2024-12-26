@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 module Codd.Representations.Types
   ( ObjectRep (..),
     ObjName (..),
@@ -20,6 +18,7 @@ module Codd.Representations.Types
     TableStatisticsRep (..),
     TableTriggerRep (..),
     TypeRep (..),
+    detEncodeJSONByteString,
     detEncodeJSON,
     detEncodeSingleLineJSON,
     fromPathFrag,
@@ -37,7 +36,7 @@ import Data.Aeson
   )
 import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Aeson.Encoding (encodingToLazyByteString)
-import Data.ByteString.Lazy (toStrict)
+import Data.ByteString.Lazy (ByteString, toStrict)
 import Data.Hashable (Hashable)
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
@@ -62,7 +61,12 @@ detEncodeJSON :: (ToJSON a) => a -> Text
 detEncodeJSON =
   decodeUtf8
     . toStrict
-    . encodePretty
+    . detEncodeJSONByteString
+
+-- | Deterministically produces `ToJSON` prettified and multi-line output, i.e. instances whose implementation of `toEncoding`
+-- produces the same result regardless of hashable's initial seed.
+detEncodeJSONByteString :: (ToJSON a) => a -> ByteString
+detEncodeJSONByteString = encodePretty
 
 -- | Deterministically produces `ToJSON` output in a single-line (good for logging output), i.e. instances whose implementation of `toEncoding`
 -- produces the same result regardless of hashable's initial seed.

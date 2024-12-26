@@ -19,6 +19,7 @@ import Data.Aeson
     decode,
   )
 import Data.Bifunctor (first)
+import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -232,7 +233,7 @@ persistRepsToDisk dbSchema schemaDir = do
               createDirectoryIfMissing True (dir </> parentDir)
               writeRec (dir </> parentDir) sobj
           )
-          (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
+          (\fn jsonRep -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
