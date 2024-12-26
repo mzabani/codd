@@ -71,7 +71,7 @@ jobs:
         nix-env --uninstall codd
 
     - name: Run tests
-      run: nix develop .#shellWithRunfile.x86_64-linux -c run ci-tests
+      run: nix develop .#shellWithRunfile -c run ci-tests
 
     - name: Run benchmarks
       run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
@@ -120,6 +120,12 @@ jobs:
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
       run: nix build --no-link ".#codd:exe:codd"
+
+    - name: Build statically linked codd's tests
+      run: nix build --no-link ".#codd:test:codd-test"
+
+    - name: Run tests
+      run: nix develop .#shellWithRunfile -c run test-no-db --nix
 
     - name: Create macOS app bundle
       run: |
