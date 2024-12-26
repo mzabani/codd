@@ -25,6 +25,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Text.IO as Text
+import GHC.IO.Exception (IOErrorType (UnsatisfiedConstraints), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
   ( takeFileName,
@@ -37,11 +38,11 @@ import UnliftIO
     evaluate,
     handle,
     throwIO,
+    tryJust,
   )
 import UnliftIO.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
-    getTemporaryDirectory,
     listDirectory,
     removePathForcibly,
     renameDirectory,
@@ -171,8 +172,6 @@ toFiles = sortOn fst . frec
             (\fn h -> pure [(fn, h)])
     prependDir dir = map (first (dir </>))
 
-data HandledIOError = DoesNotExist | PermissionDenied
-
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
 persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => DbRep -> FilePath -> m ()
 persistRepsToDisk dbSchema schemaDir = do
@@ -187,57 +186,43 @@ persistRepsToDisk dbSchema schemaDir = do
   -- folder, but we do try to optimise for speed when the user has a bit more privileges than necessary, falling back to
   -- a slower method when they don't.
 
-  tempDir <- getEmptyTempFolder
-  wipePathSafely schemaDir
-  liftIO $ writeRec tempDir dbSchema
-
-  renameDirectorySafely tempDir schemaDir
+  -- We detect permissions and if we don't have them, we write directly to the expected
+  -- schema folder. It shouldn't be any slower than copying files one by one into the expected schema folder, so
+  -- just as interruptible but no worse.
+  maybeAtomicallyReplaceFolder schemaDir $ \tempDir -> do
+    liftIO $ writeRec tempDir dbSchema
   where
-    handleTypicalErrors :: m () -> m (Either HandledIOError ())
-    handleTypicalErrors f =
-      handle
-        ( \(e :: IOError) ->
-            if isPermissionError e
-              then pure (Left PermissionDenied)
-              else
-                if isDoesNotExistError e
-                  then
-                    pure (Left DoesNotExist)
-                  else throwIO e
-        )
-        (Right <$> f)
-    -- \| Returns an empty folder which is probabilistically atomically/quickly rename-able into the expected schema folder,
-    -- but if that's not possible this still returns a usable and empty temporary folder.
-    getEmptyTempFolder :: m FilePath
-    getEmptyTempFolder = do
-      let tempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
-      errBestScenario <- handleTypicalErrors $ removePathForcibly tempDir >> createDirectoryIfMissing True tempDir
+    -- \| Allows the caller to wipe and replace a folder with new contents as atomically
+    -- as the user's permissions will let us. That is, the supplied callback should write
+    -- to the path it's supplied with as if it were the target folder, and after this finishes
+    -- the target folder will be replaced with the contents written.
+    -- This does not guarantee it won't leave the target folder in some intermediate state,
+    -- it just makes an effort to avoid that.
+    -- The entire thing may happen more or less atomically, and no promise is made regarding
+    -- file modification times. This function is not thread-safe.
+    maybeAtomicallyReplaceFolder :: FilePath -> (FilePath -> m ()) -> m ()
+    maybeAtomicallyReplaceFolder folderToReplace f = do
+      let tempDir = folderToReplace </> "../.temp-codd-dir-you-can-remove"
+      errBestScenario <- tryJust (\(e :: IOError) -> if isPermissionError e || ioe_type e == UnsatisfiedConstraints then Just () else Nothing) $ do
+        whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
+        createDirectoryIfMissing True tempDir
+        renameDirectory tempDir schemaDir
+        createDirectoryIfMissing True tempDir
       case errBestScenario of
-        Left PermissionDenied -> liftIO getTemporaryDirectory
-        Left DoesNotExist -> liftIO getTemporaryDirectory
-        Right () -> pure tempDir
-    -- \| Able to remove a path completely if permissions allow, but can otherwise
-    -- fallback to removing every file and subfolder of the supplied path to
-    -- leave it empty (keeping the path alive in that case).
-    wipePathSafely :: FilePath -> m ()
-    wipePathSafely path = do
-      err <- handleTypicalErrors $ removePathForcibly path
-      case err of
-        Right () -> pure ()
-        Left DoesNotExist -> pure ()
-        Left PermissionDenied -> do
-          entries <- listDirectory path
-          forM_ entries $ \x -> removePathForcibly (path </> x)
+        Right () -> do
+          f tempDir
+          renameDirectory tempDir folderToReplace
+        Left _ -> do
+          wipeDirSafely folderToReplace
+          f folderToReplace
 
-    -- \| Uses the atomic and fast `renameDirectory`, but handles lack of permissions gracefully by recursively copying
-    -- files and folders from the source to the target and then deleting the source.
-    renameDirectorySafely :: FilePath -> FilePath -> m ()
-    renameDirectorySafely src dst = do
-      err <- handleTypicalErrors $ liftIO $ renameDirectory src dst
-      case err of
-        Right () -> pure ()
-        Left DoesNotExist -> throwIO $ userError "Got a DoesNotExist error while renaming a directory. If you aren't actively modifying paths, please report this as a bug in codd"
-        Left PermissionDenied -> do
+    -- \| Removes every file and subfolder of the supplied path to
+    -- leave it empty, keeping the empty folder.
+    wipeDirSafely :: FilePath -> m ()
+    wipeDirSafely path = do
+      entries <- listDirectory path
+      forM_ entries $ \x -> removePathForcibly (path </> x)
+
     writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
     writeRec dir obj =
       void $

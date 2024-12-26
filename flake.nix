@@ -104,6 +104,7 @@
                         cacert
                         ghcid
                         glibcLocales
+                        hyperfine
                         postgres-service
                         postgresql_16
                         run
