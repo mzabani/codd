@@ -25,14 +25,13 @@ import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import qualified Data.Text.IO as Text
-import GHC.IO.Exception (IOErrorType (UnsatisfiedConstraints), ioe_type)
+import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
   ( takeFileName,
     (</>),
   )
-import System.IO.Error (isDoesNotExistError, isPermissionError)
+import System.IO.Error (isDoesNotExistError)
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
@@ -204,7 +203,7 @@ persistRepsToDisk dbSchema schemaDir = do
     maybeAtomicallyReplaceFolder :: FilePath -> (FilePath -> m ()) -> m ()
     maybeAtomicallyReplaceFolder folderToReplace f = do
       let tempDir = folderToReplace </> "../.temp-codd-dir-you-can-remove"
-      errBestScenario <- tryJust (\(e :: IOError) -> if isPermissionError e || ioe_type e == UnsatisfiedConstraints then Just () else Nothing) $ do
+      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
         whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
         createDirectoryIfMissing True tempDir
         renameDirectory tempDir schemaDir
