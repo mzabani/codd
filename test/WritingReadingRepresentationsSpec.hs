@@ -6,20 +6,26 @@ import Codd.Representations
     schemaDifferences,
   )
 import qualified Data.Map as Map
+import System.FilePath
+  ( (</>),
+  )
 import Test.Hspec
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 import TypesGen (DbRepsGen (..))
+import UnliftIO.Directory (doesDirectoryExist)
 
 spec :: Spec
 spec = do
   describe "Writing and reading representations" $ do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
       property $ \(DbRepsGen dbHashes) -> do
-        persistRepsToDisk dbHashes "/dev/shm/inverse-test-sql-folder"
+        shmExists <- doesDirectoryExist "/dev/shm"
+        let baseFolder = if shmExists then "/dev/shm" else "/tmp"
+        persistRepsToDisk dbHashes (baseFolder </> "inverse-test-sql-folder")
         readDbHashes <-
           readRepsFromDisk
-            "/dev/shm/inverse-test-sql-folder"
+            (baseFolder </> "inverse-test-sql-folder")
         let diffs = schemaDifferences dbHashes readDbHashes
         diffs `shouldBe` Map.empty
         readDbHashes `shouldBe` dbHashes

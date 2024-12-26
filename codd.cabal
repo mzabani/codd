@@ -264,6 +264,7 @@ test-suite codd-test
     , base
     , codd
     , containers
+    , filepath
     , hashable
     , hspec
     , hspec-core
