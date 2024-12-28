@@ -174,22 +174,8 @@ toFiles = sortOn fst . frec
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
 persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => DbRep -> FilePath -> m ()
-persistRepsToDisk dbSchema schemaDir = do
-  -- We want this function to be fast and as atomic as it can be, but:
-  -- - `renameFile` throws if the target path is in a different partition from the source path
-  -- - The user might not have permissions to delete the target folder but does have permissions to modify its contents
-  -- - Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
-  -- - Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
-  --   separated from "can-create", IIRC.
-  --
-  -- We of course can't handle cases where the user doesn't have privileges of modifying the contents of the expected-schema
-  -- folder, but we do try to optimise for speed when the user has a bit more privileges than necessary, falling back to
-  -- a slower method when they don't.
-
-  -- We detect permissions and if we don't have them, we write directly to the expected
-  -- schema folder. It shouldn't be any slower than copying files one by one into the expected schema folder, so
-  -- just as interruptible but no worse.
-  maybeAtomicallyReplaceFolder schemaDir $ \tempDir -> do
+persistRepsToDisk dbSchema schemaDir =
+  maybeAtomicallyReplaceSchemaFolder $ \tempDir -> do
     liftIO $ writeRec tempDir dbSchema
   where
     -- \| Allows the caller to wipe and replace a folder with new contents as atomically
@@ -200,9 +186,15 @@ persistRepsToDisk dbSchema schemaDir = do
     -- it just makes an effort to avoid that.
     -- The entire thing may happen more or less atomically, and no promise is made regarding
     -- file modification times. This function is not thread-safe.
-    maybeAtomicallyReplaceFolder :: FilePath -> (FilePath -> m ()) -> m ()
-    maybeAtomicallyReplaceFolder folderToReplace f = do
-      let tempDir = folderToReplace </> "../.temp-codd-dir-you-can-remove"
+    maybeAtomicallyReplaceSchemaFolder :: (FilePath -> m ()) -> m ()
+    maybeAtomicallyReplaceSchemaFolder f = do
+      -- We want this function to be fast and as atomic as it can be, but:
+      -- 1. `renameFile` throws if the target path is in a different partition from the source path
+      -- 2. The user might not have permissions to delete the target folder but does have permissions to modify its contents
+      -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
+      -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
+      --   separated from "can-create", IIRC.
+      let tempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
       errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
         whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
         createDirectoryIfMissing True tempDir
@@ -211,10 +203,10 @@ persistRepsToDisk dbSchema schemaDir = do
       case errBestScenario of
         Right () -> do
           f tempDir
-          renameDirectory tempDir folderToReplace
+          renameDirectory tempDir schemaDir
         Left _ -> do
-          wipeDirSafely folderToReplace
-          f folderToReplace
+          wipeDirSafely schemaDir
+          f schemaDir
 
     -- \| Removes every file and subfolder of the supplied path to
     -- leave it empty, keeping the empty folder.
