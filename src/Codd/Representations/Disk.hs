@@ -41,7 +41,8 @@ import UnliftIO
     tryJust,
   )
 import UnliftIO.Directory
-  ( createDirectoryIfMissing,
+  ( canonicalizePath,
+    createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
     removePathForcibly,
@@ -194,16 +195,22 @@ persistRepsToDisk dbSchema schemaDir =
       -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
       -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
       --   separated from "can-create", IIRC.
-      let tempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
       errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
-        whenM (doesDirectoryExist tempDir) $ removePathForcibly tempDir
-        createDirectoryIfMissing True tempDir
-        renameDirectory tempDir schemaDir
-        createDirectoryIfMissing True tempDir
+        let nonCanonTempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
+        whenM (doesDirectoryExist nonCanonTempDir) $ removePathForcibly nonCanonTempDir
+        createDirectoryIfMissing True nonCanonTempDir
+        canonTempDir <- canonicalizePath nonCanonTempDir
+        -- Non-canonicalized paths make `renameDirectory` fail for some reason, and canonicalization
+        -- only works with existing folders
+        whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
+        renameDirectory canonTempDir schemaDir
+        removePathForcibly schemaDir
+        createDirectoryIfMissing True canonTempDir
+        pure canonTempDir
       case errBestScenario of
-        Right () -> do
-          f tempDir
-          renameDirectory tempDir schemaDir
+        Right canonTempDir -> do
+          f canonTempDir
+          renameDirectory canonTempDir schemaDir
         Left _ -> do
           wipeDirSafely schemaDir
           f schemaDir
