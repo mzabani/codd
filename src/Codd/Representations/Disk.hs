@@ -10,6 +10,7 @@ import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
     forM_,
+    join,
     void,
     when,
   )
@@ -45,6 +46,7 @@ import UnliftIO.Directory
     createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
+    pathIsSymbolicLink,
     removePathForcibly,
     renameDirectory,
   )
@@ -195,32 +197,42 @@ persistRepsToDisk dbSchema schemaDir =
       -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
       -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
       --   separated from "can-create", IIRC.
-      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
+      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [NoSuchThing, UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
         let nonCanonTempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
-        whenM (doesDirectoryExist nonCanonTempDir) $ removePathForcibly nonCanonTempDir
-        createDirectoryIfMissing True nonCanonTempDir
-        canonTempDir <- canonicalizePath nonCanonTempDir
-        -- Non-canonicalized paths make `renameDirectory` fail for some reason, and canonicalization
-        -- only works with existing folders
-        whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
-        renameDirectory canonTempDir schemaDir
-        removePathForcibly schemaDir
-        createDirectoryIfMissing True canonTempDir
-        pure canonTempDir
-      case errBestScenario of
+        -- We don't try to be too smart if the schema dir is a symlink so we preserve that symlink
+        isLink <- pathIsSymbolicLink schemaDir
+        if isLink
+          then
+            pure $ Left ()
+          else do
+            whenM (doesDirectoryExist nonCanonTempDir) $ removePathForcibly nonCanonTempDir
+            createDirectoryIfMissing True nonCanonTempDir
+            canonTempDir <- canonicalizePath nonCanonTempDir
+            -- Non-canonicalized paths make `renameDirectory` fail for some reason, and canonicalization
+            -- only works with existing folders
+            whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
+            renameDirectory canonTempDir schemaDir
+            removePathForcibly schemaDir
+            createDirectoryIfMissing True canonTempDir
+            pure $ Right canonTempDir
+      case join errBestScenario of
         Right canonTempDir -> do
           f canonTempDir
           renameDirectory canonTempDir schemaDir
         Left _ -> do
-          wipeDirSafely schemaDir
+          ensureEmptyDir schemaDir
           f schemaDir
 
     -- \| Removes every file and subfolder of the supplied path to
     -- leave it empty, keeping the empty folder.
-    wipeDirSafely :: FilePath -> m ()
-    wipeDirSafely path = do
-      entries <- listDirectory path
-      forM_ entries $ \x -> removePathForcibly (path </> x)
+    ensureEmptyDir :: FilePath -> m ()
+    ensureEmptyDir path = do
+      exists <- doesDirectoryExist path
+      if exists
+        then do
+          entries <- listDirectory path
+          forM_ entries $ \x -> removePathForcibly (path </> x)
+        else createDirectoryIfMissing True path
 
     writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
     writeRec dir obj =
