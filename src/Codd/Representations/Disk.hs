@@ -6,16 +6,13 @@ module Codd.Representations.Disk
 where
 
 import Codd.Representations.Types
+import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
     forM_,
-    unless,
+    join,
     void,
     when,
-  )
-import Control.Monad.Except
-  ( MonadError (..),
-    runExceptT,
   )
 import Control.Monad.Identity (runIdentity)
 import Data.Aeson
@@ -23,35 +20,35 @@ import Data.Aeson
     decode,
   )
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Text
-  ( Text,
-    pack,
-    unpack,
-  )
-import qualified Data.Text.IO as Text
+import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
   ( takeFileName,
     (</>),
   )
+import System.IO.Error (isDoesNotExistError)
 import UnliftIO
   ( MonadIO (..),
+    MonadUnliftIO,
+    evaluate,
+    handle,
     throwIO,
+    tryJust,
   )
 import UnliftIO.Directory
-  ( copyFile,
+  ( canonicalizePath,
     createDirectoryIfMissing,
     doesDirectoryExist,
-    doesFileExist,
-    getTemporaryDirectory,
     listDirectory,
+    pathIsSymbolicLink,
     removePathForcibly,
+    renameDirectory,
   )
 import Prelude hiding
   ( readFile,
@@ -179,23 +176,64 @@ toFiles = sortOn fst . frec
     prependDir dir = map (first (dir </>))
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
-persistRepsToDisk :: (HasCallStack, MonadIO m) => DbRep -> FilePath -> m ()
-persistRepsToDisk dbSchema rootDir = do
-  tempDir <- (</> "temp-db-dir") <$> getTemporaryDirectory
-  whenM (doesDirectoryExist tempDir) $ wipeDir tempDir
-  createDirectoryIfMissing False tempDir
-  liftIO $ writeRec tempDir dbSchema
-
-  -- If the directory doesn't exist, we should simply ignore it
-  -- Note: the folder parent to "dir" might not have permissions for us to delete things inside it,
-  -- so we modify only strictly inside "dir"
-  whenM (doesDirectoryExist rootDir) $ wipeDir rootDir
-  -- Important: renameDirectory will fail when the destination is a different partition. So we make a Copy instead.
-  copyDir tempDir rootDir
+persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => DbRep -> FilePath -> m ()
+persistRepsToDisk dbSchema schemaDir =
+  maybeAtomicallyReplaceSchemaFolder $ \tempDir -> do
+    liftIO $ writeRec tempDir dbSchema
   where
-    wipeDir d = do
-      xs <- listDirectory d
-      forM_ xs $ \x -> removePathForcibly (d </> x)
+    -- \| Allows the caller to wipe and replace a folder with new contents as atomically
+    -- as the user's permissions will let us. That is, the supplied callback should write
+    -- to the path it's supplied with as if it were the target folder, and after this finishes
+    -- the target folder will be replaced with the contents written.
+    -- This does not guarantee it won't leave the target folder in some intermediate state,
+    -- it just makes an effort to avoid that.
+    -- The entire thing may happen more or less atomically, and no promise is made regarding
+    -- file modification times. This function is not thread-safe.
+    maybeAtomicallyReplaceSchemaFolder :: (FilePath -> m ()) -> m ()
+    maybeAtomicallyReplaceSchemaFolder f = do
+      -- We want this function to be fast and as atomic as it can be, but:
+      -- 1. `renameFile` throws if the target path is in a different partition from the source path
+      -- 2. The user might not have permissions to delete the target folder but does have permissions to modify its contents
+      -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
+      -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
+      --   separated from "can-create", IIRC.
+      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [NoSuchThing, UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
+        let nonCanonTempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
+        -- We don't try to be too smart if the schema dir is a symlink so we preserve that symlink
+        isLink <- pathIsSymbolicLink schemaDir
+        if isLink
+          then
+            pure $ Left ()
+          else do
+            whenM (doesDirectoryExist nonCanonTempDir) $ removePathForcibly nonCanonTempDir
+            createDirectoryIfMissing True nonCanonTempDir
+            canonTempDir <- canonicalizePath nonCanonTempDir
+            -- Non-canonicalized paths make `renameDirectory` fail for some reason, and canonicalization
+            -- only works with existing folders
+            whenM (doesDirectoryExist schemaDir) $ removePathForcibly schemaDir
+            renameDirectory canonTempDir schemaDir
+            removePathForcibly schemaDir
+            createDirectoryIfMissing True canonTempDir
+            pure $ Right canonTempDir
+      case join errBestScenario of
+        Right canonTempDir -> do
+          f canonTempDir
+          renameDirectory canonTempDir schemaDir
+        Left _ -> do
+          ensureEmptyDir schemaDir
+          f schemaDir
+
+    -- \| Removes every file and subfolder of the supplied path to
+    -- leave it empty, keeping the empty folder.
+    ensureEmptyDir :: FilePath -> m ()
+    ensureEmptyDir path = do
+      exists <- doesDirectoryExist path
+      if exists
+        then do
+          entries <- listDirectory path
+          forM_ entries $ \x -> removePathForcibly (path </> x)
+        else createDirectoryIfMissing True path
+
     writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
     writeRec dir obj =
       void $
@@ -205,16 +243,9 @@ persistRepsToDisk dbSchema rootDir = do
               createDirectoryIfMissing True (dir </> parentDir)
               writeRec (dir </> parentDir) sobj
           )
-          (\fn jsonRep -> Text.writeFile (dir </> fn) (detEncodeJSON jsonRep))
+          (\fn jsonRep -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
 
-readExpectedSchema :: (MonadError Text m, MonadIO m) => FilePath -> m DbRep
-readExpectedSchema dir =
-  DbRep
-    <$> readFileRep (dir </> "db-settings")
-    <*> readMultiple (dir </> "schemas") readNamespaceRep
-    <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
-
-readNamespaceRep :: (MonadError Text m, MonadIO m) => FilePath -> m SchemaRep
+readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
   SchemaRep (readObjName dir)
     <$> readFileRep (dir </> "objrep")
@@ -225,12 +256,12 @@ readNamespaceRep dir =
     <*> readMultiple (dir </> "collations") readCollation
     <*> readMultiple (dir </> "types") readType
 
-readTable :: (MonadError Text m, MonadIO m) => FilePath -> m TableRep
-readView :: (MonadError Text m, MonadIO m) => FilePath -> m ViewRep
-readRoutine :: (MonadError Text m, MonadIO m) => FilePath -> m RoutineRep
-readSequence :: (MonadError Text m, MonadIO m) => FilePath -> m SequenceRep
-readCollation :: (MonadError Text m, MonadIO m) => FilePath -> m CollationRep
-readType :: (MonadError Text m, MonadIO m) => FilePath -> m TypeRep
+readTable :: (MonadUnliftIO m) => FilePath -> m TableRep
+readView :: (MonadUnliftIO m) => FilePath -> m ViewRep
+readRoutine :: (MonadUnliftIO m) => FilePath -> m RoutineRep
+readSequence :: (MonadUnliftIO m) => FilePath -> m SequenceRep
+readCollation :: (MonadUnliftIO m) => FilePath -> m CollationRep
+readType :: (MonadUnliftIO m) => FilePath -> m TypeRep
 readTable dir =
   TableRep (readObjName dir)
     <$> readFileRep (dir </> "objrep")
@@ -265,30 +296,41 @@ readObjName :: FilePath -> ObjName
 readObjName = fromPathFrag . takeFileName
 
 readFileRep ::
-  forall m. (MonadError Text m, MonadIO m) => FilePath -> m Value
-readFileRep filepath = do
-  exists <- liftIO $ doesFileExist filepath
-  unless exists $
-    throwError $
-      "File "
-        <> pack filepath
-        <> " was expected but does not exist"
+  forall m. (MonadUnliftIO m) => FilePath -> m Value
+readFileRep filepath = rethrowIfNotExists $ do
   -- Careful, LBS.readFile is lazy and does not close
-  -- the file handle unless we force the thunk. So we
-  -- use BS.readFile to be on the safe side
-  fileContents <- liftIO $ BS.readFile filepath
-  pure
-    $ fromMaybe
-      ( error $
-          "File '"
-            ++ filepath
-            ++ "' was supposed to contain a JSON value"
-      )
-    $ decode
-    $ LBS.fromStrict fileContents
+  -- the file handle unless we force the thunk, and not closing
+  -- file handles can make shells with low ulimits barf.
+  -- MacOS has particularly low ulimits.
+  !fileContents <- liftIO $ LBS.readFile filepath
+  !decodedJson <-
+    evaluate
+      $ fromMaybe
+        ( error $
+            "File '"
+              ++ filepath
+              ++ "' was supposed to contain a JSON value"
+        )
+      $ force
+      $ decode
+        fileContents
+  pure decodedJson
+  where
+    rethrowIfNotExists =
+      handle
+        ( \(e :: IOError) ->
+            if isDoesNotExistError e
+              then
+                throwIO $
+                  userError $
+                    "File "
+                      <> filepath
+                      <> " was expected but does not exist"
+              else throwIO e
+        )
 
 simpleObjRepFileRead ::
-  (MonadError Text m, MonadIO m) =>
+  (MonadUnliftIO m) =>
   (ObjName -> Value -> a) ->
   FilePath ->
   m a
@@ -296,42 +338,26 @@ simpleObjRepFileRead f filepath =
   f (readObjName filepath) <$> readFileRep filepath
 
 readMultiple ::
-  (MonadError Text m, MonadIO m, HasName o) =>
+  (MonadUnliftIO m, HasName o) =>
   FilePath ->
   (FilePath -> m o) ->
   m (Map ObjName o)
 readMultiple dir f = do
-  dirExists <- doesDirectoryExist dir
-  if dirExists
-    then do
-      folders <- filter (/= "objrep") <$> listDirectory dir
+  foldersOrNotOne <- handle checkDoesNotExist $ Right . filter (/= "objrep") <$> listDirectory dir
+  case foldersOrNotOne of
+    Right folders -> do
       objList <- traverse (f . (dir </>)) folders
       return $ listToMap objList
-    else pure Map.empty
+    Left () -> pure Map.empty
+  where
+    checkDoesNotExist (e :: IOError) = if isDoesNotExistError e then pure (Left ()) else throwIO e
 
-readRepsFromDisk :: (MonadIO m) => FilePath -> m DbRep
-readRepsFromDisk dir = do
-  allRepsE <- runExceptT $ readExpectedSchema dir
-  case allRepsE of
-    Left err ->
-      throwIO $
-        userError $
-          "An error happened when reading representations from disk: "
-            <> unpack err
-    Right allReps -> return allReps
-
--- | Taken from https://stackoverflow.com/questions/6807025/what-is-the-haskell-way-to-copy-a-directory and modified
-copyDir :: (HasCallStack, MonadIO m) => FilePath -> FilePath -> m ()
-copyDir src dst = do
-  createDirectoryIfMissing True dst
-  xs <- listDirectory src
-  forM_ xs $ \name -> do
-    let srcPath = src </> name
-    let dstPath = dst </> name
-    isDirectory <- doesDirectoryExist srcPath
-    if isDirectory
-      then copyDir srcPath dstPath
-      else copyFile srcPath dstPath
+readRepsFromDisk :: (MonadUnliftIO m) => FilePath -> m DbRep
+readRepsFromDisk dir =
+  DbRep
+    <$> readFileRep (dir </> "db-settings")
+    <*> readMultiple (dir </> "schemas") readNamespaceRep
+    <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
 
 whenM :: (Monad m) => m Bool -> m () -> m ()
 whenM s r = s >>= flip when r

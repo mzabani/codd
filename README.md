@@ -113,8 +113,8 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 </table>
 
-¹ Some SQL must run without explicit transactions; single-transaction application only works when none of that is present.  
-² There can be false positives and false negatives in some cases.  
+¹ Postgresql itself requires some SQL to run without explicit transactions; single-transaction application only works when that is not present.  
+² There can be false positives and false negatives in some cases.   
 
 ## Installing Codd
 
@@ -158,7 +158,7 @@ Create this file and save it as `bootstrap-db.sql`:
 CREATE DATABASE codd_experiments;
 ````
 
-That's a lot to take in. codd handles pure SQL migrations but also has some special header comments defined that can make it do special things.
+That's a lot to take in. Codd handles pure SQL migrations but also has some special header comments defined that can make it do special things.
 
 - The `-- codd: no-txn` header comment specifies that this migration can't run inside a transaction. Postgres doesn't allow us to create databases (plus a few other statements) inside transactions, after all.
 - The `-- codd-connection` header comment specifies that this specific migration will run with its own connection string, not with the default one.
@@ -214,10 +214,10 @@ We recommend following these instructions closely to catch as many possible issu
 ## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my expected codd schema?
-   `pg_dump` does not dump all of the schema state that codd checks. A few examples include (at least with PG 13) role related state, the database's default transaction isolation level and deferredness, among possibly others. So check that it isn't the case that you get different schemas when that happens. If you've checked with `psql` and everything looks to be the same please report a bug in codd.
+   `pg_dump` does not dump all of the schema state that codd checks. A few examples include role related state, the database's default transaction isolation level and deferredness, among other settings. So check that it isn't the case that you get different schemas when that happens. If you've checked with `psql` and everything looks to be the same please report a bug in codd.
 
 2. ### Will codd run out of memory or system resources if my migration files are too large or too many?
-    Most likely not. Codd reads migrations from disk in streaming fashion and keeps in memory only a single statement at a time. For `COPY` statements, codd uses a constant-size buffer to stream-read the contents and achieve bounded memory usage while staying fast. Also, codd does not open more than one migration file simultaneously to stay well below typical file handle limits imposed by the shell or operating system, and that is also assured through an automated test that runs in CI with `strace`. Codd does keep metadata about all pending migrations in memory, but that should be fairly small.
+    Most likely not. Codd reads migrations from disk in streaming fashion and keeps in memory only a single statement at a time. For `COPY` statements, codd uses a constant-size buffer to stream-read the contents and achieve bounded memory usage while staying fast. Also, codd does not open more than one migration file simultaneously to stay well below typical file handle limits imposed by the shell or operating system, and that is also assured through an automated test that runs in CI with `strace`. Codd does keep metadata about all pending migrations and the expected schema in memory, but those should be fairly small.
 
 3. ### Will codd handle SQL errors nicely?
-    Codd tries to do the "best possible thing" even in rather unusual situations. It will retry sets of consecutive in-txn migrations atomically so as not to leave your database in an intermediary state. Even for no-txn migrations, codd will retry the failing statement instead of entire migrations, and _even_ if you write explicit `BEGIN..COMMIT` sections in no-txn migrations, codd will be smart enough to retry from the `BEGIN` if a statement inside that section fails. See the [retry examples](/docs/SQL-MIGRATIONS.md#examples) if you're interested. What codd currently cannot handle well is having its connection killed by an external agent while it's applying a _no-txn_ migration, a scenario which should be extremely rare. Basically, we hope you should be able to write your migrations however you want and rely comfortably on the fact that codd should do the reasonable thing when handling errors.
+    Codd tries to do the "best possible thing" even in rather unusual situations. It will retry sets of consecutive in-txn migrations atomically so as not to leave your database in an intermediary state. Even for no-txn migrations, codd will retry the failing statement instead of entire migrations, and _even_ if you write explicit `BEGIN..COMMIT` sections in no-txn migrations, codd will be smart enough to retry from the `BEGIN` if a statement inside that section fails. See the [retry examples](/docs/SQL-MIGRATIONS.md#examples) if you're interested. Basically, we hope you should be able to write your migrations however you want and rely comfortably on the fact that codd should do the reasonable thing when handling errors.

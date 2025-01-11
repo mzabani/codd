@@ -89,6 +89,7 @@ library
     , bytestring
     , clock
     , containers
+    , deepseq
     , dlist
     , filepath
     , formatting
@@ -263,6 +264,7 @@ test-suite codd-test
     , base
     , codd
     , containers
+    , filepath
     , hashable
     , hspec
     , hspec-core
@@ -277,4 +279,5 @@ test-suite codd-test
     , time
     , typed-process
     , unliftio
+    , uuid
   default-language: Haskell2010

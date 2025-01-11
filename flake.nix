@@ -104,6 +104,7 @@
                         cacert
                         ghcid
                         glibcLocales
+                        hyperfine
                         postgres-service
                         postgresql_16
                         run
@@ -144,16 +145,15 @@
         # Built by `nix build .`
         defaultPackage = flakeDefault.packages."codd:exe:codd";
 
-        testShells = {
+        devShells = flakeDefault.devShells // {
           pg12 = import ./nix/test-shell-pg12.nix { inherit pkgs; };
           pg13 = import ./nix/test-shell-pg13.nix { inherit pkgs; };
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
           pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
+          shellWithRunfile =
+            pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
         };
-
-        shellWithRunfile =
-          pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
 
         # Having pkgs helps debug musl builds with `nix repl`. We can e.g.
         # build musl packages statically to see if their "normal" builds pass
