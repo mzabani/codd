@@ -1,7 +1,8 @@
 module WritingReadingRepresentationsSpec where
 
 import Codd.Representations
-  ( persistRepsToDisk,
+  ( DbRep,
+    persistRepsToDisk,
     readRepsFromDisk,
     schemaDifferences,
   )
@@ -35,13 +36,7 @@ spec = do
         -- /dev/shm is shared memory so should be faster, if it exists (MacOS doesn't have it)
         shmExists <- doesDirectoryExist "/dev/shm"
         let baseFolder = if shmExists then "/dev/shm" else "/tmp"
-        persistRepsToDisk dbHashes (baseFolder </> "inverse-test-sql-folder")
-        readDbHashes <-
-          readRepsFromDisk
-            (baseFolder </> "inverse-test-sql-folder")
-        let diffs = schemaDifferences dbHashes readDbHashes
-        diffs `shouldBe` Map.empty
-        readDbHashes `shouldBe` dbHashes
+        writeSchemaAndReadSchemaRoundtrip dbHashes (baseFolder </> "inverse-test-sql-folder")
     modifyMaxSuccess (const 1)
       $ it
         "persistRepsToDisk works when expected schema dir does not exist"
@@ -49,9 +44,7 @@ spec = do
         property $ \(DbRepsGen dbHashes) -> do
           tempDir <- getEmptyTempDir
           let expectedSchemaDir = tempDir </> "parentfolder/expected-schema"
-          persistRepsToDisk @IO
-            dbHashes
-            expectedSchemaDir
+          writeSchemaAndReadSchemaRoundtrip dbHashes expectedSchemaDir
     modifyMaxSuccess (const 1)
       $ it
         "persistRepsToDisk works even when expected schema dir parent has difficult permissions"
@@ -63,7 +56,7 @@ spec = do
           let permsNoWrite = setOwnerReadable True $ setOwnerExecutable True emptyPermissions
           setPermissions (tempDir </> "badfolder/badsubfolder") permsNoWrite
           setPermissions (tempDir </> "badfolder") permsNoWrite
-          persistRepsToDisk @IO
+          writeSchemaAndReadSchemaRoundtrip
             dbHashes
             expectedSchemaDir
     modifyMaxSuccess (const 1)
@@ -76,8 +69,18 @@ spec = do
               linkToSchemaDir = tempDir </> "link-to-schema-dir"
           createDirectoryIfMissing True realExpectedSchemaDir
           createDirectoryLink realExpectedSchemaDir linkToSchemaDir
-          persistRepsToDisk @IO
+          writeSchemaAndReadSchemaRoundtrip
             dbHashes
             linkToSchemaDir
           pathIsSymbolicLink linkToSchemaDir `shouldReturn` True
           getSymbolicLinkTarget linkToSchemaDir `shouldReturn` realExpectedSchemaDir
+
+writeSchemaAndReadSchemaRoundtrip :: DbRep -> FilePath -> IO ()
+writeSchemaAndReadSchemaRoundtrip dbReps expectedSchemaDir = do
+  persistRepsToDisk dbReps expectedSchemaDir
+  readDbSchema <-
+    readRepsFromDisk
+      expectedSchemaDir
+  let diffs = schemaDifferences dbReps readDbSchema
+  diffs `shouldBe` Map.empty
+  readDbSchema `shouldBe` dbReps
