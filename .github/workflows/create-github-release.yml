@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       versionToRelease:
-        description: 'A version to release with a leading `v` character, e.g. v0.1.5'     
+        description: 'A version to release with a leading `v` character, e.g. v0.1.5'
         required: true
 
 defaults:

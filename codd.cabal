@@ -1,13 +1,13 @@
 cabal-version: 2.0
 
 name:           codd
-version:        0.1.5
+version:        0.1.6
 description:    Codd is a simple-to-use CLI tool that applies plain postgres SQL migrations atomically with strong and automatic cross-environment schema equality checks. README at <https://github.com/mzabani/codd#readme>
 homepage:       https://github.com/mzabani/codd#readme
 bug-reports:    https://github.com/mzabani/codd/issues
 author:         Marcelo Zabani
 maintainer:     mzabani@gmail.com
-copyright:      2024 Marcelo Zabani
+copyright:      2025 Marcelo Zabani
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
