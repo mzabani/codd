@@ -58,7 +58,6 @@ import Control.Applicative
   ( optional,
     (<|>),
   )
-import Control.DeepSeq (NFData)
 import Control.Monad
   ( forM_,
     guard,
@@ -118,7 +117,6 @@ import Data.Time.Clock (UTCTime (..))
 import Database.PostgreSQL.Simple (ConnectInfo (..))
 import qualified Database.PostgreSQL.Simple.FromRow as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
-import GHC.Generics (Generic)
 import Network.URI
   ( URI (..),
     URIAuth (..),
@@ -245,8 +243,7 @@ data SectionOption = OptInTxn Bool | OptNoParse Bool
   deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
-  deriving stock (Generic, Show, Eq)
-  deriving anyclass (NFData)
+  deriving stock (Show, Eq)
 
 data ParsingException = ParsingException
   { sqlFragment :: Text,
