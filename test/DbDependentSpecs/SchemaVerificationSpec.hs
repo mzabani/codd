@@ -1683,8 +1683,10 @@ spec = do
                               $ applyStatementStream
                                 conn
                               $ forceStreamConcurrently 1
-                              $ ( \(WellParsedSql sqlStream) ->
-                                    sqlStream
+                              $ ( \case
+                                    (WellParsedSql sqlStream) ->
+                                      sqlStream
+                                    _ -> error "Not WellParsedSql"
                                 )
                                 ( mkValidSql
                                     undoSql
