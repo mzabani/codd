@@ -4,7 +4,8 @@ import Codd (applyMigrationsNoCheck)
 import Codd.Environment (CoddSettings (..))
 import Codd.Internal (withConnection)
 import Codd.Internal.MultiQueryStatement
-  ( multiQueryStatement_,
+  ( applyStatementStream,
+    forceStreamConcurrently,
   )
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing
@@ -1679,10 +1680,13 @@ spec = do
                             testConnTimeout
                           $ \conn ->
                             Streaming.effects
-                              $ multiQueryStatement_
+                              $ applyStatementStream
                                 conn
-                              $ ( \(WellParsedSql sqlStream) ->
-                                    sqlStream
+                              $ forceStreamConcurrently 1
+                              $ ( \case
+                                    (WellParsedSql sqlStream) ->
+                                      sqlStream
+                                    _ -> error "Not WellParsedSql"
                                 )
                                 ( mkValidSql
                                     undoSql

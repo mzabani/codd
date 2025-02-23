@@ -8,7 +8,9 @@ import Codd.Internal
     parseMigrationFiles,
   )
 import Codd.Internal.MultiQueryStatement
-  ( skipCountableRunnableStatements,
+  ( forceStreamConcurrently,
+    forceStreamConcurrentlyInspect,
+    skipCountableRunnableStatements,
   )
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing
@@ -33,7 +35,9 @@ import Codd.Parsing
 import Control.Monad
   ( forM,
     forM_,
+    forever,
     unless,
+    void,
     when,
   )
 import Control.Monad.Identity (Identity (runIdentity))
@@ -43,15 +47,19 @@ import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils (parseSqlMigrationIO)
 import EnvironmentSpec (ConnStringGen (..))
+import GHC.Num (Natural)
+import Streaming (Of (..), Stream)
+import qualified Streaming.Internal as S
 import qualified Streaming.Prelude as S
-import qualified Streaming.Prelude as Streaming
+import System.IO.Unsafe (unsafePerformIO)
+import System.Mem (performGC, performMajorGC)
 import System.Random
   ( mkStdGen,
     randomR,
@@ -60,9 +68,19 @@ import Test.Hspec
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
 import UnliftIO
-  ( MonadIO,
+  ( IORef,
+    MonadIO,
+    evaluate,
     liftIO,
+    modifyIORef',
+    newEmptyMVar,
+    newIORef,
+    readIORef,
+    readMVar,
   )
+import UnliftIO.Async (race, withAsync)
+import UnliftIO.Concurrent (MVar, forkIO, threadDelay)
+import UnliftIO.Exception (SomeException, try)
 import UnliftIO.Resource (runResourceT)
 
 data RandomSql m = RandomSql
@@ -237,9 +255,9 @@ mkRandStream seed text = PureStream $ go (mkStdGen seed) text
           withEvenMoreSeparation1 = List.intersperse " " $ Text.split (== ' ') thisChunk
           withEvenMoreSeparation2 = concatMap (List.intersperse "\n" . Text.split (== '\n')) withEvenMoreSeparation1
        in if t == ""
-            then Streaming.each []
+            then S.each []
             else
-              Streaming.each withEvenMoreSeparation2 <> go g' remainder
+              S.each withEvenMoreSeparation2 <> go g' remainder
 
 genSql :: (Monad m) => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do
@@ -397,9 +415,64 @@ groupCopyRows =
             )
             copyRows
 
+newtype ArbitraryEffectAndStepsStream = ArbitraryEffectAndStepsStream (Stream (Of Integer) IO (IORef Integer))
+
+instance Show ArbitraryEffectAndStepsStream where
+  show _ = "arbitrary-stream"
+
+instance Arbitrary ArbitraryEffectAndStepsStream where
+  arbitrary = do
+    -- Generate a bunch of random numbers and determine which ones of them will be effects and which will be steps
+    stepsAndEffects :: [(Bool, Integer)] <- listOf arbitrary
+    pure $ ArbitraryEffectAndStepsStream $ S.Effect $ do
+      effSum <- newIORef 0
+      pure $ go effSum stepsAndEffects
+    where
+      go :: IORef Integer -> [(Bool, Integer)] -> Stream (Of Integer) IO (IORef Integer)
+      go effSum [] = S.Return effSum
+      go effSum ((isEffect, n) : xs) = do
+        if isEffect
+          then S.Effect $ do
+            modifyIORef' effSum (+ n)
+            pure $ S.Step $ n :> go effSum xs
+          else S.Step $ n :> go effSum xs
+
 spec :: Spec
 spec = do
   describe "Parsing tests" $ do
+    it "forceStreamConcurrently for Streams returns the same stream in the absence of exceptions" $ property $ \(ArbitraryEffectAndStepsStream originalStream, numLookAhead :: Int) -> do
+      let forcedStream = forceStreamConcurrently (fromIntegral $ max 0 numLookAhead) originalStream
+      originalStreamAsList :> originalEffectSumIORef <- S.toList originalStream
+      extractedStreamAsList :> extractedEffectSumIORef <- S.toList forcedStream
+      originalEffectSum <- readIORef originalEffectSumIORef
+      extractedEffectSum <- readIORef extractedEffectSumIORef
+      extractedStreamAsList `shouldBe` originalStreamAsList
+      extractedEffectSum `shouldBe` originalEffectSum
+    it "forceStreamConcurrently for Streams with exceptions throws when consumed" $ property $ \(ArbitraryEffectAndStepsStream originalStream, numLookAhead :: Int) -> do
+      sideEffCountStreamWithExceptions <- newIORef (0 :: Integer)
+      sideEffCountForcedStream <- newIORef (0 :: Integer)
+      let exampleException = userError "Failed to read from disk"
+          streamWithExceptions = void originalStream <> S.Effect (throwM exampleException)
+          forcedStream = forceStreamConcurrently (fromIntegral $ max 0 numLookAhead) streamWithExceptions
+          mkIORefModifyingStream ior = S.mapM (\n -> modifyIORef' ior (+ n) >> pure n)
+      -- A naive implementation of `forceStreamConcurrently` would not re-throw exceptions and could
+      -- block forever
+      S.toList (mkIORefModifyingStream sideEffCountStreamWithExceptions forcedStream) `shouldThrow` (== exampleException)
+      S.toList (mkIORefModifyingStream sideEffCountForcedStream streamWithExceptions) `shouldThrow` (== exampleException)
+      -- And the same side-effects for both in this case
+      expectedSideEffCount <- readIORef sideEffCountStreamWithExceptions
+      readIORef sideEffCountForcedStream `shouldReturn` expectedSideEffCount
+    it "forceStreamConcurrently terminates background thread when returned stream is not consumed linearly" $ property $ \(ArbitraryEffectAndStepsStream originalStream, numLookAhead :: Int) -> do
+      returnedStreamNotConsumedLinearly <- newEmptyMVar
+      l <- S.toList_ $ S.take 10 $ forceStreamConcurrentlyInspect (Just returnedStreamNotConsumedLinearly) (fromIntegral $ max 0 numLookAhead) $ void originalStream <> S.repeat 0
+      length l `shouldBe` 10
+
+      -- We explicitly perform GCs because that's the mechanism relied on to detect no more downstream consumers
+      -- of the returned stream exist. If this test doesn't terminate, it means it's failed.
+      res <- race (forever $ performMajorGC >> threadDelay 1_000) (readMVar returnedStreamNotConsumedLinearly)
+      case res of
+        Left _ -> error "Impossible!"
+        Right () -> pure ()
     context "manyStreaming" $ do
       it "Successful cases with or without unparsed text at the end" $ property $ \randomInt -> do
         let expectedParsedList = replicate (min 100 randomInt) "ab"
@@ -408,11 +481,11 @@ spec = do
             string = parseableString <> extraUnparsed
             stream = unPureStream $ mkRandStream randomInt string
             parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
-        parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+        parsedList1 S.:> (unparsedText1, ()) <- S.toList $ manyStreaming (const $ (,()) <$> parser) () stream
         let runChecks unparsedText2 parsedList2 = do
               parsedList1 `shouldBe` parsedList2
               parsedList1 `shouldBe` expectedParsedList
-              Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+              S.mconcat_ unparsedText1 `shouldReturn` unparsedText2
               unparsedText2 `shouldBe` extraUnparsed
 
         case Parsec.parse (Parsec.many' parser) string of
@@ -430,11 +503,11 @@ spec = do
             string :: Text = mconcat expectedParsedList <> "a"
             stream = unPureStream $ mkRandStream randomInt string
             parser :: Parsec.Parser Text = Parsec.string "a" >> Parsec.string "b" >> pure "ab"
-        parsedList1 S.:> (unparsedText1, ()) <- Streaming.toList $ manyStreaming (const $ (,()) <$> parser) () stream
+        parsedList1 S.:> (unparsedText1, ()) <- S.toList $ manyStreaming (const $ (,()) <$> parser) () stream
         let runChecks unparsedText2 parsedList2 = do
               parsedList1 `shouldBe` parsedList2
               parsedList1 `shouldBe` expectedParsedList
-              Streaming.mconcat_ unparsedText1 `shouldReturn` unparsedText2
+              S.mconcat_ unparsedText1 `shouldReturn` unparsedText2
               unparsedText2 `shouldBe` "a"
 
         case Parsec.parse (Parsec.many' parser) string of
@@ -451,7 +524,7 @@ spec = do
           \randomSeed -> do
             blks :: [[SqlPiece]] <-
               traverse
-                ( (Streaming.toList_ . parseSqlPiecesStreaming)
+                ( (S.toList_ . parseSqlPiecesStreaming)
                     . unPureStream
                     . mkRandStream randomSeed
                 )
@@ -481,7 +554,7 @@ spec = do
           ((,) <$> listOf1 genSingleSqlStatement <*> arbitrary @Int)
         $ \(origPieces, randomSeed) -> do
           parsedPieces <-
-            Streaming.toList_ $
+            S.toList_ $
               parseSqlPiecesStreaming $
                 unPureStream $
                   mkRandStream randomSeed $
@@ -494,7 +567,7 @@ spec = do
         $ do
           property $ \SyntacticallyValidRandomSql {..} -> do
             blks <-
-              Streaming.toList_ $
+              S.toList_ $
                 parseSqlPiecesStreaming $
                   unPureStream unSyntRandomSql
             piecesToText blks `shouldBe` fullContents
@@ -521,9 +594,9 @@ spec = do
               -- We want to stress-test this parser at its boundaries: lines ending close to chunkSize, terminators in the contents etc.
               let rowsText = Text.concat rows
                   copyBody =
-                    Streaming.each rows <> Streaming.yield terminator
+                    S.each rows <> S.yield terminator
               parsed <-
-                Streaming.toList_ $
+                S.toList_ $
                   parseSqlPiecesStreaming'
                     ( \_parserState ->
                         copyFromStdinAfterStatementParser chunkSize
@@ -717,7 +790,7 @@ spec = do
               res <-
                 parseAndClassifyMigration $
                   PureStream @(EnvVarsT Identity) $
-                    Streaming.yield sqlWithVars
+                    S.yield sqlWithVars
               case res of
                 Left err -> error err
                 Right (_, _, _, UnparsedSql _) ->
@@ -725,7 +798,7 @@ spec = do
                 Right (_, _, _, WellParsedSql pieces) ->
                   mconcat
                     . map sqlPieceText
-                    <$> Streaming.toList_ pieces
+                    <$> S.toList_ pieces
         parsedSql `shouldBe` templatedSql
 
     context "Invalid SQL Migrations" $ do
@@ -737,7 +810,7 @@ spec = do
               case migrationSql <$> emig of
                 Left _ -> error "Should not be Left!"
                 Right (WellParsedSql pieces) -> do
-                  t <- piecesToText <$> Streaming.toList_ pieces
+                  t <- piecesToText <$> S.toList_ pieces
                   t `shouldBe` fullContents
                 Right (UnparsedSql t) ->
                   t `shouldBe` fullContents
@@ -904,7 +977,7 @@ spec = do
                 ]
           forM_ emptyQueries $ \q -> do
             parsed <-
-              Streaming.toList_ $
+              S.toList_ $
                 parseSqlPiecesStreaming $
                   unPureStream $
                     mkRandStream randomSeed q
@@ -934,7 +1007,7 @@ spec = do
                     parseSqlPiecesStreaming $
                       unPureStream $
                         mkRandStream (randomSeed + 1) q
-              Streaming.any_
+              S.any_
                 ( \p ->
                     not
                       ( isWhiteSpacePiece p
