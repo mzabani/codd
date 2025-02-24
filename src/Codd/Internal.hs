@@ -1,4 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes, DataKinds #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Codd.Internal where
 
 import           Prelude                 hiding ( readFile )
@@ -45,7 +45,7 @@ import           Codd.Query                     ( CanStartTxn
                                                 )
 import           Codd.Representations           ( DbRep
                                                 , logSchemasComparison
-                                                , readRepresentationsFromDbWithSettings
+                                                , readRepresentationsFromDbWithSettings, readRepsFromDisk
                                                 )
 import           Codd.Types                     ( TxnIsolationLvl(..) )
 import           Control.Applicative            ( Alternative(..) )
@@ -101,7 +101,7 @@ import           UnliftIO                       ( Exception
                                                 , readIORef
                                                 , timeout
                                                 , try
-                                                , writeIORef, modifyIORef'
+                                                , writeIORef, modifyIORef', Concurrently (..)
                                                 )
 import           UnliftIO.Concurrent            ( threadDelay )
 import           UnliftIO.Directory             ( listDirectory )
@@ -1241,30 +1241,32 @@ parseMigrationFiles migsApplied sqlMigrations = do
 strictCheckLastAction
     :: (MonadUnliftIO m, CoddLogger m, InTxn m)
     => CoddSettings
-    -> DbRep
-    -> ([BlockOfMigrations m] -> DB.Connection -> m ())
-strictCheckLastAction coddSettings expectedReps blocksOfMigs conn = do
-    cksums <- readRepresentationsFromDbWithSettings coddSettings conn
+    -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
+strictCheckLastAction coddSettings@CoddSettings {onDiskReps} blocksOfMigs conn = do
+    -- Concurrency barely improves performance here, but why not do it?
+    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either readRepsFromDisk pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
     unless (isOneShotApplication (migsConnString coddSettings) blocksOfMigs)
         $ do
               logWarn
                   "Because it wasn't possible to apply all pending migrations in a single transaction, all migrations have been applied. We'll run a schema check."
-    logSchemasComparison cksums expectedReps
-    when (cksums /= expectedReps) $ throwIO $ userError
+    logSchemasComparison dbReps expectedReps
+    when (dbReps /= expectedReps) $ throwIO $ userError
         "Exiting. Database's schema differ from expected."
+    pure expectedReps
 
 -- | This can be used as a last-action when applying migrations to
 -- lax-check schemas, logging differences or success, but
--- _never_ throwing exceptions and returning the database schema.
+-- _never_ throwing exceptions and returning the database and expected schemas
+-- in this order.
 laxCheckLastAction
     :: (MonadUnliftIO m, CoddLogger m, InTxn m)
     => CoddSettings
-    -> DbRep
-    -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
-laxCheckLastAction coddSettings expectedReps _blocksOfMigs conn = do
-    cksums <- readRepresentationsFromDbWithSettings coddSettings conn
-    logSchemasComparison cksums expectedReps
-    pure cksums
+    -> ([BlockOfMigrations m] -> DB.Connection -> m (DbRep, DbRep))
+laxCheckLastAction coddSettings@CoddSettings {onDiskReps} _blocksOfMigs conn = do
+    -- Concurrency barely improves performance here, but why not do it?
+    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either readRepsFromDisk pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
+    logSchemasComparison dbReps expectedReps
+    pure (dbReps, expectedReps)
 
 -- | A collection of consecutive migrations. Consecutive in-txn migrations with the same connection string are grouped together,
 -- no-txn migrations appear alone.
