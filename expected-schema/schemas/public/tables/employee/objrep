@@ -16,7 +16,7 @@
     "privileges": {
         "codd-user": [
             [
-                "daxr*tDw",
+                "damxr*tDw",
                 "codd_admin"
             ]
         ],
@@ -26,7 +26,7 @@
                 "codd-user"
             ],
             [
-                "daxrtDw",
+                "damxrtDw",
                 "codd_admin"
             ]
         ],

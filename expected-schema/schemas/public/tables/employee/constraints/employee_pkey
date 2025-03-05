@@ -1,7 +1,7 @@
 {
     "deferrable": false,
     "deferred": false,
-    "definition": "PRIMARY KEY (employee_id)",
+    "definition": "not-available-in-pg-17.2-or-less",
     "fk_deltype": " ",
     "fk_matchtype": " ",
     "fk_ref_table": null,

@@ -1,7 +1,7 @@
 {
     "deferrable": false,
     "deferred": false,
-    "definition": "CHECK (value > 0::numeric)",
+    "definition": "not-available-in-pg-17.2-or-less",
     "fk_deltype": " ",
     "fk_matchtype": " ",
     "fk_ref_table": null,

@@ -35,6 +35,7 @@ library
       Codd.Representations.Database.Pg14
       Codd.Representations.Database.Pg15
       Codd.Representations.Database.Pg16
+      Codd.Representations.Database.Pg17
       Codd.Representations.Database.SqlGen
       Codd.Representations.Disk
       Codd.Representations.Types

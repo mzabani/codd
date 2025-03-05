@@ -1,10 +1,13 @@
 {
   description = "Codd's flake";
   inputs.haskellNix.url =
-    "github:input-output-hk/haskell.nix/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2";
-  # When switching away from nixpkgs-23.11, make sure to change
-  # install-codd-nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2311";
+    "github:input-output-hk/haskell.nix/4b723bfac41d8ac61dbc9a4ca47b5507c67b6911";
+  # When switching away from nixpkgs-unstable, make sure to change
+  # nixpkgs.nix accordingly!
+  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2411";
+  # Some green staging build taken from Hydra: https://hydra.nixos.org/eval/1812308#tabs-inputs
+  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/51b93f39abfb9e566dba11b5e57e00d3e18357e8";
+  # inputs.haskellNix.inputs.nixpkgs.follows = "nixpkgs";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -27,13 +30,20 @@
         };
 
         postgres-service = import ./nix/postgres-service.nix {
-          postgres = pkgs.postgresql_16;
+          postgres = pkgs.postgresql_17;
           inherit pkgs;
           initializePostgres = false;
           wipeCluster = false;
         };
         overlays = [
           haskellNix.overlay
+          # (self: super: {
+          #   pkgsCross = super.pkgsCross // {
+          #     musl64 = super.pkgsCross.musl64 // {
+          #       postgresql = self.pkgsStatic.postgresql;
+          #     };
+          #   };
+          # })
           (final: prev:
             let
               mkProject = stackYaml: compiler-nix-name:
@@ -61,15 +71,11 @@
                           # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
                           # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
                           # dynamically linked glibc builds.
-                          # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
-                          # https://github.com/NixOS/nixpkgs/issues/191920
-                          # This doesn't seem like a big issue since we only need libpq and we do run tests against
-                          # postgresql-16-the-server.
                           "--ghc-option=-optl=-L${final.pkgsCross.musl64.openssl.out}/lib"
                           "--ghc-option=-optl=-lssl"
                           "--ghc-option=-optl=-lcrypto"
 
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-L${pkgs.pkgsStatic.postgresql.dev}/lib"
                           "--ghc-option=-optl=-lpgcommon"
                           "--ghc-option=-optl=-lpgport"
                         ];
@@ -83,7 +89,7 @@
                           "--ghc-option=-optl=-lssl"
                           "--ghc-option=-optl=-lcrypto"
 
-                          "--ghc-option=-optl=-L${final.pkgsCross.musl64.postgresql.out}/lib"
+                          "--ghc-option=-optl=-L${pkgs.pkgsStatic.postgresql.dev}/lib"
                           "--ghc-option=-optl=-lpgcommon"
                           "--ghc-option=-optl=-lpgport"
                         ];
@@ -106,7 +112,7 @@
                         glibcLocales
                         hyperfine
                         postgres-service
-                        postgresql_16
+                        postgresql_17
                         run
                         shellcheck
                       ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
@@ -120,9 +126,8 @@
                       echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
                       echo If 'psql' fails to connect, check logs at $PGDATA/log/
 
-                      # Postgres 15 insists in appearing in PATH before postgres 16.
-                      # So we add postgres 16 _again_ to the beginning of the PATH, and also some useful scripts
-                      export PATH="${pkgs.postgresql_16}/bin:$PATH:scripts/path"
+                      # Add some useful scripts to PATH
+                      export PATH="${pkgs.postgresql_17}/bin:$PATH:scripts/path"
                     '';
                     # This adds `js-unknown-linux-musl` to the shell.
                     # shell.crossPlatforms = p: [ p.musl64 ];
@@ -130,7 +135,7 @@
                 in proj;
             in {
               # This overlay adds our project to pkgs
-              coddProject = mkProject "stack.yaml" "ghc965";
+              coddProject = mkProject "stack.yaml" "ghc966";
             })
         ];
 
