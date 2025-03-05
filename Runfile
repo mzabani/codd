@@ -87,7 +87,7 @@ test-no-db:
 test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(17)
-    [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16 17)
+    [ "${PG[0]}" = "all" ] && PG=(13 14 15 16 17)
     NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
     NIXDEVARGS=() && [ -n "$NIX" ] && NIXDEVARGS=(-i)
     TARGS=(--match /DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
