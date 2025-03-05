@@ -12,7 +12,7 @@ import Codd.Representations.Types
     ObjectRep (..),
   )
 import Codd.Types
-  ( SchemaAlgo,
+  ( SchemaAlgo (..),
     SchemaSelection,
     SqlRole,
   )
@@ -50,6 +50,15 @@ objRepQueryFor serverVersion allRoles allSchemas schemaAlgoOpts schemaName table
                   ("iculocale", "colllocale"), -- This was named colliculocale in Pg16
                   ("icurules", "collicurules")
                 ]
+                  ++ if strictCollations schemaAlgoOpts
+                    then
+                      [ -- Read more about collation schema representations in DATABASE-EQUALITY.md
+                        ("version", "collversion"),
+                        ( "actual_version",
+                          "pg_catalog.pg_collation_actual_version(pg_collation.oid)"
+                        )
+                      ]
+                    else []
             }
         HTableConstraint ->
           hq

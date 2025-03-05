@@ -156,6 +156,7 @@
           pg14 = import ./nix/test-shell-pg14.nix { inherit pkgs; };
           pg15 = import ./nix/test-shell-pg15.nix { inherit pkgs; };
           pg16 = import ./nix/test-shell-pg16.nix { inherit pkgs; };
+          pg17 = import ./nix/test-shell-pg17.nix { inherit pkgs; };
           shellWithRunfile =
             pkgs.mkShell { buildInputs = [ pkgs.run pkgs.shellcheck ]; };
         };

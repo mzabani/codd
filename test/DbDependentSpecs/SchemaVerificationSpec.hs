@@ -25,7 +25,7 @@ import Codd.Representations
     schemaDifferences,
   )
 import Codd.Representations.Database
-  ( queryServerMajorVersion,
+  ( queryServerMajorAndFullVersion,
     readRepsFromDbWithNewTxn,
   )
 import Codd.Representations.Types (ObjName (..))
@@ -157,8 +157,9 @@ migrationsAndRepChange ::
   forall m.
   (MonadThrow m, EnvVars m) =>
   Int ->
+  Int ->
   m [(MU (AddedSqlMigration m), DbChange)]
-migrationsAndRepChange pgVersion =
+migrationsAndRepChange pgVersion pgFullVersion =
   zipWithM
     ( \(MU doSql undoSql, c) i -> do
         mig <-
@@ -176,11 +177,11 @@ migrationsAndRepChange pgVersion =
             c
           )
     )
-    (migrationsAndRepChangeText pgVersion)
+    (migrationsAndRepChangeText pgVersion pgFullVersion)
     (map fromInteger [0 ..]) -- This would be a list of DiffTime, which would have 10^-12s resolution and fail in the DB
 
-migrationsAndRepChangeText :: Int -> [(MU Text, DbChange)]
-migrationsAndRepChangeText pgVersion = flip execState [] $ do
+migrationsAndRepChangeText :: Int -> Int -> [(MU Text, DbChange)]
+migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
   -- MISSING:
   -- COLUMNS WITH GENERATED AS (they are hashed but we can't test them without a pg version check)
   -- EXCLUSION CONSTRAINTS
@@ -390,11 +391,16 @@ migrationsAndRepChangeText pgVersion = flip execState [] $ do
   addMig_
     "ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> 'EMPTY')"
     "ALTER TABLE employee DROP CONSTRAINT employee_ck_name; ALTER TABLE employee ADD CONSTRAINT employee_ck_name CHECK (employee_name <> '')"
-    $ ChangeEq
-      [ ( "schemas/public/tables/employee/constraints/employee_ck_name",
-          DBothButDifferent
-        )
-      ]
+    -- There's a bug in pg 17.0-17.2 where constraint definitions are not available, so they don't change in codd
+    -- See https://www.postgresql.org/message-id/flat/a90f53c4-56f3-4b07-aefc-49afdc67dba6%40app.fastmail.com
+    $ if pgFullVersion <= 170002 && pgVersion == 17
+      then ChangeEq []
+      else
+        ChangeEq
+          [ ( "schemas/public/tables/employee/constraints/employee_ck_name",
+              DBothButDifferent
+            )
+          ]
 
   -- FOREIGN KEYS
   addMig_
@@ -1265,7 +1271,7 @@ instance Arbitrary NumMigsToReverse where
       -- but this is really ugly. We should avoid this generate random input without
       -- an instance of Arbitrary instead.
       <$> chooseBoundedIntegral
-        (5, length (migrationsAndRepChangeText 0) - 1)
+        (5, length (migrationsAndRepChangeText 0 0) - 1)
 
 -- | This type includes each migration with their expected changes and hashes after applied. Hashes before the first migration are not included.
 newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbRep)]
@@ -1396,11 +1402,11 @@ spec = do
                         )
                   )
               <*> pure (getIncreasingTimestamp 0)
-          pgVersion <-
+          (pgVersion, _) <-
             withConnection
               (migsConnString emptyTestDbInfo)
               testConnTimeout
-              queryServerMajorVersion
+              queryServerMajorAndFullVersion
           (laxRangeHashes, strictRangeHashes) <-
             runCoddLogger $
               applyMigrationsNoCheck
@@ -1563,18 +1569,18 @@ spec = do
         "Restoring a pg_dump yields the same schema as applying original migrations"
       $ \emptyDbInfo -> do
         let connInfo = migsConnString emptyDbInfo
-        pgVersion <-
+        (pgVersion, pgFullVersion) <-
           withConnection
             connInfo
             testConnTimeout
-            queryServerMajorVersion
+            queryServerMajorAndFullVersion
 
         -- We also use migrations of the "Accurate and reversible representation changes" test
         -- because that's the most complete set of database objects we have in our test codebase.
         -- But we append other migrations we know to be problematic to that set.
         bunchOfOtherMigs <-
           map (unMU . fst . hoistMU lift)
-            <$> migrationsAndRepChange pgVersion
+            <$> migrationsAndRepChange pgVersion pgFullVersion
         problematicMigs <-
           map (hoistAddedSqlMigration lift)
             <$> migrationsForPgDumpRestoreTest
@@ -1629,14 +1635,14 @@ spec = do
                         connInfo
                         testConnTimeout
                         (readRepsFromDbWithNewTxn sett)
-              pgVersion <-
+              (pgVersion, pgFullVersion) <-
                 withConnection
                   connInfo
                   testConnTimeout
-                  queryServerMajorVersion
+                  queryServerMajorAndFullVersion
               allMigsAndExpectedChanges <-
                 map (hoistMU lift)
-                  <$> migrationsAndRepChange pgVersion
+                  <$> migrationsAndRepChange pgVersion pgFullVersion
               hashBeforeEverything <- getHashes emptyDbInfo
               ( _,
                 AccumChanges applyHistory,

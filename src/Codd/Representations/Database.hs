@@ -1,5 +1,6 @@
 module Codd.Representations.Database
-  ( readSchemaFromDatabase,
+  ( queryServerMajorAndFullVersion,
+    readSchemaFromDatabase,
     readRepresentationsFromDbWithSettings,
     readRepsFromDbWithNewTxn,
   )
