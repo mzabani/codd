@@ -11,13 +11,13 @@
     "privileges": {
         "codd-user": [
             [
-                "damxrtDw",
+                "daxrtDw",
                 "codd_admin"
             ]
         ],
         "codd_admin": [
             [
-                "damxrtDw",
+                "daxrtDw",
                 "codd_admin"
             ]
         ]

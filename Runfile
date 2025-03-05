@@ -86,8 +86,8 @@ test-no-db:
 # OPTION NIX --nix Use a Nix-built test executable in a pure Nix shell instead of compiling with cabal in the user's shell.
 test-with-db:
     set -eo pipefail
-    [ -z "$PG" ] && PG=(17)
-    [ "${PG[0]}" = "all" ] && PG=(13 14 15 16 17)
+    [ -z "$PG" ] && PG=(16)
+    [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
     NIXA=() && [ -n "$NIX" ] && NIXA=(--nix)
     NIXDEVARGS=() && [ -n "$NIX" ] && NIXDEVARGS=(-i)
     TARGS=(--match /DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
