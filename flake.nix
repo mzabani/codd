@@ -4,10 +4,10 @@
     "github:input-output-hk/haskell.nix/4b723bfac41d8ac61dbc9a4ca47b5507c67b6911";
   # When switching away from nixpkgs-unstable, make sure to change
   # nixpkgs.nix accordingly!
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-2411";
+  # inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   # Some green staging build taken from Hydra: https://hydra.nixos.org/eval/1812308#tabs-inputs
-  # inputs.nixpkgs.url = "github:NixOS/nixpkgs/51b93f39abfb9e566dba11b5e57e00d3e18357e8";
-  # inputs.haskellNix.inputs.nixpkgs.follows = "nixpkgs";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/51b93f39abfb9e566dba11b5e57e00d3e18357e8";
+  inputs.haskellNix.inputs.nixpkgs.follows = "nixpkgs";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   # We only have flake-compat here while we support nix-shell and
@@ -75,7 +75,7 @@
                           "--ghc-option=-optl=-lssl"
                           "--ghc-option=-optl=-lcrypto"
 
-                          "--ghc-option=-optl=-L${pkgs.pkgsStatic.postgresql.dev}/lib"
+                          "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.postgresql_17.dev}/lib"
                           "--ghc-option=-optl=-lpgcommon"
                           "--ghc-option=-optl=-lpgport"
                         ];
@@ -89,7 +89,7 @@
                           "--ghc-option=-optl=-lssl"
                           "--ghc-option=-optl=-lcrypto"
 
-                          "--ghc-option=-optl=-L${pkgs.pkgsStatic.postgresql.dev}/lib"
+                          "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.postgresql_17.dev}/lib"
                           "--ghc-option=-optl=-lpgcommon"
                           "--ghc-option=-optl=-lpgport"
                         ];

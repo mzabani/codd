@@ -208,8 +208,7 @@
         "hpc-coveralls": "hpc-coveralls",
         "iserv-proxy": "iserv-proxy",
         "nixpkgs": [
-          "haskellNix",
-          "nixpkgs-unstable"
+          "nixpkgs"
         ],
         "nixpkgs-2305": "nixpkgs-2305",
         "nixpkgs-2311": "nixpkgs-2311",
@@ -437,6 +436,22 @@
         "type": "github"
       }
     },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1740244699,
+        "narHash": "sha256-kJ+unlAldxvRIyYbXPvkMeS8OEMs9a0pFQgdhJkO+S0=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "51b93f39abfb9e566dba11b5e57e00d3e18357e8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "51b93f39abfb9e566dba11b5e57e00d3e18357e8",
+        "type": "github"
+      }
+    },
     "nixpkgs-2305": {
       "locked": {
         "lastModified": 1705033721,
@@ -539,10 +554,7 @@
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
         "haskellNix": "haskellNix",
-        "nixpkgs": [
-          "haskellNix",
-          "nixpkgs-2411"
-        ]
+        "nixpkgs": "nixpkgs"
       }
     },
     "stackage": {
