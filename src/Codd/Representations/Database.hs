@@ -1,6 +1,5 @@
 module Codd.Representations.Database
-  ( queryServerMajorAndFullVersion,
-    readSchemaFromDatabase,
+  ( readSchemaFromDatabase,
     readRepresentationsFromDbWithSettings,
     readRepsFromDbWithNewTxn,
   )
@@ -15,7 +14,7 @@ import Codd.Query
   ( InTxn,
     InTxnT,
     NotInTxn,
-    unsafeQuery1,
+    queryServerMajorAndFullVersion,
     withTransaction,
   )
 import Codd.Representations.Database.Model
@@ -35,7 +34,8 @@ import Codd.Representations.Database.SqlGen
   )
 import Codd.Representations.Types
 import Codd.Types
-  ( SchemaAlgo,
+  ( PgMajorVersion (..),
+    SchemaAlgo,
     SchemaSelection,
     SqlRole (..),
   )
@@ -44,7 +44,6 @@ import Control.Monad
     void,
   )
 import Data.Aeson (Value)
-import qualified Data.Attoparsec.Text as Parsec
 import Data.Hashable
 import Data.List (foldl')
 import Data.List.NonEmpty (NonEmpty (..))
@@ -274,15 +273,6 @@ queryInPiecesToQueryFrag QueryInPieces {..} =
       (Nothing, Just w2) -> Just w2
       (Just w1, Just w2) -> Just $ parens w1 <> " AND " <> parens w2
 
-queryServerMajorAndFullVersion :: (MonadIO m) => DB.Connection -> m (Int, Int)
-queryServerMajorAndFullVersion conn = do
-  strVersion :: Text <-
-    DB.fromOnly <$> unsafeQuery1 conn "SHOW server_version_num" ()
-  case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) strVersion of
-    Left _ ->
-      error $ "Non-integral server_version_num: " <> show strVersion
-    Right (numVersion :: Int) -> pure (numVersion `div` 10000, numVersion)
-
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
 readRepsFromDbWithNewTxn ::
@@ -307,42 +297,42 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
           (SqlRole . Text.pack . DB.connectUser $ migsConnString)
             : extraRolesToCheck
     case majorVersion of
-      12 ->
+      PgMajorVersion 12 ->
         readSchemaFromDatabase
           Pg12.objRepQueryFor
           conn
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
-      13 ->
+      PgMajorVersion 13 ->
         readSchemaFromDatabase
           Pg13.objRepQueryFor
           conn
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
-      14 ->
+      PgMajorVersion 14 ->
         readSchemaFromDatabase
           Pg14.objRepQueryFor
           conn
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
-      15 ->
+      PgMajorVersion 15 ->
         readSchemaFromDatabase
           Pg15.objRepQueryFor
           conn
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
-      16 ->
+      PgMajorVersion 16 ->
         readSchemaFromDatabase
           Pg16.objRepQueryFor
           conn
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
-      17 ->
+      PgMajorVersion 17 ->
         readSchemaFromDatabase
           ( Pg17.objRepQueryFor
               fullVersion
@@ -352,7 +342,7 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
           rolesToCheck
           schemaAlgoOpts
       v
-        | v < 12 ->
+        | v < PgMajorVersion 12 ->
             error $
               "Unsupported PostgreSQL version "
                 ++ show majorVersion

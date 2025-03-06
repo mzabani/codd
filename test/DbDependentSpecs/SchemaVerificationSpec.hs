@@ -17,7 +17,7 @@ import Codd.Parsing
     hoistAddedSqlMigration,
     parseSqlMigration,
   )
-import Codd.Query (unsafeQuery1)
+import Codd.Query (queryServerMajorAndFullVersion, unsafeQuery1)
 import Codd.Representations
   ( DbRep (..),
     DiffType (..),
@@ -25,14 +25,10 @@ import Codd.Representations
     schemaDifferences,
   )
 import Codd.Representations.Database
-  ( queryServerMajorAndFullVersion,
-    readRepsFromDbWithNewTxn,
+  ( readRepsFromDbWithNewTxn,
   )
 import Codd.Representations.Types (ObjName (..))
-import Codd.Types
-  ( SchemaAlgo (..),
-    SchemaSelection (..),
-  )
+import Codd.Types (PgMajorVersion (..), SchemaAlgo (..), SchemaSelection (..))
 import Control.Monad
   ( foldM,
     forM,
@@ -156,10 +152,10 @@ migrationsForPgDumpRestoreTest =
 migrationsAndRepChange ::
   forall m.
   (MonadThrow m, EnvVars m) =>
-  Int ->
+  PgMajorVersion ->
   Int ->
   m [(MU (AddedSqlMigration m), DbChange)]
-migrationsAndRepChange pgVersion pgFullVersion =
+migrationsAndRepChange (PgMajorVersion pgVersion) pgFullVersion =
   zipWithM
     ( \(MU doSql undoSql, c) i -> do
         mig <-
@@ -1402,7 +1398,7 @@ spec = do
                         )
                   )
               <*> pure (getIncreasingTimestamp 0)
-          (pgVersion, _) <-
+          (PgMajorVersion pgVersion, _) <-
             withConnection
               (migsConnString emptyTestDbInfo)
               testConnTimeout
