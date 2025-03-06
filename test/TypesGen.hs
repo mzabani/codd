@@ -1,6 +1,7 @@
 module TypesGen where
 
 import Codd.Representations
+import Codd.Types (PgMajorVersion (..))
 import Data.Function (on)
 import Data.List (nubBy)
 import Data.Map.Strict (Map)
@@ -8,15 +9,17 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Test.QuickCheck
 
-newtype DbRepsGen = DbRepsGen {unDbRepsGen :: DbRep} deriving stock (Show)
+data DbRepsGen = DbRepsGen {unDbRepsGen :: DbRep, pgVersion :: PgMajorVersion} deriving stock (Show)
 
 instance Arbitrary DbRepsGen where
   arbitrary =
-    fmap DbRepsGen $
-      DbRep
-        <$> arbitrary
-        <*> uniqueMapOf 3 schemaHashGen objName
-        <*> uniqueMapOf 2 roleHashGen objName
+    let repsGen =
+          DbRep
+            <$> arbitrary
+            <*> uniqueMapOf 3 schemaHashGen objName
+            <*> uniqueMapOf 2 roleHashGen objName
+        versionGen = PgMajorVersion <$> arbitrary
+     in DbRepsGen <$> repsGen <*> versionGen
     where
       schemaHashGen =
         SchemaRep

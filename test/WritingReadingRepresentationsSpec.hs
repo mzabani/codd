@@ -6,6 +6,7 @@ import Codd.Representations
     readRepsFromDisk,
     schemaDifferences,
   )
+import Codd.Types (PgMajorVersion)
 import qualified Data.Map as Map
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -32,24 +33,24 @@ spec :: Spec
 spec = do
   describe "Writing and reading representations" $ do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
-      property $ \(DbRepsGen dbHashes) -> do
+      property $ \(DbRepsGen dbHashes pgVersion) -> do
         -- /dev/shm is shared memory so should be faster, if it exists (MacOS doesn't have it)
         shmExists <- doesDirectoryExist "/dev/shm"
         let baseFolder = if shmExists then "/dev/shm" else "/tmp"
-        writeSchemaAndReadSchemaRoundtrip dbHashes (baseFolder </> "inverse-test-sql-folder")
+        writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes (baseFolder </> "inverse-test-sql-folder")
     modifyMaxSuccess (const 1)
       $ it
         "persistRepsToDisk works when expected schema dir does not exist"
       $ do
-        property $ \(DbRepsGen dbHashes) -> do
+        property $ \(DbRepsGen dbHashes pgVersion) -> do
           tempDir <- getEmptyTempDir
           let expectedSchemaDir = tempDir </> "parentfolder/expected-schema"
-          writeSchemaAndReadSchemaRoundtrip dbHashes expectedSchemaDir
+          writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes expectedSchemaDir
     modifyMaxSuccess (const 1)
       $ it
         "persistRepsToDisk works even when expected schema dir parent has difficult permissions"
       $ do
-        property $ \(DbRepsGen dbHashes) -> do
+        property $ \(DbRepsGen dbHashes pgVersion) -> do
           tempDir <- getEmptyTempDir
           let expectedSchemaDir = tempDir </> "badfolder/badsubfolder/expected-schema"
           createDirectoryIfMissing True expectedSchemaDir
@@ -57,29 +58,32 @@ spec = do
           setPermissions (tempDir </> "badfolder/badsubfolder") permsNoWrite
           setPermissions (tempDir </> "badfolder") permsNoWrite
           writeSchemaAndReadSchemaRoundtrip
+            pgVersion
             dbHashes
             expectedSchemaDir
     modifyMaxSuccess (const 1)
       $ it
         "persistRepsToDisk preserves symlinks"
       $ do
-        property $ \(DbRepsGen dbHashes) -> do
+        property $ \(DbRepsGen dbHashes pgVersion) -> do
           tempDir <- getEmptyTempDir
           let realExpectedSchemaDir = tempDir </> "real-expected-schema"
               linkToSchemaDir = tempDir </> "link-to-schema-dir"
           createDirectoryIfMissing True realExpectedSchemaDir
           createDirectoryLink realExpectedSchemaDir linkToSchemaDir
           writeSchemaAndReadSchemaRoundtrip
+            pgVersion
             dbHashes
             linkToSchemaDir
           pathIsSymbolicLink linkToSchemaDir `shouldReturn` True
           getSymbolicLinkTarget linkToSchemaDir `shouldReturn` realExpectedSchemaDir
 
-writeSchemaAndReadSchemaRoundtrip :: DbRep -> FilePath -> IO ()
-writeSchemaAndReadSchemaRoundtrip dbReps expectedSchemaDir = do
-  persistRepsToDisk dbReps expectedSchemaDir
+writeSchemaAndReadSchemaRoundtrip :: PgMajorVersion -> DbRep -> FilePath -> IO ()
+writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
+  persistRepsToDisk pgVersion dbReps expectedSchemaDir
   readDbSchema <-
     readRepsFromDisk
+      pgVersion
       expectedSchemaDir
   let diffs = schemaDifferences dbReps readDbSchema
   diffs `shouldBe` Map.empty
