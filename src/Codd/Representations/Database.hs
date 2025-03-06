@@ -1,5 +1,5 @@
 module Codd.Representations.Database
-  ( queryServerMajorVersion,
+  ( queryServerMajorAndFullVersion,
     readSchemaFromDatabase,
     readRepresentationsFromDbWithSettings,
     readRepsFromDbWithNewTxn,
@@ -28,6 +28,7 @@ import qualified Codd.Representations.Database.Pg13 as Pg13
 import qualified Codd.Representations.Database.Pg14 as Pg14
 import qualified Codd.Representations.Database.Pg15 as Pg15
 import qualified Codd.Representations.Database.Pg16 as Pg16
+import qualified Codd.Representations.Database.Pg17 as Pg17
 import Codd.Representations.Database.SqlGen
   ( interspBy,
     parens,
@@ -273,14 +274,14 @@ queryInPiecesToQueryFrag QueryInPieces {..} =
       (Nothing, Just w2) -> Just w2
       (Just w1, Just w2) -> Just $ parens w1 <> " AND " <> parens w2
 
-queryServerMajorVersion :: (MonadIO m) => DB.Connection -> m Int
-queryServerMajorVersion conn = do
+queryServerMajorAndFullVersion :: (MonadIO m) => DB.Connection -> m (Int, Int)
+queryServerMajorAndFullVersion conn = do
   strVersion :: Text <-
     DB.fromOnly <$> unsafeQuery1 conn "SHOW server_version_num" ()
   case Parsec.parseOnly (Parsec.decimal <* Parsec.endOfInput) strVersion of
     Left _ ->
       error $ "Non-integral server_version_num: " <> show strVersion
-    Right (numVersion :: Int) -> pure $ numVersion `div` 10000
+    Right (numVersion :: Int) -> pure (numVersion `div` 10000, numVersion)
 
 -- | Like `readRepresentationsFromDbWithSettings` but starts a new transaction. Should not
 -- be called if already inside a transaction.
@@ -301,7 +302,7 @@ readRepresentationsFromDbWithSettings ::
   m DbRep
 readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesToCheck, schemaAlgoOpts, extraRolesToCheck} conn =
   do
-    majorVersion <- queryServerMajorVersion conn
+    (majorVersion, fullVersion) <- queryServerMajorAndFullVersion conn
     let rolesToCheck =
           (SqlRole . Text.pack . DB.connectUser $ migsConnString)
             : extraRolesToCheck
@@ -341,6 +342,15 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
           namespacesToCheck
           rolesToCheck
           schemaAlgoOpts
+      17 ->
+        readSchemaFromDatabase
+          ( Pg17.objRepQueryFor
+              fullVersion
+          )
+          conn
+          namespacesToCheck
+          rolesToCheck
+          schemaAlgoOpts
       v
         | v < 12 ->
             error $
@@ -352,7 +362,7 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
                 <> Text.pack (show majorVersion)
                 <> " may be supported by codd. Please file an issue for us to support this newer version properly."
             readSchemaFromDatabase
-              Pg16.objRepQueryFor
+              (Pg17.objRepQueryFor fullVersion)
               conn
               namespacesToCheck
               rolesToCheck
