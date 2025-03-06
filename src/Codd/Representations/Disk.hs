@@ -6,6 +6,7 @@ module Codd.Representations.Disk
 where
 
 import Codd.Representations.Types
+import Codd.Types (PgMajorVersion (..))
 import Control.DeepSeq (force)
 import Control.Monad
   ( forM,
@@ -176,11 +177,12 @@ toFiles = sortOn fst . frec
     prependDir dir = map (first (dir </>))
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
-persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => DbRep -> FilePath -> m ()
-persistRepsToDisk dbSchema schemaDir =
+persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => PgMajorVersion -> DbRep -> FilePath -> m ()
+persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
   maybeAtomicallyReplaceSchemaFolder $ \tempDir -> do
     liftIO $ writeRec tempDir dbSchema
   where
+    schemaDir = schemaDirBeforeVersions </> show pgVersion
     -- \| Allows the caller to wipe and replace a folder with new contents as atomically
     -- as the user's permissions will let us. That is, the supplied callback should write
     -- to the path it's supplied with as if it were the target folder, and after this finishes
@@ -352,12 +354,18 @@ readMultiple dir f = do
   where
     checkDoesNotExist (e :: IOError) = if isDoesNotExistError e then pure (Left ()) else throwIO e
 
-readRepsFromDisk :: (MonadUnliftIO m) => FilePath -> m DbRep
-readRepsFromDisk dir =
-  DbRep
-    <$> readFileRep (dir </> "db-settings")
-    <*> readMultiple (dir </> "schemas") readNamespaceRep
-    <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
+readRepsFromDisk ::
+  (MonadUnliftIO m) =>
+  PgMajorVersion ->
+  -- | The path of CODD_EXPECTED_SCHEMA_DIR, without any major version numbers
+  FilePath ->
+  m DbRep
+readRepsFromDisk pgVersion schemaDir =
+  let dir = schemaDir </> show pgVersion
+   in DbRep
+        <$> readFileRep (dir </> "db-settings")
+        <*> readMultiple (dir </> "schemas") readNamespaceRep
+        <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
 
 whenM :: (Monad m) => m Bool -> m () -> m ()
 whenM s r = s >>= flip when r

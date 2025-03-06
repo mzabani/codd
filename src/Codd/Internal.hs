@@ -41,7 +41,7 @@ import           Codd.Query                     ( CanStartTxn
                                                 , queryMay
                                                 , txnStatus
                                                 , unsafeQuery1
-                                                , withTransaction
+                                                , withTransaction, queryServerMajorAndFullVersion
                                                 )
 import           Codd.Representations           ( DbRep
                                                 , logSchemasComparison
@@ -1244,7 +1244,8 @@ strictCheckLastAction
     -> ([BlockOfMigrations m] -> DB.Connection -> m DbRep)
 strictCheckLastAction coddSettings@CoddSettings {onDiskReps} blocksOfMigs conn = do
     -- Concurrency barely improves performance here, but why not do it?
-    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either readRepsFromDisk pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
+    (pgMajorVer, _) <- queryServerMajorAndFullVersion conn
+    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either (readRepsFromDisk pgMajorVer) pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
     unless (isOneShotApplication (migsConnString coddSettings) blocksOfMigs)
         $ do
               logWarn
@@ -1264,7 +1265,8 @@ laxCheckLastAction
     -> ([BlockOfMigrations m] -> DB.Connection -> m (DbRep, DbRep))
 laxCheckLastAction coddSettings@CoddSettings {onDiskReps} _blocksOfMigs conn = do
     -- Concurrency barely improves performance here, but why not do it?
-    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either readRepsFromDisk pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
+    (pgMajorVer, _) <- queryServerMajorAndFullVersion conn
+    (expectedReps, dbReps) <- runConcurrently $ (,) <$> Concurrently (either (readRepsFromDisk pgMajorVer) pure onDiskReps) <*> Concurrently (readRepresentationsFromDbWithSettings coddSettings conn)
     logSchemasComparison dbReps expectedReps
     pure (dbReps, expectedReps)
 
