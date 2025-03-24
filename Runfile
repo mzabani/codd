@@ -35,8 +35,12 @@ ci-tests:
     run test-with-db --nix --pg 13
     run test-with-db --nix --pg 12
 
-    echo "Running system-resources test"
-    run test-system-resources --nix
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "Running system-resources test"
+        run test-system-resources --nix
+    else
+        echo "Skipping system-resources test as strace is only available on Linux"
+    fi
 
 ##
 # Formats all Haskell files with fourmolu.

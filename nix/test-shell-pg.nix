@@ -15,7 +15,7 @@ in pkgs.mkShell {
     export PGDATA="${pgDataDir}"
     export PGDATABASE="postgres"
     export PGPORT="5434"
-    export PGHOST="127.0.0.1"
+    export PGHOST="/tmp"
     export PGUSER="postgres"
     ${postgres-service}/bin/init-postgres
   '';

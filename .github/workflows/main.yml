@@ -125,7 +125,7 @@ jobs:
       run: nix build --no-link ".#codd:test:codd-test"
 
     - name: Run tests
-      run: nix develop .#shellWithRunfile -c run test-no-db --nix
+      run: nix develop .#shellWithRunfile -c run ci-tests
 
     - name: Create macOS app bundle
       run: |
