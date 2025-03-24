@@ -61,6 +61,7 @@ import Control.Applicative
 import Control.Monad
   ( forM_,
     guard,
+    unless,
     void,
     when,
   )
@@ -775,10 +776,8 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
   case parseURI (Text.unpack line) of
     Nothing -> throwE "Connection string is not a URI"
     Just URI {..} -> do
-      when
-        ( Text.toLower (Text.pack uriScheme)
-            `notElem` ["postgres:", "postgresql:"]
-        )
+      unless
+        (Text.toLower (Text.pack uriScheme) `elem` ["postgres:", "postgresql:"])
         $ throwE
           "Connection string's URI scheme must be 'postgres' or 'postgresql'"
       case uriAuthority of

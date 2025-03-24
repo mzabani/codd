@@ -7,7 +7,6 @@ let
   ls = "${pkgs.coreutils}/bin/ls";
   echo = "${pkgs.coreutils}/bin/echo";
   cat = "${pkgs.coreutils}/bin/cat";
-  postgresql_conf = ../conf/postgresql.conf;
 in utils.writeShellScriptInBinFolder "init-postgres" ''
   ${if wipeCluster == true then "rm -rf $PGDATA" else ""}
   mkdir -p "$PGDATA"
@@ -27,10 +26,12 @@ in utils.writeShellScriptInBinFolder "init-postgres" ''
         ${echo} Postgres already initialized.
     else
         echo All good, initializing postgres.
-        ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
+        ${cat} ${../conf/postgresql.conf} > $PGDATA/postgresql.conf
+        ${cat} ${../conf/pg_hba.conf} > $PGDATA/pg_hba.conf
         ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
     fi
   '' else ''
-    ${cat} ${postgresql_conf} > $PGDATA/postgresql.conf
+    ${cat} ${../conf/postgresql.conf} > $PGDATA/postgresql.conf
+    ${cat} ${../conf/pg_hba.conf} > $PGDATA/pg_hba.conf
   ''}
 ''
