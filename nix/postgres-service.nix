@@ -13,7 +13,7 @@ in utils.writeShellScriptInBinFolder "init-postgres" ''
   if [ -d "$PGDATA" ] && [ "$(${ls} -A $PGDATA/*)" ]; then
       ${echo} Postgres datadir not empty. Considering it initialized.
   else
-      ${postgres}/bin/initdb --locale=C.UTF8 -E UTF8 -U postgres $PGDATA
+      ${postgres}/bin/initdb --locale=C -E UTF8 -U postgres $PGDATA
   fi
 
   ${if initializePostgres then ''
