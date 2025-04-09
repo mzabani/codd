@@ -16,12 +16,12 @@ in utils.writeShellScriptInBinFolder "init-postgres" ''
       ${postgres}/bin/initdb --locale=C.UTF8 -E UTF8 -U postgres $PGDATA
   fi
 
-  set +e
-  ${postgres}/bin/pg_ctl status -D $PGDATA -p ${postgres}/bin/postgres
-  PGCTLSTATUS=$?
-  set -e
-
   ${if initializePostgres then ''
+    set +e
+    ${postgres}/bin/pg_ctl status -D $PGDATA -p ${postgres}/bin/postgres
+    PGCTLSTATUS=$?
+    set -e
+
     if [ "$PGCTLSTATUS" -eq "0" ]; then
         ${echo} Postgres already initialized.
     else
@@ -29,6 +29,19 @@ in utils.writeShellScriptInBinFolder "init-postgres" ''
         ${cat} ${../conf/postgresql.conf} > $PGDATA/postgresql.conf
         ${cat} ${../conf/pg_hba.conf} > $PGDATA/pg_hba.conf
         ${postgres}/bin/postgres -D $PGDATA -p $PGPORT &
+
+        # Wait up to 10 seconds until postgres is initialized
+        timeout=10
+        for ((i=0; i<timeout; i++)); do
+            set +e
+            ${postgres}/bin/pg_ctl status -D $PGDATA -p ${postgres}/bin/postgres
+            PGCTLSTATUS=$?
+            set -e
+            if [ $PGCTLSTATUS -eq 0 ]; then
+                break
+            fi
+            sleep 1
+        done
     fi
   '' else ''
     ${cat} ${../conf/postgresql.conf} > $PGDATA/postgresql.conf
