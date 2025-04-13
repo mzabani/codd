@@ -9,7 +9,6 @@ let
 in pkgs.mkShell {
   buildInputs = [ postgres postgres-service pkgs.glibcLocales pkgs.run ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.strace ];
   description = "Test shell with postgres available and initializing";
-  LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
   shellHook = ''
     set -e
     echo Going to initialize Postgres..
