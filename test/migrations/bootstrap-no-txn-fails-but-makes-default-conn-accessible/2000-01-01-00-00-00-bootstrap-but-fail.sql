@@ -1,5 +1,5 @@
 -- codd: no-txn
--- codd-connection: dbname=postgres host=127.0.0.1 user=postgres port=5434
+-- codd-connection: dbname=postgres host=/tmp user=postgres port=5434
 -- This migration is used in our retry policy tests
 
 -- The CREATE TABLE statements ensure we're rolling back and retrying properly, or else they will fail due to

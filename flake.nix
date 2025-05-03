@@ -26,12 +26,6 @@
           inherit (haskellNix) config;
         };
 
-        postgres-service = import ./nix/postgres-service.nix {
-          postgres = pkgs.postgresql_16;
-          inherit pkgs;
-          initializePostgres = false;
-          wipeCluster = false;
-        };
         overlays = [
           haskellNix.overlay
           (final: prev:
@@ -105,24 +99,25 @@
                         ghcid
                         glibcLocales
                         hyperfine
-                        postgres-service
                         postgresql_16
+                        nix-prefetch-docker
+                        podman
                         run
                         shellcheck
                       ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
                     shell.shellHook = ''
                       source scripts/source-env.sh .env
-
-                      # init-postgres doesn't actually work with direnv. I tried to daemonize starting postgres but was not able
-                      # to make it work. See https://github.com/direnv/direnv/issues/755
-                      init-postgres
-
-                      echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
-                      echo If 'psql' fails to connect, check logs at $PGDATA/log/
-
+                      
                       # Postgres 15 insists in appearing in PATH before postgres 16.
                       # So we add postgres 16 _again_ to the beginning of the PATH, and also some useful scripts
                       export PATH="${pkgs.postgresql_16}/bin:$PATH:scripts/path"
+
+                      # Starting doesn't actually work with direnv. I tried to daemonize starting postgres but was not able
+                      # to make it work. See https://github.com/direnv/direnv/issues/755
+                      ./scripts/init-pg-cluster.sh ./conf
+
+                      echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
+                      echo If 'psql' fails to connect, check logs at $PGDATA/log/
                     '';
                     # This adds `js-unknown-linux-musl` to the shell.
                     # shell.crossPlatforms = p: [ p.musl64 ];
@@ -165,6 +160,11 @@
           codd-exe =
             flakeDefault.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
+
+        # pgserv = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_16; inherit pkgs; };
+
+        # TODO: use musl libc test binary on Linux
+        testsPg16 = import ./nix/run-db-tests.nix { inherit pkgs; postgres = pkgs.postgresql_16; coddtests = flakeDefault.packages."codd:test:codd-test"; };
 
         coddDarwinAppBundle = with pkgs;
           import ./nix/codd-darwin-bundle.nix {

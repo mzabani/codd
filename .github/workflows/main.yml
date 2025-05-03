@@ -70,6 +70,9 @@ jobs:
         codd --help
         nix-env --uninstall codd
 
+    - name: Run tests (new)
+      run: nix build --no-link .#testsPg16.x86_64-linux
+
     - name: Run tests
       run: nix develop .#shellWithRunfile -c run ci-tests
 
@@ -127,8 +130,8 @@ jobs:
     - name: Build codd's tests
       run: nix build --no-link ".#codd:test:codd-test"
 
-    - name: Run tests
-      run: nix develop .#shellWithRunfile -c run ci-tests
+    - name: Run tests (new)
+      run: nix build --no-link .#testsPg16.x86_64-linux
 
     - name: Create macOS app bundle
       run: |
