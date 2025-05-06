@@ -96,16 +96,13 @@ test-with-db:
     NIXDEVARGS=() && [ -n "$NIX" ] && NIXDEVARGS=(-i)
     TARGS=(--match /DbDependentSpecs/) && [ -n "$1" ] && TARGS=("$@")
 
-    # Build the test executable only once with Nix
-    if [ -n "$NIX" ]; then
-        TARGET=".#x86_64-unknown-linux-musl:codd:test:codd-test"
-        [[ "$(uname -s)" == *"Darwin"* ]] && TARGET=".#codd:test:codd-test"
-        nix build "$TARGET" -o local/codd-test
-    fi
-    
     for pg in "${PG[@]}"; do
         echo "Running tests on Postgres $pg"
-        nix develop ".#pg${pg}" "${NIXDEVARGS[@]}" -c run test-with-db-internal "${NIXA[@]}" -- "${TARGS[@]}"
+        if [ -n "$NIX" ]; then
+            nix build --no-link ".#testsPg${pg}"
+        else
+            nix develop ".#pg${pg}" "${NIXDEVARGS[@]}" -c run test-with-db-internal "${NIXA[@]}" -- "${TARGS[@]}"
+        fi
     done
 
 ##

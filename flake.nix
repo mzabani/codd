@@ -137,7 +137,7 @@
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
 
-        coddtests = if pkgs.stdenv.isDarwin then flakeDefault.packages."codd:test:codd-test" else flakeDefault.packages."x86_64-unknown-linux-musl:codd:test:codd-test";
+        coddtests = if pkgs.stdenv.isDarwin then flakeDefault.packages."codd:test:codd-test".system else flakeDefault.packages."x86_64-unknown-linux-musl:codd:test:codd-test";
       in flakeDefault // {
         # Built by `nix build .`
         defaultPackage = flakeDefault.packages."codd:exe:codd";
