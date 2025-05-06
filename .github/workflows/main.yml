@@ -30,9 +30,8 @@ jobs:
       with:
         tool-cache: true
     
-    - uses: cachix/install-nix-action@v24
+    - uses: cachix/install-nix-action@526118121621777ccd86f79b04685a9319637641 # 31.3.30
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
@@ -104,9 +103,8 @@ jobs:
           ls /Applications
           df -h
     
-    - uses: cachix/install-nix-action@v24
+    - uses: cachix/install-nix-action@526118121621777ccd86f79b04685a9319637641 # 31.3.30
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io

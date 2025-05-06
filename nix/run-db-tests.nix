@@ -18,12 +18,14 @@ in
       export PGHOST="/tmp"
       export PGUSER="postgres"
       scripts/init-pg-cluster.sh ./conf
-      pg_ctl -l "$out/postgres.log" start
+      pg_ctl -l "$out/pg_ctl_init.log" start
       echo After pg_ctl
       scripts/wait-for-pg-ready.sh
-      # This isn't deterministic due to randomised testing, so we're really
-      # abusing Nix's sandbox here, but it makes life a lot easier.
+      # This isn't deterministic due to randomised testing and timing
+      # information in the output, so we're really
+      # abusing Nix's sandbox here, but it does makes life a lot easier.
       ${coddtests}/bin/codd-test --match /DbDependentSpecs/ 2>&1 | tee "$out/haskell-tests.log"
       pg_ctl stop
+      cp -R "$PGDATA/log" "$out/pglogs"
     '';
   }

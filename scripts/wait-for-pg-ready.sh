@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-pg_ctl status -D "$PGDATA" -p "$(which postgres)" || PGCTLSTATUS=$?
+pg_ctl status -D "$PGDATA" || PGCTLSTATUS=$?
 
 if [ "$PGCTLSTATUS" -eq "0" ]; then
   echo Postgres already initialized.
@@ -12,7 +12,7 @@ else
   timeout=10
   for ((i=0; i<timeout; i++)); do
       set +e
-      pg_ctl status -D "$PGDATA" -p "$(which postgres)"
+      pg_ctl status -D "$PGDATA"
       PGCTLSTATUS=$?
       set -e
       if [ $PGCTLSTATUS -eq 0 ]; then

@@ -136,6 +136,8 @@
           # The mingwW64 build still fails, IIRC.
           crossPlatforms = p: [ p.musl64 p.mingwW64 ];
         };
+
+        coddtests = if pkgs.stdenv.isDarwin then flakeDefault.packages."codd:test:codd-test" else flakeDefault.packages."x86_64-unknown-linux-musl:codd:test:codd-test";
       in flakeDefault // {
         # Built by `nix build .`
         defaultPackage = flakeDefault.packages."codd:exe:codd";
@@ -161,10 +163,12 @@
             flakeDefault.packages."x86_64-unknown-linux-musl:codd:exe:codd";
         };
 
-        # pgserv = import ./nix/postgres-service.nix { postgres = pkgs.postgresql_16; inherit pkgs; };
-
-        # TODO: use musl libc test binary on Linux
-        testsPg16 = import ./nix/run-db-tests.nix { inherit pkgs; postgres = pkgs.postgresql_16; coddtests = flakeDefault.packages."codd:test:codd-test"; };
+        testsPg12 = import ./nix/run-db-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_12; };
+        testsPg13 = import ./nix/run-db-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_13; };
+        testsPg14 = import ./nix/run-db-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_14; };
+        testsPg15 = import ./nix/run-db-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_15; };
+        testsPg16 = import ./nix/run-db-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_16; };
+        testsNoDb = import ./nix/run-no-db-tests.nix { inherit pkgs coddtests; };
 
         coddDarwinAppBundle = with pkgs;
           import ./nix/codd-darwin-bundle.nix {
