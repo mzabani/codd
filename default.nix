@@ -1,7 +1,7 @@
 let
   pkgs = import ./nix/nixpkgs.nix;
 
-  proj = pkgs.haskell-nix.stackProject' {
+  project = pkgs.haskell-nix.stackProject' {
     src = ./.;
     stackYaml = "stack.yaml";
     compiler-nix-name = "ghc965";
@@ -14,7 +14,7 @@ let
 
           # Work around https://github.com/input-output-hk/haskell.nix/issues/231. More info
           # in codd.cabal
-          packages.codd.components.tests.codd-test.build-tools = [ proj.hsPkgs.hspec-discover ];
+          packages.codd.components.tests.codd-test.build-tools = [ project.hsPkgs.hspec-discover ];
         }
       ]
       ++ (
@@ -62,5 +62,25 @@ let
           ]
       );
   };
+  # TODO: When on Linux, make coddtests and coddbenchmarks be the musl build
+  coddtests = project.hsPkgs.codd.components.tests.codd-test;
+  coddbenchmarks = project.hsPkgs.codd.components.benchmarks.codd-bench;
 in
-proj
+{
+  inherit project;
+  inherit coddbenchmarks;
+  testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_16; };
+  testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_15; };
+  testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_14; };
+  testsPg13 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_13; };
+  testsPg12 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_12; };
+  testsNoDb = { hspecArgs ? "--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/" }: import ./nix/run-no-db-tests.nix { inherit pkgs coddtests hspecArgs; };
+  testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_16; };
+
+  # Shells with specific-versioned postgres servers to run tests locally
+  shellPg16 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_16; };
+  shellPg15 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_15; };
+  shellPg14 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_14; };
+  shellPg13 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_13; };
+  shellPg12 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_12; };
+}

@@ -1,22 +1,18 @@
-{ pkgs, postgres, pgDataDir }:
-let
-  postgres-service = import ./postgres-service.nix {
-    inherit postgres;
-    inherit pkgs;
-    initializePostgres = true;
-    wipeCluster = true;
-  };
-in pkgs.mkShell {
-  buildInputs = [ postgres postgres-service pkgs.glibcLocales pkgs.run ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.strace ];
+{ pkgs, postgres }:
+pkgs.mkShell {
+  buildInputs = [ postgres pkgs.coreutils pkgs.bash pkgs.glibcLocales pkgs.run ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.strace ];
   description = "Test shell with postgres available and initializing";
   shellHook = ''
-    set -e
-    echo Going to initialize Postgres..
-    export PGDATA="${pgDataDir}"
+    set -eo pipefail
+
+    export PGDATA="$(mktemp -d)"
     export PGDATABASE="postgres"
     export PGPORT="5434"
     export PGHOST="/tmp"
     export PGUSER="postgres"
-    ${postgres-service}/bin/init-postgres
+    trap "pg_ctl stop" EXIT ERR
+    scripts/init-pg-cluster.sh ./conf
+    pg_ctl start
+    scripts/wait-for-pg-ready.sh
   '';
 }

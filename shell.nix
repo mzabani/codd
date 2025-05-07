@@ -1,6 +1,6 @@
 { }:
 let
-  project = import ./default.nix;
+  project = (import ./default.nix).project;
   pkgs = import ./nix/nixpkgs.nix;
 in
 project.shellFor {

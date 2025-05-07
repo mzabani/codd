@@ -1,13 +1,13 @@
-{ postgres, pkgs, coddtests, hspecArgs }:
+{ postgres, pkgs, coddtests }:
 let fs = pkgs.lib.fileset;
 in
  pkgs.stdenv.mkDerivation {
-     name = "codd-test-with-db-results";
+     name = "codd-test-system-resources-results";
      src = fs.toSource {
       root = ../.;
-      fileset = fs.unions [ ../conf ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
+      fileset = fs.unions [ ../conf ../expected-schema ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
      };
-     nativeBuildInputs = [ postgres pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
+     nativeBuildInputs = [ postgres pkgs.strace pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
      installPhase = ''
       patchShebangs scripts/*.sh
       mkdir "$out"
@@ -24,8 +24,11 @@ in
       # This isn't deterministic due to randomised testing and timing
       # information in the output, so we're really
       # abusing Nix's sandbox here, but it does makes life a lot easier.
-      ${coddtests}/bin/codd-test ${hspecArgs} 2>&1 | tee "$out/haskell-tests.log"
+      strace -f -e openat,open,close -o /tmp/strace-codd-system-resources-test.log \
+       ${coddtests}/bin/codd-test --match "/SystemResourcesSpecs/RUNNING" 2>&1 | tee "$out/tests-RUNNING-phase.log"
       pg_ctl stop
+      ${coddtests}/bin/codd-test --match "/SystemResourcesSpecs/CHECKING" 2>&1 | tee "$out/tests-CHECKING-phase.log"
+      cp /tmp/strace-codd-system-resources-test.log "$out/strace-codd-system-resources-test.log"
       cp -R "$PGDATA/log" "$out/pglogs"
     '';
   }
