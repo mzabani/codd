@@ -1,6 +1,5 @@
+{ pkgs ? import ./nix/nixpkgs.nix }:
 let
-  pkgs = import ./nix/nixpkgs.nix;
-
   project = pkgs.haskell-nix.stackProject' {
     src = ./.;
     stackYaml = "stack.yaml";
@@ -62,13 +61,13 @@ let
           ]
       );
   };
-  # TODO: When on Linux, make coddtests and coddbenchmarks be the musl build
+  coddexe = project.hsPkgs.codd.components.exes.codd;
   coddtests = project.hsPkgs.codd.components.tests.codd-test;
   coddbenchmarks = project.hsPkgs.codd.components.benchmarks.codd-bench;
 in
 {
   inherit project;
-  inherit coddbenchmarks;
+  inherit coddexe coddtests coddbenchmarks;
   testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_16; };
   testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_15; };
   testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_14; };

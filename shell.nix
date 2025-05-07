@@ -1,7 +1,7 @@
 { }:
 let
-  project = (import ./default.nix).project;
   pkgs = import ./nix/nixpkgs.nix;
+  project = (import ./default.nix { inherit pkgs; }).project;
 in
 project.shellFor {
   tools = {
@@ -40,6 +40,4 @@ project.shellFor {
     echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
     echo If 'psql' fails to connect, check logs at $PGDATA/log/
   '';
-  # This adds `js-unknown-linux-musl` to the shell.
-  crossPlatforms = p: [ p.musl64 ];
 }

@@ -52,13 +52,13 @@ jobs:
     #     key: ${{ runner.os }}-build
 
     - name: Build statically linked codd
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
+      run: nix-build --no-out-link -A coddexe
 
     - name: Build statically linked codd's tests
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
+      run: nix-build --no-out-link -A coddtests
 
     - name: Build statically linked benchmarks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+      run: nix-build --no-out-link -A coddbenchmarks
 
     - name: Build executable used for installer
       run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
@@ -123,13 +123,13 @@ jobs:
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
-      run: nix build --no-link ".#codd:exe:codd"
+      run: nix-build --no-out-link -A coddexe
 
     - name: Build codd's tests
-      run: nix build --no-link ".#codd:test:codd-test"
+      run: nix-build --no-out-link -A coddtests
 
     - name: Run tests (new)
-      run: nix build --no-link .#testsPg16.x86_64-linux
+      run: nix-build --no-out-link -A testsPg16
 
     - name: Create macOS app bundle
       run: |
