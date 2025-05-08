@@ -1,8 +1,8 @@
-{ codd-exe, macdylibbundler, stdenv, zip }:
-stdenv.mkDerivation {
+{ coddexe, pkgs }:
+pkgs.stdenv.mkDerivation {
   name = "codd.app";
-  buildInputs = [ macdylibbundler zip ];
-  src = codd-exe;
+  buildInputs = with pkgs; [ macdylibbundler zip ];
+  src = coddexe;
   installPhase = ''
     mkdir -p "$out"
     mkdir -p codd.app/Contents/MacOS/

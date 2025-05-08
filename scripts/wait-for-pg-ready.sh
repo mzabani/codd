@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
+set -eo pipefail
+
 pg_ctl status -D "$PGDATA" || PGCTLSTATUS=$?
 
-if [ "$PGCTLSTATUS" -eq "0" ]; then
+if [ "$PGCTLSTATUS" = "0" ]; then
   echo Postgres already initialized.
 else
   echo Initializing postgres.

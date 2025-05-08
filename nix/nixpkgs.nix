@@ -12,4 +12,4 @@ let haskellPatchesOverlay = final: prev: {
   }) {};
   nixpkgsImportArgs = haskellNix.nixpkgsArgs // {overlays = haskellNix.nixpkgsArgs.overlays ++ [haskellPatchesOverlay]; };
 in
-    import haskellNix.sources.nixpkgs-2311 nixpkgsImportArgs
+  import haskellNix.sources.nixpkgs-2311 nixpkgsImportArgs

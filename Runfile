@@ -7,7 +7,7 @@ benchmarks:
     set -eo pipefail
 
     if [ -n "$NIX" ]; then
-        nix-build -A coddbenchmark -o local/codd-bench
+        nix-build -A coddbenchmarks -o local/codd-bench
         ./local/codd-bench/bin/codd-bench
     else
         cabal run -O2 codd-bench
@@ -65,9 +65,9 @@ format-hs:
 # OPTION NIX --nix Run tests in a Nix derivation's sandbox
 test-no-db:
     set -eo pipefail
-    TARGS=( "$@" ) && [ -z "$1" ] && TARGS=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/)
+    TARGS=$(printf "'%s' " "$@") && [ -z "$1" ] && TARGS="--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/"
     if [ -n "$NIX" ]; then
-        nix-build --no-out-link -A testsNoDb --argstr hspecArgs "${TARGS[@]}"
+        nix-build --no-out-link -A testsNoDb --argstr hspecArgs "$TARGS"
     else
         cabal build -O0 codd-test
         `cabal list-bin -O0 codd-test` "${TARGS[@]}"
@@ -82,15 +82,15 @@ test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(16)
     [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
-    TARGS="--match /DbDependentSpecs/" && [ -n "$1" ] && TARGS=$(printf "'%s' " "$@")
-
+    TARGS="--match '/DbDependentSpecs/'" && [ -n "$1" ] && TARGS=$(printf "'%s' " "${@}")
+    
     for pg in "${PG[@]}"; do
         echo "Running tests on Postgres $pg"
         if [ -n "$NIX" ]; then
             nix-build --no-out-link -A "testsPg${pg}" --argstr hspecArgs "$TARGS"
         else
             cabal build -O0 codd-test
-            nix-shell -A "shellPg${pg}" --pure ./default.nix --run "./scripts/run-tests-db-internal.sh ${TARGS[@]}"
+            nix-shell -A "shellPg${pg}" ./default.nix --run "./scripts/run-tests-db-internal.sh $TARGS"
         fi
     done
 

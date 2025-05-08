@@ -1,6 +1,8 @@
 { pkgs ? import ./nix/nixpkgs.nix }:
 let
-  project = pkgs.haskell-nix.stackProject' {
+  # nix-build and friends will use musl64 for Linux
+  pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsCross.musl64;
+  project = pkgsMusl.haskell-nix.stackProject' {
     src = ./.;
     stackYaml = "stack.yaml";
     compiler-nix-name = "ghc965";
@@ -34,11 +36,11 @@ let
                   # https://github.com/NixOS/nixpkgs/issues/191920
                   # This doesn't seem like a big issue since we only need libpq and we do run tests against
                   # postgresql-16-the-server.
-                  "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.openssl.out}/lib"
+                  "--ghc-option=-optl=-L${pkgsMusl.openssl.out}/lib"
                   "--ghc-option=-optl=-lssl"
                   "--ghc-option=-optl=-lcrypto"
 
-                  "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.postgresql.out}/lib"
+                  "--ghc-option=-optl=-L${pkgsMusl.postgresql.out}/lib"
                   "--ghc-option=-optl=-lpgcommon"
                   "--ghc-option=-optl=-lpgport"
                 ];
@@ -48,11 +50,11 @@ let
                 dontStrip = false;
                 configureFlags = [
                   # Same as for the executable here
-                  "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.openssl.out}/lib"
+                  "--ghc-option=-optl=-L${pkgsMusl.openssl.out}/lib"
                   "--ghc-option=-optl=-lssl"
                   "--ghc-option=-optl=-lcrypto"
 
-                  "--ghc-option=-optl=-L${pkgs.pkgsCross.musl64.postgresql.out}/lib"
+                  "--ghc-option=-optl=-L${pkgsMusl.postgresql.out}/lib"
                   "--ghc-option=-optl=-lpgcommon"
                   "--ghc-option=-optl=-lpgport"
                 ];
@@ -64,10 +66,16 @@ let
   coddexe = project.hsPkgs.codd.components.exes.codd;
   coddtests = project.hsPkgs.codd.components.tests.codd-test;
   coddbenchmarks = project.hsPkgs.codd.components.benchmarks.codd-bench;
+  coddhaddocks = project.hsPkgs.codd.components.library.doc;
 in
 {
   inherit project;
-  inherit coddexe coddtests coddbenchmarks;
+  inherit coddexe coddtests coddbenchmarks coddhaddocks;
+  dockerImage = import ./nix/docker/codd-exe.nix {
+          inherit pkgs;
+          inherit coddexe;
+        };
+
   testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_16; };
   testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_15; };
   testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_14; };
@@ -82,4 +90,9 @@ in
   shellPg14 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_14; };
   shellPg13 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_13; };
   shellPg12 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_12; };
+
+  shellForCITests = import ./nix/test-shell-ci.nix { inherit pkgs; };
+
+  # Our Darwin app bundle
+  darwinAppBundle = import ./nix/codd-darwin-bundle.nix { inherit coddexe pkgs; };
 }

@@ -69,20 +69,17 @@ jobs:
         codd --help
         nix-env --uninstall codd
 
-    - name: Run tests (new)
-      run: nix build --no-link .#testsPg16.x86_64-linux
-
     - name: Run tests
-      run: nix develop .#shellWithRunfile -c run ci-tests
+      run: nix-shell -A shellForCITests ./default.nix --run "run ci-tests"
 
     - name: Run benchmarks
-      run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+      run: nix-shell -A shellForCITests ./default.nix --run "run benchmarks"
 
     - name: Build codd's library's haddocks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
+      run: nix-build --no-out-link -A coddhaddocks
 
     - name: Build codd's docker image
-      run: nix build --no-link .#dockerImage.x86_64-linux
+      run: nix-build --no-out-link -A dockerImage
 
   build-aarch64-darwin:
     runs-on: macos-14
@@ -128,12 +125,12 @@ jobs:
     - name: Build codd's tests
       run: nix-build --no-out-link -A coddtests
 
-    - name: Run tests (new)
-      run: nix-build --no-out-link -A testsPg16
+    - name: Run tests
+      run: nix-shell -A shellForCITests ./default.nix --run "run ci-tests"
 
     - name: Create macOS app bundle
       run: |
-        nix build .#coddDarwinAppBundle.aarch64-darwin
+        nix-build -A darwinAppBundle
         unzip -l result/codd.zip
         unzip result/codd.zip -d extracted-bundle
         ./extracted-bundle/codd.app/Contents/MacOS/codd --help # A smoke test
