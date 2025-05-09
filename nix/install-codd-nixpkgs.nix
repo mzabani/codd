@@ -3,7 +3,7 @@
 # than a haskell.nix provided one, so it's useful as an installation option.
 # The downside is that library versions are likely not the same as the ones from Stackage LTS.
 let
-  pkgs = import ./nixpkgs.nix;
+  pkgs = import ./nixpkgs.nix {};
   coddFull = pkgs.haskell.lib.dontHaddock
     (pkgs.haskellPackages.callCabal2nixWithOptions "codd" ../. "" { });
 in rec {

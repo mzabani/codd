@@ -69,8 +69,30 @@ jobs:
         codd --help
         nix-env --uninstall codd
 
+    - name: Testing install script posix compatibility
+      run: |
+        nix-env -iA shellcheck -f ./nix/nixpkgs.nix
+        shellcheck --shell=sh nix/install-codd.sh
+
     - name: Run tests
-      run: nix-shell -A shellForCITests ./default.nix --run "run ci-tests"
+      run: |
+        echo "Running tests that don't depend on a database"
+        nix-build --no-out-link -A testsNoDb
+
+        # Postgres-version dependent tests for each possible version next
+        # We test the last version with the vanilla nixpkgs-built derivation,
+        # not the IOHK one. We assume differences in the codebase regarding different
+        # postgres versions aren't enough to make it worth testing every version here too.
+        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
+        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+
+        nix-build --no-out-link -A testsPg15
+        nix-build --no-out-link -A testsPg14
+        nix-build --no-out-link -A testsPg13
+        nix-build --no-out-link -A testsPg12
+
+        echo "Running system resource usage tests"
+        nix-build --no-out-link -A testsSystemResources
 
     - name: Run benchmarks
       run: nix-shell -A shellForCITests ./default.nix --run "run benchmarks"
@@ -126,7 +148,24 @@ jobs:
       run: nix-build --no-out-link -A coddtests
 
     - name: Run tests
-      run: nix-shell -A shellForCITests ./default.nix --run "run ci-tests"
+      run: |
+        echo "Running tests that don't depend on a database"
+        nix-build --no-out-link -A testsNoDb
+
+        # Postgres-version dependent tests for each possible version next
+        # We test the last version with the vanilla nixpkgs-built derivation,
+        # not the IOHK one. We assume differences in the codebase regarding different
+        # postgres versions aren't enough to make it worth testing every version here too.
+        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
+        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+
+        nix-build --no-out-link -A testsPg15
+        nix-build --no-out-link -A testsPg14
+        nix-build --no-out-link -A testsPg13
+        nix-build --no-out-link -A testsPg12
+
+        echo "Running system resource usage tests"
+        nix-build --no-out-link -A testsSystemResources
 
     - name: Create macOS app bundle
       run: |

@@ -1,7 +1,7 @@
 { }:
 let
-  pkgs = import ./nix/nixpkgs.nix;
-  project = (import ./default.nix { pkgsGlibc = pkgs; useMuslIfPossible = false; }).project;
+  pkgs = import ./nix/nixpkgs.nix {};
+  project = (import ./default.nix { inherit pkgs; }).project;
 in
 project.shellFor {
   tools = {

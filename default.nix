@@ -1,7 +1,7 @@
-{ pkgs ? import ./nix/nixpkgs.nix }:
+{ pkgs ? import ./nix/nixpkgs.nix {} }:
 let
-  # nix-build and friends will use musl64 for Linux
   pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsCross.musl64;
+  pkgsDarwin = import ./nix/nixpkgs.nix { system = "aarch64-darwin"; };
   project = pkgsMusl.haskell-nix.stackProject' {
     src = ./.;
     stackYaml = "stack.yaml";
@@ -93,6 +93,6 @@ in
 
   shellForCITests = import ./nix/test-shell-ci.nix { inherit pkgs; };
 
-  # Our Darwin app bundle
-  darwinAppBundle = import ./nix/codd-darwin-bundle.nix { inherit coddexe pkgs; };
+  # Our Darwin app bundle. This only builds on aarch64-darwin
+  darwinAppBundle = import ./nix/codd-darwin-bundle.nix { inherit coddexe; pkgs = pkgsDarwin; };
 }
