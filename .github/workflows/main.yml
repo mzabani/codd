@@ -95,7 +95,7 @@ jobs:
         nix-build --no-out-link -A testsSystemResources
 
     - name: Run benchmarks
-      run: nix-shell -A shellForCITests ./default.nix --run "run benchmarks"
+      run: nix-shell -A shellForCITests ./default.nix --run "run benchmarks --nix"
 
     - name: Build codd's library's haddocks
       run: nix-build --no-out-link -A coddhaddocks
