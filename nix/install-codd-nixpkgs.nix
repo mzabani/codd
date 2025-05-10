@@ -21,9 +21,14 @@ in rec {
       export PATH="$PATH:${pkgs.postgresql_16}/bin" # Some tests require pg_dump in PATH
       export HSPEC_SKIP="/SystemResourcesSpecs/" # This test requires strace-wrapping, and I don't expect different libs would make it fail anyway
       scripts/init-pg-cluster.sh ./conf
+      trap "pg_ctl stop || true" EXIT ERR
       pg_ctl start
       scripts/wait-for-pg-ready.sh
-    '' + self.checkPhase;
+    '' + self.checkPhase + ''
+      pg_ctl stop
+      trap - EXIT ERR
+    '';
+
   });
   codd = pkgs.haskell.lib.dontCheck coddFull;
 }

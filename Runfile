@@ -65,12 +65,14 @@ format-hs:
 # OPTION NIX --nix Run tests in a Nix derivation's sandbox
 test-no-db:
     set -eo pipefail
+    ARGSARRAY="$@"
+    [ -z "$1" ] && ARGSARRAY=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/)
     TARGS=$(printf "'%s' " "$@") && [ -z "$1" ] && TARGS="--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/"
     if [ -n "$NIX" ]; then
         nix-build --no-out-link -A testsNoDb --argstr hspecArgs "$TARGS"
     else
         cabal build -O0 codd-test
-        `cabal list-bin -O0 codd-test` "${TARGS[@]}"
+        `cabal list-bin -O0 codd-test` "${ARGSARRAY[@]}"
     fi
 
 ## 

@@ -19,6 +19,7 @@ in
       export PGHOST="/tmp"
       export PGUSER="postgres"
       scripts/init-pg-cluster.sh ./conf
+      trap "pg_ctl stop || true" EXIT ERR
       pg_ctl -l "$out/pg_ctl_init.log" start
       scripts/wait-for-pg-ready.sh
       # This isn't deterministic due to randomised testing and timing
@@ -26,6 +27,7 @@ in
       # abusing Nix's sandbox here, but it does makes life a lot easier.
       ${coddtests}/bin/codd-test ${hspecArgs} 2>&1 | tee "$out/haskell-tests.log"
       pg_ctl stop
+      trap - EXIT ERR
       cp -R "$PGDATA/log" "$out/pglogs"
     '';
   }

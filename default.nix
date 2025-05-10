@@ -1,6 +1,6 @@
-{ pkgs ? import ./nix/nixpkgs.nix {} }:
+{ pkgs ? import ./nix/nixpkgs.nix {}, useMuslIfPossible ? true }:
 let
-  pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsCross.musl64;
+  pkgsMusl = if pkgs.stdenv.isDarwin || !useMuslIfPossible then pkgs else pkgs.pkgsCross.musl64;
   pkgsDarwin = import ./nix/nixpkgs.nix { system = "aarch64-darwin"; };
   project = pkgsMusl.haskell-nix.stackProject' {
     src = ./.;
