@@ -1,4 +1,11 @@
 {
     "owner": "postgres",
-    "privileges": null
+    "privileges": {
+        "codd_admin": [
+            [
+                "U",
+                "postgres"
+            ]
+        ]
+    }
 }
