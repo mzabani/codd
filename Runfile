@@ -65,7 +65,7 @@ format-hs:
 # OPTION NIX --nix Run tests in a Nix derivation's sandbox
 test-no-db:
     set -eo pipefail
-    ARGSARRAY="$@"
+    ARGSARRAY=("$@")
     [ -z "$1" ] && ARGSARRAY=(--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/)
     TARGS=$(printf "'%s' " "$@") && [ -z "$1" ] && TARGS="--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/"
     if [ -n "$NIX" ]; then
