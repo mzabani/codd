@@ -1,4 +1,4 @@
-{ pkgs, codd-exe }:
+{ pkgs, coddexe }:
   # Currently, there seems to be no way to map the host's UID and GID to bind-mounts,
   # so there's no way to modify files and folders while giving them the host's user and group
   # permissions..
@@ -13,7 +13,7 @@ pkgs.dockerTools.buildImage {
   tag = "latest";
 
   copyToRoot = with pkgs; [
-    codd-exe
+    coddexe
     # pkgsCross.musl64.dash # We might as well not use dash if we can't get rid of bash inside the final image..
     pkgsCross.musl64.busybox
   ];

@@ -46,21 +46,25 @@ instance Arbitrary NonEmptyString where
       <$> arbitrary @ASCIIString
         `suchThat` (/= ASCIIString "")
 
-newtype HostString = HostString {unHostString :: String}
+data HostString = Hostname Text | HostUnixSocket Text
   deriving stock (Show)
+
+originalHost :: HostString -> Text
+originalHost (Hostname t) = t
+originalHost (HostUnixSocket t) = t
 
 instance Arbitrary HostString where
   arbitrary =
-    HostString . Text.unpack
-      <$> oneof
-        [ pure "127.0.0.1",
-          pure "200.200.100.100",
-          pure "hostnodots",
-          pure "some.host.name",
-          pure "::1",
-          pure "2800:3f0:4001:822::200e",
-          pure "2a03:2880:f105:283:face:b00c:0:25de"
-        ]
+    elements
+      [ Hostname "127.0.0.1",
+        Hostname "200.200.100.100",
+        Hostname "hostnodots",
+        Hostname "some.host.name",
+        Hostname "::1",
+        Hostname "2800:3f0:4001:822::200e",
+        Hostname "2a03:2880:f105:283:face:b00c:0:25de",
+        HostUnixSocket "/var/lib/postgresql"
+      ]
 
 data ConnStringType = URIpostgres | Kwvps
   deriving stock (Bounded, Enum, Show)
@@ -70,7 +74,7 @@ instance Arbitrary ConnStringType where
 
 getURIConnString ::
   String -> ObjName -> String -> HostString -> Word16 -> ObjName -> Text
-getURIConnString uriScheme (Text.unpack . unObjName -> usr) pwd (unHostString -> host) port (Text.unpack . unObjName -> dbName) =
+getURIConnString uriScheme (Text.unpack . unObjName -> usr) pwd host port (Text.unpack . unObjName -> dbName) =
   Text.pack $ uriToString id uri ""
   where
     uri =
@@ -86,15 +90,16 @@ getURIConnString uriScheme (Text.unpack . unObjName -> usr) pwd (unHostString ->
                              else ':' : encodeURIComponent pwd
                          )
                       <> "@",
-                  uriRegName = Text.unpack $ escapeHost $ Text.pack host,
+                  uriRegName = Text.unpack $ escapeHost host,
                   uriPort = ':' : show port
                 },
           uriPath = '/' : encodeURIComponent dbName,
           uriQuery = "",
           uriFragment = ""
         }
-    encodeURIComponent :: String -> String
-    encodeURIComponent = escapeURIString isUnescapedInURIComponent
+
+encodeURIComponent :: String -> String
+encodeURIComponent = escapeURIString isUnescapedInURIComponent
 
 data KwvpConnGen = KwvpConnGen
   { -- | Shuffles the relative order of keyword/value pairs in the generated connection string.
@@ -121,7 +126,7 @@ getKeywordValuePairConnString KwvpConnGen {..} =
             Just $
               addExtraSpaces
                 host
-                ("host", quoteIfNeeded (Text.pack . unHostString) host),
+                ("host", quoteIfNeeded originalHost host),
             Just $
               addExtraSpaces dbname ("dbname", quoteIfNeeded unObjName dbname),
             (\p -> addExtraSpaces p ("password", quoteIfNeeded Text.pack p))
@@ -152,10 +157,11 @@ getKeywordValuePairConnString KwvpConnGen {..} =
         || v
           == ""
 
-escapeHost :: Text -> Text
-escapeHost host =
+escapeHost :: HostString -> Text
+escapeHost (Hostname host) =
   -- bracket-escape IPv6 addresses
   if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
+escapeHost (HostUnixSocket socketpath) = Text.pack $ encodeURIComponent $ Text.unpack socketpath
 
 data ConnStringGen = ConnStringGen Text ConnectInfo
   deriving stock (Show)
@@ -176,7 +182,7 @@ instance Arbitrary ConnStringGen where
 
     let connInfo =
           ConnectInfo
-            { connectHost = unHostString host,
+            { connectHost = Text.unpack $ originalHost host,
               connectPort = port,
               connectUser = Text.unpack $ unObjName usr,
               connectPassword = pwd,

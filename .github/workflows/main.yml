@@ -30,9 +30,8 @@ jobs:
       with:
         tool-cache: true
     
-    - uses: cachix/install-nix-action@v24
+    - uses: cachix/install-nix-action@526118121621777ccd86f79b04685a9319637641 # 31.3.30
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
@@ -53,13 +52,13 @@ jobs:
     #     key: ${{ runner.os }}-build
 
     - name: Build statically linked codd
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:exe:codd"
+      run: nix-build --no-out-link -A coddexe
 
     - name: Build statically linked codd's tests
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:test:codd-test"
+      run: nix-build --no-out-link -A coddtests
 
     - name: Build statically linked benchmarks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+      run: nix-build --no-out-link -A coddbenchmarks
 
     - name: Build executable used for installer
       run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
@@ -70,17 +69,39 @@ jobs:
         codd --help
         nix-env --uninstall codd
 
+    - name: Testing install script posix compatibility
+      run: |
+        nix-env -iA shellcheck -f ./nix/nixpkgs.nix
+        shellcheck --shell=sh nix/install-codd.sh
+
     - name: Run tests
-      run: nix develop .#shellWithRunfile -c run ci-tests
+      run: |
+        echo "Running tests that don't depend on a database"
+        nix-build --no-out-link -A testsNoDb
+
+        # Postgres-version dependent tests for each possible version next
+        # We test the last version with the vanilla nixpkgs-built derivation,
+        # not the IOHK one. We assume differences in the codebase regarding different
+        # postgres versions aren't enough to make it worth testing every version here too.
+        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
+        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+
+        nix-build --no-out-link -A testsPg15
+        nix-build --no-out-link -A testsPg14
+        nix-build --no-out-link -A testsPg13
+        nix-build --no-out-link -A testsPg12
+
+        echo "Running system resource usage tests"
+        nix-build --no-out-link -A testsSystemResources
 
     - name: Run benchmarks
-      run: nix run ".#x86_64-unknown-linux-musl:codd:bench:codd-bench"
+      run: nix-shell -A shellForCITests ./default.nix --run "run benchmarks --nix"
 
     - name: Build codd's library's haddocks
-      run: nix build --no-link ".#x86_64-unknown-linux-musl:codd:lib:codd.doc"
+      run: nix-build --no-out-link -A coddhaddocks
 
     - name: Build codd's docker image
-      run: nix build --no-link .#dockerImage.x86_64-linux
+      run: nix-build --no-out-link -A dockerImage
 
   build-aarch64-darwin:
     runs-on: macos-14
@@ -101,9 +122,8 @@ jobs:
           ls /Applications
           df -h
     
-    - uses: cachix/install-nix-action@v24
+    - uses: cachix/install-nix-action@526118121621777ccd86f79b04685a9319637641 # 31.3.30
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
@@ -116,20 +136,37 @@ jobs:
         authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
         signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
 
+    - name: List locales
+      run: locale -a
+
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
-      run: nix build --no-link ".#codd:exe:codd"
+      run: nix-build --no-out-link -A coddexe
 
     - name: Build codd's tests
-      run: nix build --no-link ".#codd:test:codd-test"
+      run: nix-build --no-out-link -A coddtests
 
     - name: Run tests
-      run: nix develop .#shellWithRunfile -c run test-no-db --nix
+      run: |
+        echo "Running tests that don't depend on a database"
+        nix-build --no-out-link -A testsNoDb
+
+        # Postgres-version dependent tests for each possible version next
+        # We test the last version with the vanilla nixpkgs-built derivation,
+        # not the IOHK one. We assume differences in the codebase regarding different
+        # postgres versions aren't enough to make it worth testing every version here too.
+        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
+        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+
+        nix-build --no-out-link -A testsPg15
+        nix-build --no-out-link -A testsPg14
+        nix-build --no-out-link -A testsPg13
+        nix-build --no-out-link -A testsPg12
 
     - name: Create macOS app bundle
       run: |
-        nix build .#coddDarwinAppBundle.aarch64-darwin
+        nix-build -A darwinAppBundle
         unzip -l result/codd.zip
         unzip result/codd.zip -d extracted-bundle
         ./extracted-bundle/codd.app/Contents/MacOS/codd --help # A smoke test

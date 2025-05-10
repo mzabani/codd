@@ -1,3 +1,4 @@
+{ system ? builtins.currentSystem }:
 let haskellPatchesOverlay = final: prev: {
     haskellPackages = prev.haskellPackages.override {
       overrides = hsSelf: hsSuper: {
@@ -6,11 +7,10 @@ let haskellPatchesOverlay = final: prev: {
       };
     };
   };
+  haskellNix = import (fetchTarball {
+    url = "https://github.com/input-output-hk/haskell.nix/archive/6aa8046087d4e6fd70f3b6b99628f77e398e9fd2.tar.gz";
+    sha256 = "sha256:1wrzkmqkhansgic6x55jjkssq5viis41lwnn3vkyn19818xjylw0";
+  }) {};
+  nixpkgsImportArgs = haskellNix.nixpkgsArgs // { inherit system; overlays = haskellNix.nixpkgsArgs.overlays ++ [haskellPatchesOverlay]; };
 in
-  import
-    (let lock = builtins.fromJSON (builtins.readFile ../flake.lock);
-    in fetchTarball {
-      url =
-        "https://github.com/NixOS/nixpkgs/archive/${lock.nodes.nixpkgs-2311.locked.rev}.tar.gz";
-      sha256 = lock.nodes.nixpkgs-2311.locked.narHash;
-    }) { overlays = [ haskellPatchesOverlay ]; }
+  import haskellNix.sources.nixpkgs-2311 nixpkgsImportArgs

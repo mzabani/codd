@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-nix build -o results/codd-docker .#dockerImage.x86_64-linux
+nix-build -o results/codd-docker -A dockerImage
 docker load -i results/codd-docker
 
 docker login

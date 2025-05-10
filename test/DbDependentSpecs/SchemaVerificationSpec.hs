@@ -1017,7 +1017,7 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
   -- COLLATIONS
   (createCutf8Coll, dropColl) <-
     addMig
-      "CREATE COLLATION new_collation (locale = 'C.utf8');"
+      "CREATE COLLATION new_collation (locale = 'en_GB.utf-8');"
       "DROP COLLATION new_collation;"
       $ ChangeEq
         [ ( "schemas/public/collations/new_collation",
@@ -1027,7 +1027,7 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
   (dropCreateEnUSColl, _) <-
     addMig
       ( dropColl
-          <> " CREATE COLLATION new_collation (locale = 'en_US.utf8');"
+          <> " CREATE COLLATION new_collation (locale = 'en_US.utf-8');"
       )
       (dropColl <> createCutf8Coll)
       $ ChangeEq
