@@ -256,9 +256,8 @@ mkRandStream seed text = PureStream $ go (mkStdGen seed) text
           withEvenMoreSeparation2 = concatMap (List.intersperse "\n" . Text.split (== '\n')) withEvenMoreSeparation1
        in if t == ""
             then S.each []
-            else error "on purpose"
-
--- S.each withEvenMoreSeparation2 <> go g' remainder
+            else
+              S.each withEvenMoreSeparation2 <> go g' remainder
 
 genSql :: (Monad m) => Bool -> Gen (PureStream m, Text)
 genSql onlySyntacticallyValid = do
