@@ -1,0 +1,13 @@
+{
+    "collation": null,
+    "collation_nsp": null,
+    "default": "true",
+    "generated": "",
+    "hasdefault": true,
+    "identity": "",
+    "inhcount": 0,
+    "local": true,
+    "notnull": true,
+    "privileges": null,
+    "type": "boolean"
+}
