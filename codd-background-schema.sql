@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS codd_schema.background_migrations (name text not null primary key);
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
-CREATE OR REPLACE FUNCTION codd_schema.background_migration_begin(background_migration_name text, sqlToRunOnce text, cronSchedule text, sqlToRunPeriodically text, runInsideTxn boolean = true) RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.background_migration_begin(background_migration_name text, cronSchedule text, sqlToRunPeriodically text, runInsideTxn boolean = true) RETURNS VOID AS $func$
 DECLARE
   temp_bg_func_name text := 'temp_bg_migration_' || background_migration_name;
 BEGIN
@@ -30,7 +30,7 @@ BEGIN
         END;
         $$ LANGUAGE plpgsql;
       $sqltext$ , temp_bg_func_name, sqlToRunPeriodically, background_migration_name);
-  EXECUTE sqlToRunOnce;
+
   -- TODO: Does pg_cron run its statements inside transactions? And how do we control the isolation level?
   PERFORM cron.schedule(background_migration_name, cronSchedule, format('SELECT codd_schema.%I()', temp_bg_func_name));
 END;
