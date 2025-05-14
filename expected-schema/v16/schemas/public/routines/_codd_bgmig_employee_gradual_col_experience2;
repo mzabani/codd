@@ -1,0 +1,33 @@
+{
+    "argmodes": null,
+    "argnames": null,
+    "args": "",
+    "config": null,
+    "definition": "\n  BEGIN\n    NEW.experience2 = CASE WHEN NEW.very_experienced THEN 'senior' WHEN NEW.very_immature THEN 'intern' WHEN NEW.very_experienced IS NOT NULL THEN 'junior' END;\n    RETURN NEW;\n  END;\n  ",
+    "kind": "f",
+    "lang": "plpgsql",
+    "leakproof": false,
+    "nargs": 0,
+    "nargs_defaults": 0,
+    "owner": "codd_admin",
+    "parallel": "u",
+    "privileges": {
+        "codd_admin": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ]
+    },
+    "return_type": "trigger",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}

@@ -1,8 +1,6 @@
-CREATE TABLE IF NOT EXISTS codd_schema.background_jobs (jobname TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', last_error TEXT, num_jobs_succeeded INT NOT NULL DEFAULT 0, job_func_name TEXT NOT NULL, CHECK (status IN ('started', 'aborted', 'finished')));
+CREATE TABLE IF NOT EXISTS codd_schema.background_jobs (jobname TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', last_error TEXT, num_jobs_succeeded INT NOT NULL DEFAULT 0, num_jobs_error INT NOT NULL DEFAULT 0, job_func_name TEXT NOT NULL, CHECK (status IN ('started', 'aborted', 'finished')));
 CREATE FUNCTION codd_schema.drop_codd_job_function() RETURNS TRIGGER AS $$
 BEGIN
-  -- TODO: Catch error if the job doesn't exist or check if it's there before unscheduling to avoid
-  -- an error from pg_cron!
    IF EXISTS (
       SELECT FROM cron.job WHERE jobname = OLD.jobname) THEN
 
@@ -37,9 +35,10 @@ CREATE TRIGGER drop_job_func_on_delete
 
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
-CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, runInsideTxn boolean = true) RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 DECLARE
-  temp_bg_func_name text := 'tmp_job_' || jobname;
+  temp_bg_success_func_name text := 'tmp_job_succ_' || jobname;
+  temp_bg_wrapper_func_name text := 'tmp_job_' || jobname;
 BEGIN
   -- TODO: Check for NULLs and throw
   -- TODO: Call function that checks that pg_cron exists and is set up properly and raises error or info
@@ -48,16 +47,17 @@ BEGIN
   -- Note that cron.job_run_details might not be turned on.. so we can't rely on it!
 
   -- Insert into table first so there are no side effects if this is a duplicate name
-  -- TODO: is all SQL executed inside a function atomic even outside a txn? Check. And honor `runInsideTxn`
-  INSERT INTO codd_schema.background_jobs (jobname, job_func_name) VALUES (jobname, temp_bg_func_name);
+  INSERT INTO codd_schema.background_jobs (jobname, job_func_name) VALUES (jobname, temp_bg_wrapper_func_name);
 
+  -- Why two functions instead of just one? Because each function's effects are atomic, as if
+  -- there was a savepoint around each function call, and that enables us to update codd_schema.background_jobs
+  -- even if the job errors out. Still, write a test or look for official docs to assert this property.
   -- TODO: Test very long names for migrations (more than 63 chars).
   EXECUTE format($sqltext$
-        CREATE FUNCTION codd_schema.%I () RETURNS VOID AS $$
+        CREATE FUNCTION %I () RETURNS TEXT AS $$
         DECLARE
           affected_row_count bigint;
         BEGIN
-          -- TODO: Catch error in user statement and set `last_error`. Maybe add a `num_errors` column too?
           %s
           GET DIAGNOSTICS affected_row_count = row_count;
           UPDATE codd_schema.background_jobs SET num_jobs_succeeded=num_jobs_succeeded+1 WHERE jobname='%s';
@@ -65,17 +65,37 @@ BEGIN
             -- TODO: Can unscheduling cancel the job and rollback the changes applied in the last run? Check. https://github.com/citusdata/pg_cron/issues/308 suggests it might be possible.
             UPDATE codd_schema.background_jobs SET status='finished' WHERE jobname='%s';
           END IF;
-          RETURN;
+          RETURN NULL;
+        EXCEPTION WHEN OTHERS THEN
+          RAISE WARNING 'Error in codd background job. %%s: %%s', SQLSTATE, SQLERRM;
+          RETURN format('%%s: %%s', SQLSTATE, SQLERRM);
         END;
         $$ LANGUAGE plpgsql;
-      $sqltext$ , temp_bg_func_name, plpgsql_to_run_periodically, jobname, jobname);
+      $sqltext$, temp_bg_success_func_name, plpgsql_to_run_periodically, jobname, jobname, jobname);
 
-  -- TODO: Does pg_cron run its statements inside transactions? And how do we control the isolation level?
-  PERFORM cron.schedule(jobname, cron_schedule, format('SELECT codd_schema.%I()', temp_bg_func_name));
+  EXECUTE format($sqltext$
+        CREATE FUNCTION %I () RETURNS VOID AS $$
+        DECLARE
+          error_if_any text;
+        BEGIN
+            SELECT %I() INTO error_if_any;
+            IF error_if_any IS NOT NULL THEN
+              UPDATE codd_schema.background_jobs SET
+                  num_jobs_error=num_jobs_error + 1
+                , last_error=error_if_any
+                WHERE jobname='%s';
+            END IF;
+        END;
+        $$ LANGUAGE plpgsql;
+  $sqltext$, temp_bg_wrapper_func_name, temp_bg_success_func_name, jobname);
+
+  -- TODO: Control isolation level
+  PERFORM cron.schedule(jobname, cron_schedule, format($$BEGIN; SELECT %I(); COMMIT;$$, temp_bg_wrapper_func_name));
 END;
 $func$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION codd_schema.new_gradual_column(jobname text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, newcolname text, new_col_trigger_expr text, runInsideTxn boolean = true) RETURNS VOID AS $func$
+-- | Synchronously runs a job until it completes (or does not run it if it's already complete) or until the supplied timeout elapses.
+CREATE OR REPLACE FUNCTION codd_schema.new_gradual_column(jobname text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, newcolname text, new_col_trigger_expr text) RETURNS VOID AS $func$
 DECLARE
   trigger_base_name text := '_codd_bgmig_' || tablename || '_gradual_col_' || newcolname;
 BEGIN

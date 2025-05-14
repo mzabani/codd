@@ -1,0 +1,14 @@
+{
+    "associated_constraint": null,
+    "deferrable": false,
+    "definition": "CREATE TRIGGER trig_codd_bgmig_employee_gradual_col_experience2 BEFORE INSERT OR UPDATE ON public.employee FOR EACH ROW EXECUTE FUNCTION public._codd_bgmig_employee_gradual_col_experience2()",
+    "enabled": "O",
+    "function": "_codd_bgmig_employee_gradual_col_experience2;",
+    "initdeferred": false,
+    "nargs": 0,
+    "newtblname": null,
+    "oldtblname": null,
+    "supporting_index": null,
+    "table_ref": null,
+    "type": 23
+}

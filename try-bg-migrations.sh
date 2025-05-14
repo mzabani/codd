@@ -6,4 +6,5 @@ dropdb "$PGDATABASE"
 codd up
 psql -1 -f codd-background-schema.sql
 # psql -1 -f replace-one-column-restrict-enum.sql
-psql -1 -f replace-two-bools-with-one-new-column.sql
+# psql -1 -f replace-two-bools-with-one-new-column.sql
+psql -1 -f emulate-error-in-scheduled-job.sql
