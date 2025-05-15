@@ -8,6 +8,9 @@ CREATE FUNCTION codd_schema.unschedule_job_from_pg_cron() RETURNS TRIGGER AS $$
 DECLARE
   func_name text;
 BEGIN
+  IF OLD.status='succeeded' AND NEW.status <> 'succeeded' THEN
+    RAISE EXCEPTION 'Cannot change a background job status from succeeded to anything else';
+  END IF;
   IF EXISTS (
      SELECT FROM cron.job WHERE jobname = OLD.jobname) THEN
 
@@ -40,6 +43,28 @@ CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_delete
     WHEN (OLD.status='started')
     EXECUTE FUNCTION codd_schema.unschedule_job_from_pg_cron();
 
+CREATE OR REPLACE FUNCTION codd_schema.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
+    RAISE EXCEPTION 'Codd background migrations require the pg_cron extension to work. Please check https://github.com/citusdata/pg_cron for installation instructions';
+  END IF;
+  IF job_name IS NULL THEN
+    RAISE EXCEPTION 'Please supply a job name';
+  END IF;
+  IF cron_schedule IS NULL THEN
+    RAISE EXCEPTION 'Please supply a cron schedule. It could be e.g. "5 seconds" to run every 5 seconds or "0 10 * * *" for every day at 10AM. Check https://github.com/citusdata/pg_cron for more examples and explanations';
+  END IF;
+  IF plpgsql_to_run_periodically IS NULL THEN
+    RAISE EXCEPTION 'Please supply a body of valid SQL or plpgsql to run on the supplied schedule';
+  END IF;
+  IF EXISTS (SELECT FROM codd_schema.background_jobs WHERE jobname=job_name) THEN
+    RAISE EXCEPTION 'Codd background job named % already exists. Please choose another name or clean up the codd_schema.background_jobs table by deleting successful jobs if that would help', job_name;
+  END IF;
+END;
+$func$ LANGUAGE plpgsql;
+  -- TODO: Check for NULLs and throw
+  -- TODO: Call function that checks that pg_cron exists and is set up properly and raises error or info
+
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
 CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, schema_for_objects text = 'codd_schema') RETURNS VOID AS $func$
@@ -47,7 +72,8 @@ DECLARE
   temp_bg_success_func_name text := format('%I.%I', schema_for_objects, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', schema_for_objects, '_codd_job_wrapper_' || jobname);
 BEGIN
-  -- TODO: Check for NULLs and throw
+  PERFORM codd_schema.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
+  -- TODO: Check for NULLs for the other arguments and throw
   -- TODO: Call function that checks that pg_cron exists and is set up properly and raises error or info
   -- TODO: Check the user calling this function is the same that create codd_schema? Users can only view jobs
   --       in `cron.job` that were created by them due to a RLS policy.
@@ -116,7 +142,12 @@ DECLARE
   jobstatus text;
   obj_to_drop codd_schema.obj_to_drop;
 BEGIN
-  -- TODO: Throw if args are null
+  IF job_name IS NULL THEN
+    RAISE EXCEPTION 'Please supply a job name';
+  END IF;
+  IF timeout IS NULL THEN
+    RAISE EXCEPTION 'Please supply a timeout for synchronously completing a job';
+  END IF;
   -- TODO: Can we pause the job while we run? Document if this is a limitation. Maybe LOCK FOR UPDATE/SKIP LOCKED in the functions just to avoid repeated work anyway?
   -- TODO: Add tests with aborted jobs
 
@@ -135,7 +166,7 @@ BEGIN
   END LOOP;
   FOREACH obj_to_drop IN ARRAY jobrow.objects_to_drop_in_order
   LOOP
-    EXECUTE format($$DROP %s IF EXISTS %s %s$$, (obj_to_drop).kind, (obj_to_drop).objname, CASE WHEN (obj_to_drop).on_ IS NULL THEN '' ELSE format('ON %s', (obj_to_drop).on_) END);
+    EXECUTE format('DROP %s IF EXISTS %s %s', (obj_to_drop).kind, (obj_to_drop).objname, CASE WHEN (obj_to_drop).on_ IS NULL THEN '' ELSE format('ON %s', (obj_to_drop).on_) END);
   END LOOP;
 END;
 $func$ LANGUAGE plpgsql;
@@ -146,16 +177,38 @@ $func$ LANGUAGE plpgsql;
 -- functions created here, but only after ensuring all rows are populated.
 CREATE OR REPLACE FUNCTION codd_schema.populate_column_gradually(job_name text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, colname text, new_col_trigger_expr text) RETURNS VOID AS $func$
 DECLARE
-  trigger_name text := format('%I', '_codd_bgjob_trig' || job_name);
-  triggfn_name text := format('%I.%I', current_schema, '_codd_bgjob_' || job_name);
-  qualif_table_name text := format('%I.%I', current_schema, tablename);
+  trigger_name text;
+  triggfn_name text;
+  qualif_table_name text;
 BEGIN
-  -- TODO: Check for a bunch of things like the other function does
-  -- TODO: Check old and new column exist, tell user the new column must be created by them before calling this function
+  PERFORM codd_schema.assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);
+  IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
+    RAISE EXCEPTION $err$
+Did you forget to supply some arguments to populate_column_gradually? Here's an usage example that updates one row each second:
+
+      ALTER TABLE animals ADD COLUMN new_number INT;
+      SELECT codd_schema.populate_column_gradually('new-column-with-old-column-plus1', '1 seconds',
+        $$
+        UPDATE animals SET new_number=old_number+1 WHERE animal_id=(SELECT animal_id FROM animals WHERE new_number IS NULL LIMIT 1);
+        $$
+      , 'animals', 'new_number', 'NEW.old_number+1'
+      );
+    $err$;
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_attribute
+                        JOIN pg_catalog.pg_class ON attrelid=pg_class.oid
+                        JOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid
+                        WHERE attname=colname AND relname=tablename AND nspname=current_schema) THEN
+      RAISE EXCEPTION 'Column % of relation % does not exist in your preferred schema. Please create the column yourself before calling populate_column_gradually, and possibly check your search_paths setting', colname, tablename; 
+  END IF;
+  trigger_name := format('%I', '_codd_bgjob_trig' || job_name);
+  triggfn_name := format('%I.%I', current_schema, '_codd_bgjob_' || job_name);
+  qualif_table_name := format('%I.%I', current_schema, tablename);
+  
   -- TODO: Scheduling before creating the triggers might make the schedule task run before the triggers are created and return 0? Seems unlikely but pg_cron does execute things in separate connections. Oh, in that case the column might not even exist!
   --       So yeah, schedule with pg_cron AFTER creating the triggers! 
   -- TODO: Do BEFORE triggers override values explicitly defined in the VALUES list? We probably want them to?
-  -- TODO: Do we forbid changing values of the new column with a trigger?
+  -- TODO: Should we forbid changing values of the new column with a trigger?
   -- TODO: Add tests with various search_paths to check we're being diligent
   -- TODO: Add tests with various weird object names
   PERFORM codd_schema.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically);
