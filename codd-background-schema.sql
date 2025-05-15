@@ -67,10 +67,10 @@ $func$ LANGUAGE plpgsql;
 
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
-CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, schema_for_objects text = 'codd_schema') RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 DECLARE
-  temp_bg_success_func_name text := format('%I.%I', schema_for_objects, '_codd_job_' || jobname);
-  temp_bg_wrapper_func_name text := format('%I.%I', schema_for_objects, '_codd_job_wrapper_' || jobname);
+  temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
+  temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
   PERFORM codd_schema.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
   -- TODO: Check for NULLs for the other arguments and throw
