@@ -6,8 +6,6 @@
         "employee_name",
         "experience",
         "surname",
-        "very_experienced",
-        "very_immature",
         "experience2"
     ],
     "compositetype": null,
