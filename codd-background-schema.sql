@@ -108,10 +108,10 @@ $func$ LANGUAGE plpgsql;
 -- This will run the job in the isolation level of the caller's (yours) in a single transaction regardless of how many times the job needs to run.
 -- If the timeout elapses and the job isn't finished, this function will raise an exception, and will therefore fail to update even codd_schema.background_jobs properly.
 -- This will drop the auxiliary functions created by codd if it completes successfully.
-CREATE OR REPLACE FUNCTION codd_schema.synchronously_finish_background_job(job_name text, timeout_seconds integer) RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.synchronously_finish_background_job(job_name text, timeout interval) RETURNS VOID AS $func$
 DECLARE
   start_time timestamptz := clock_timestamp();
-  end_time timestamptz := clock_timestamp() + FORMAT('%s seconds', timeout_seconds)::interval;
+  end_time timestamptz := clock_timestamp() + timeout;
   jobrow codd_schema.background_jobs;
   jobstatus text;
   obj_to_drop codd_schema.obj_to_drop;
