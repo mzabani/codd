@@ -77,6 +77,7 @@ BEGIN
         DECLARE
           affected_row_count bigint;
         BEGIN
+            SELECT * FROM codd_schema.background_jobs 
             SELECT %s() INTO affected_row_count;
             -- TODO: Can unscheduling cancel the job and rollback the changes applied in the last run? Check. https://github.com/citusdata/pg_cron/issues/308 suggests it might be possible.
             UPDATE codd_schema.background_jobs SET
@@ -101,16 +102,30 @@ END;
 $func$ LANGUAGE plpgsql;
 
 -- | Synchronously runs a job until it completes (or does not run it if it's already complete) or until the supplied timeout elapses.
-CREATE OR REPLACE FUNCTION codd_schema.background_job_synchronously_finish(jobname text, timeout_seconds integer) RETURNS VOID AS $func$
+-- This does update codd's background_jobs table with the count of every successful and error run until either the timeout or successful completion. TODO: Add test that errors don't make the entire transaction fail.
+-- This will run the job in the isolation level of the caller's (yours) in a single transaction regardless of how many times the job needs to run.
+-- If the timeout elapses and the job isn't finished, this function will raise an exception, and will therefore fail to update even codd_schema.background_jobs properly.
+-- This will drop the auxiliary functions created by codd if it completes successfully.
+CREATE OR REPLACE FUNCTION codd_schema.synchronously_finish_background_job(job_name text, timeout_seconds integer) RETURNS VOID AS $func$
 DECLARE
   start_time timestamptz := clock_timestamp();
-  end_time timestamptz;
-  -- func_to_run = 
+  end_time timestamptz := clock_timestamp() + FORMAT('%s seconds', timeout_seconds)::interval;
+  func_to_run text; 
+  jobstatus text;
 BEGIN
   -- TODO: Throw if args are null
+  -- TODO: Can we pause the job while we run? Document if this is a limitation. Maybe LOCK FOR UPDATE in the functions just to avoid repeated work anyway?
 
-  
-
+  SELECT job_func INTO func_to_run FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
+  SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
+  WHILE jobstatus <> 'finished' LOOP
+    EXECUTE format('SELECT %s()', func_to_run);
+    -- TODO: Make function above return new status to avoid this extra query?
+    SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
+    IF clock_timestamp() >= end_time AND jobstatus <> 'finished' THEN
+      RAISE EXCEPTION 'Codd was unable to synchronously finish the background job %s in the supplied time limit. The job has not been aborted and will continue to run.', job_name;
+    END IF;
+  END LOOP;
 END;
 $func$ LANGUAGE plpgsql;
 
