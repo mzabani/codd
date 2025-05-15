@@ -3,7 +3,7 @@ CREATE TYPE codd_schema.obj_to_drop AS (
     objname text,
     on_ text
 );
-CREATE TABLE IF NOT EXISTS codd_schema.background_jobs (jobname TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', last_error TEXT, num_jobs_succeeded INT NOT NULL DEFAULT 0, num_jobs_error INT NOT NULL DEFAULT 0, job_func TEXT NOT NULL, objects_to_drop_in_order codd_schema.obj_to_drop[] NOT NULL, CHECK (status IN ('started', 'aborted', 'finished')));
+CREATE TABLE IF NOT EXISTS codd_schema.background_jobs (jobname TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', last_error TEXT, num_jobs_succeeded INT NOT NULL DEFAULT 0, num_jobs_error INT NOT NULL DEFAULT 0, job_func TEXT NOT NULL, objects_to_drop_in_order codd_schema.obj_to_drop[] NOT NULL, CHECK (status IN ('started', 'aborted', 'succeeded')));
 CREATE FUNCTION codd_schema.unschedule_job_from_pg_cron() RETURNS TRIGGER AS $$
 DECLARE
   func_name text;
@@ -31,7 +31,7 @@ CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_update
     BEFORE UPDATE OF status
     ON codd_schema.background_jobs
     FOR EACH ROW
-    WHEN (OLD.status NOT IN ('aborted', 'finished') AND NEW.status IN ('aborted', 'finished') AND OLD.status <> NEW.status)
+    WHEN (OLD.status NOT IN ('aborted', 'succeeded') AND NEW.status IN ('aborted', 'succeeded') AND OLD.status <> NEW.status)
     EXECUTE FUNCTION codd_schema.unschedule_job_from_pg_cron();
 CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_delete
     BEFORE DELETE
@@ -81,7 +81,7 @@ BEGIN
             -- TODO: Can unscheduling cancel the job and rollback the changes applied in the last run? Check. https://github.com/citusdata/pg_cron/issues/308 suggests it might be possible.
             UPDATE codd_schema.background_jobs SET
                 num_jobs_succeeded=num_jobs_succeeded+1
-              , status=CASE WHEN affected_row_count = 0 THEN 'finished' ELSE status END
+              , status=CASE WHEN affected_row_count = 0 THEN 'succeeded' ELSE status END
               WHERE jobname='%s';
         EXCEPTION WHEN OTHERS THEN
           -- The EXCEPTION clause silences the error from the logs (understandably) so it's important we
@@ -125,11 +125,11 @@ BEGIN
     RETURN;
   END IF;
   jobstatus := jobrow.status;
-  WHILE jobstatus NOT IN ('aborted', 'finished') LOOP
+  WHILE jobstatus NOT IN ('aborted', 'succeeded') LOOP
     EXECUTE format('SELECT %s()', jobrow.job_func);
     -- TODO: Make function above return new status to avoid this extra query?
     SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
-    IF clock_timestamp() >= end_time AND jobstatus <> 'finished' THEN
+    IF clock_timestamp() >= end_time AND jobstatus <> 'succeeded' THEN
       RAISE EXCEPTION 'Codd was unable to synchronously finish the background job %s in the supplied time limit. The job has not been aborted and will continue to run.', job_name;
     END IF;
   END LOOP;
