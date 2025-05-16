@@ -23,13 +23,25 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
--- | This function is to be used as an emergency. It will not do any DDL and will just make the scheduled job
--- stop running. You can still run the synchronously_finish_* functions on the job later for DDL cleanup if you wish.
-CREATE FUNCTION codd_schema.abort_background_job(jobname text) RETURNS VOID AS $$
+-- | This function is to be used live/in Production if the background job is interfering with your
+-- application and you want to stop it.
+-- It will not do any DDL and will just make the scheduled job stop running.
+-- You should still run the synchronously_finish_* functions on this job later for DDL cleanup, but
+-- you cannot resume this job. Rather, finish this and create a new one.
+CREATE FUNCTION codd_schema.abort_background_job(job_name text) RETURNS VOID AS $$
+DECLARE
+  jobstatus text;
 BEGIN
-  UPDATE codd_schema.background_jobs SET status='aborted' WHERE background_jobs.jobname=jobname;
+  -- TODO: Test aborting an incomplete job
+  SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE jobname=job_name;
+  IF jobstatus IS NULL THEN
+    RAISE EXCEPTION 'Codd background job named % does not exist', job_name;
+  ELSIF jobstatus='succeeded' THEN
+    RAISE EXCEPTION 'Codd background job named % already succeeded, so it is not possible to abort it', job_name;
+  END IF;
+  UPDATE codd_schema.background_jobs SET status='aborted' WHERE background_jobs.jobname=job_name;
 END;
-$$ LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql;
 CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_update
     BEFORE UPDATE OF status
     ON codd_schema.background_jobs
@@ -46,6 +58,7 @@ CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_delete
 CREATE OR REPLACE FUNCTION codd_schema.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
+  -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
     RAISE EXCEPTION 'Codd background migrations require the pg_cron extension to work. Please check https://github.com/citusdata/pg_cron for installation instructions';
   END IF;
   IF job_name IS NULL THEN
@@ -62,8 +75,6 @@ BEGIN
   END IF;
 END;
 $func$ LANGUAGE plpgsql;
-  -- TODO: Check for NULLs and throw
-  -- TODO: Call function that checks that pg_cron exists and is set up properly and raises error or info
 
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
@@ -73,13 +84,7 @@ DECLARE
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
   PERFORM codd_schema.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
-  -- TODO: Check for NULLs for the other arguments and throw
-  -- TODO: Call function that checks that pg_cron exists and is set up properly and raises error or info
-  -- TODO: Check the user calling this function is the same that create codd_schema? Users can only view jobs
-  --       in `cron.job` that were created by them due to a RLS policy.
-  -- Note that cron.job_run_details might not be turned on.. so we can't rely on it!
 
-  -- Insert into table first so there are no side effects if this is a duplicate name
   INSERT INTO codd_schema.background_jobs (jobname, job_func, objects_to_drop_in_order) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd_schema.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd_schema.obj_to_drop]);
 
   -- Why two functions instead of just one? Because each function's effects are atomic, as if
