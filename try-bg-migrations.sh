@@ -13,11 +13,11 @@ psql -1 -v ON_ERROR_STOP=on -f codd-background-schema.sql
 
 ########### Replacing a column with a new one
 # psql -1 -v ON_ERROR_STOP=on -f replace-one-column-restrict-enum.sql
-# psql -1 -v ON_ERROR_STOP=on -c "SELECT codd_schema.synchronously_finish_background_job('change-experience', '100 seconds')"
+# psql -1 -v ON_ERROR_STOP=on -c "SELECT codd_schema.synchronously_finalize_background_job('change-experience', '100 seconds')"
 
 ########## A job that errors after a few successful runs
 psql -1 -v ON_ERROR_STOP=on -f emulate-error-in-scheduled-job.sql
-psql -1 -v ON_ERROR_STOP=on -c "SELECT codd_schema.synchronously_finish_background_job('change-experience', '100 seconds')"
+psql -1 -v ON_ERROR_STOP=on -c "SELECT codd_schema.synchronously_finalize_background_job('change-experience', '100 seconds')"
 
 ########## Creating an index concurrently
 # psql -1 -v ON_ERROR_STOP=on -f create-index-concurrently.sql

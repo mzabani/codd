@@ -3,20 +3,71 @@ CREATE TYPE codd_schema.obj_to_drop AS (
     objname text,
     on_ text
 );
-CREATE TABLE IF NOT EXISTS codd_schema.background_jobs (jobname TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', last_error TEXT, num_jobs_no_error INT NOT NULL DEFAULT 0, num_jobs_error INT NOT NULL DEFAULT 0, runs_outside_txn BOOL NOT NULL, job_func_or_stmt TEXT NOT NULL, objects_to_drop_in_order codd_schema.obj_to_drop[] NOT NULL, pg_cron_jobs TEXT[] NOT NULL, CHECK (status IN ('started', 'aborted', 'succeeded')));
-CREATE FUNCTION codd_schema.unschedule_job_from_pg_cron() RETURNS TRIGGER AS $$
+CREATE TABLE IF NOT EXISTS codd_schema._background_jobs (
+  jobname TEXT NOT NULL PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'started',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  last_run_at TIMESTAMPTZ,
+  last_error_at TIMESTAMPTZ,
+  completed_or_aborted_at TIMESTAMPTZ,
+  finalized_at TIMESTAMPTZ,
+  num_jobs_succeeded BIGINT NOT NULL DEFAULT 0,
+  num_jobs_error BIGINT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  description_started TEXT,
+  description_aborted TEXT NOT NULL DEFAULT 'You may delete this row from codd_schema._background_jobs at any time with no side effects',
+  description_awaiting_finalization TEXT,
+  description_finalized TEXT NOT NULL DEFAULT 'Job completed successfully. You may delete this row from codd_schema._background_jobs at any time with no side effects',
+  job_function TEXT NOT NULL,
+  objects_to_drop_in_order codd_schema.obj_to_drop[] NOT NULL,
+  pg_cron_jobs TEXT[] NOT NULL
+  , CHECK (status IN ('started', 'aborted', 'run-complete-awaiting-finalization', 'finalized'))
+  , CHECK (completed_or_aborted_at IS NULL OR status <> 'started')
+  , CHECK ((finalized_at IS NOT NULL) = (status = 'finalized'))
+);
+CREATE VIEW codd_schema.jobs AS
+  SELECT jobname, created_at, status,
+          CASE WHEN status='started' THEN description_started
+               WHEN status='aborted' THEN description_aborted
+               WHEN status='run-complete-awaiting-finalization' THEN description_awaiting_finalization
+               WHEN status='finalized' THEN description_finalized
+          END AS description
+          , num_jobs_succeeded
+          , num_jobs_error
+          , last_run_at
+          , completed_or_aborted_at
+          , finalized_at
+          , last_error_at
+          , last_error
+        FROM codd_schema._background_jobs;
+
+CREATE FUNCTION codd_schema.react_to_job_status_change() RETURNS TRIGGER AS $$
 DECLARE
   pg_cron_job_name text;
 BEGIN
-  IF OLD.status='succeeded' AND NEW.status <> 'succeeded' THEN
-    RAISE EXCEPTION 'Cannot change a background job status from succeeded to anything else';
-  END IF;
-  FOREACH pg_cron_job_name IN ARRAY OLD.pg_cron_jobs
-  LOOP
-    IF EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
-       PERFORM cron.unschedule(pg_cron_job_name);
+  IF TG_OP='UPDATE' THEN
+    IF OLD.status IN ('finalized', 'aborted') AND NEW.status <> OLD.status THEN
+      RAISE EXCEPTION 'Cannot change a background job status from finalized or aborted to anything else. You can delete this job entry if you wish.';
     END IF;
-  END LOOP;
+    IF OLD.status='run-complete-awaiting-finalization' AND NEW.status <> 'finalized' THEN
+      RAISE EXCEPTION 'Cannot change a background job status from run-complete-awaiting-finalization to anything other than finalized. You can delete this job entry and deal with any outstanding DDL cleanup yourself if you wish.';
+    END IF;
+    IF NEW.status IN ('run-complete-awaiting-finalization', 'aborted') THEN
+      NEW.completed_or_aborted_at = CLOCK_TIMESTAMP();
+    ELSIF NEW.status = 'finalized' THEN
+      NEW.finalized_at = CLOCK_TIMESTAMP();
+    END IF;
+  END IF;
+    
+  IF TG_OP='DELETE' OR NEW.status IN ('aborted', 'run-complete-awaiting-finalization', 'finalized') THEN
+    FOREACH pg_cron_job_name IN ARRAY OLD.pg_cron_jobs
+    LOOP
+      IF EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
+         PERFORM cron.unschedule(pg_cron_job_name);
+      END IF;
+    END LOOP;
+  END IF;
+
   IF TG_OP='DELETE' THEN
     RETURN OLD;
   END IF;
@@ -24,37 +75,37 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
--- | This function is to be used live/in Production if the background job is interfering with your
--- application and you want to stop it.
--- It will not do any DDL and will just make the scheduled job stop running.
--- You should still run the synchronously_finish_* functions on this job later for DDL cleanup, but
--- you cannot resume this job. Rather, finish this and create a new one.
+
+-- | This function is to be used live/in Production if the pg_cron job(s) is/are interfering with your
+-- application and you want to stop them.
+-- It will not apply any DDL; its only side-effect is to stop the job's scheduled pg_cron jobs.
+-- After aborting a job, you can delete its row from codd_schema.background_migrations and apply any
+-- cleanup DDL yourself, and then retry if you wish.
 CREATE FUNCTION codd_schema.abort_background_job(job_name text) RETURNS VOID AS $$
 DECLARE
   jobstatus text;
 BEGIN
   -- TODO: Test aborting an incomplete job
-  SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE jobname=job_name;
+  SELECT status INTO jobstatus FROM codd_schema._background_jobs WHERE jobname=job_name;
   IF jobstatus IS NULL THEN
     RAISE EXCEPTION 'Codd background job named % does not exist', job_name;
-  ELSIF jobstatus='succeeded' THEN
-    RAISE EXCEPTION 'Codd background job named % already succeeded, so it is not possible to abort it', job_name;
+  ELSIF jobstatus IN ('run-complete-awaiting-finalization', 'finalized') THEN
+    RAISE EXCEPTION 'Codd background job named % already finalized or awaiting finalization, so aborting it would have no effect', job_name;
   END IF;
-  UPDATE codd_schema.background_jobs SET status='aborted' WHERE background_jobs.jobname=job_name;
+  UPDATE codd_schema._background_jobs SET status='aborted' WHERE jobname=job_name;
 END;
 $$ LANGUAGE plpgsql;
-CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_update
+CREATE TRIGGER react_to_status_change
     BEFORE UPDATE OF status
-    ON codd_schema.background_jobs
+    ON codd_schema._background_jobs
     FOR EACH ROW
-    WHEN (OLD.status NOT IN ('aborted', 'succeeded') AND NEW.status IN ('aborted', 'succeeded') AND OLD.status <> NEW.status)
-    EXECUTE FUNCTION codd_schema.unschedule_job_from_pg_cron();
-CREATE TRIGGER stop_running_cron_job_on_abort_or_finish_delete
+    WHEN (OLD.status <> NEW.status)
+    EXECUTE FUNCTION codd_schema.react_to_job_status_change();
+CREATE TRIGGER react_to_job_deletion
     BEFORE DELETE
-    ON codd_schema.background_jobs
+    ON codd_schema._background_jobs
     FOR EACH ROW
-    WHEN (OLD.status='started')
-    EXECUTE FUNCTION codd_schema.unschedule_job_from_pg_cron();
+    EXECUTE FUNCTION codd_schema.react_to_job_status_change();
 
 CREATE OR REPLACE FUNCTION codd_schema.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 BEGIN
@@ -71,8 +122,8 @@ BEGIN
   IF plpgsql_to_run_periodically IS NULL THEN
     RAISE EXCEPTION 'Please supply a body of valid SQL or plpgsql to run on the supplied schedule';
   END IF;
-  IF EXISTS (SELECT FROM codd_schema.background_jobs WHERE jobname=job_name) THEN
-    RAISE EXCEPTION 'Codd background job named % already exists. Please choose another name or clean up the codd_schema.background_jobs table by deleting successful jobs if that would help', job_name;
+  IF EXISTS (SELECT FROM codd_schema._background_jobs WHERE jobname=job_name) THEN
+    RAISE EXCEPTION 'Codd background job named % already exists. Please choose another name or clean up the codd_schema._background_jobs table by deleting successful jobs if that would help', job_name;
   END IF;
   IF EXISTS (SELECT FROM cron.job WHERE jobname=job_name) THEN
     RAISE EXCEPTION 'There already exists a pg_cron job named %. Please choose another name or clean up the the list of pg_cron jobs', job_name;
@@ -85,58 +136,61 @@ BEGIN
     RETURN CASE WHEN plpgsqltext ~ ';\s*$' THEN plpgsqltext ELSE plpgsqltext || ';' END;
 END;
 $$ IMMUTABLE STRICT PARALLEL SAFE LANGUAGE plpgsql;
-CREATE TYPE codd_schema.succeeded_signal_kind AS ENUM ('when-modifies-0-rows', 'select-boolean-into-succeeded');
+CREATE TYPE codd_schema.succeeded_signal_kind AS ENUM ('when-modifies-0-rows', 'select-into-status-var');
 
 -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
-CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, succeeded_signal codd_schema.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, description_started text, description_aborted text, description_awaiting_finalization text, description_finalized text, succeeded_signal codd_schema.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$
 DECLARE
   temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
   PERFORM codd_schema.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
-  INSERT INTO codd_schema.background_jobs (jobname, job_func_or_stmt, runs_outside_txn, objects_to_drop_in_order, pg_cron_jobs) VALUES (jobname, temp_bg_wrapper_func_name, FALSE, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd_schema.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd_schema.obj_to_drop], ARRAY[jobname]);
+  INSERT INTO codd_schema._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd_schema.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd_schema.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd_schema._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd_schema._background_jobs at any time with no side effects'));
 
   -- Why two functions instead of just one? Because each function's effects are atomic, as if
-  -- there was a savepoint around each function call, and that enables us to update codd_schema.background_jobs
+  -- there was a savepoint around each function call, and that enables us to update codd_schema._background_jobs
   -- even if the job errors out. Still, write a test or look for official docs to assert this property.
   -- TODO: Test very long job names (more than 63 chars) and with weird characters too
   EXECUTE format($sqltext$
-        CREATE FUNCTION %s () RETURNS BOOLEAN AS $$
+        CREATE FUNCTION %s () RETURNS TEXT AS $$
         DECLARE
           affected_row_count bigint;
-          succeeded boolean;
+          new_codd_job_status TEXT;
         BEGIN
           %s
           %s
-          RETURN succeeded;
+          RETURN new_codd_job_status;
         END;
         $$ LANGUAGE plpgsql;
       $sqltext$, temp_bg_success_func_name, codd_schema._append_semi_colon(plpgsql_to_run_periodically),
         CASE WHEN succeeded_signal='when-modifies-0-rows' THEN $$
           GET DIAGNOSTICS affected_row_count = row_count;
-          succeeded := (affected_row_count=0);$$ ELSE '' END);
+          new_codd_job_status = CASE WHEN affected_row_count=0 THEN 'run-complete-awaiting-finalization' END;$$ ELSE '' END);
 
   EXECUTE format($sqltext$
         CREATE FUNCTION %s () RETURNS VOID AS $$
         DECLARE
-          succeeded boolean;
+          new_codd_job_status TEXT;
           stack text;
         BEGIN
-            SELECT %s() INTO succeeded;
+            SELECT %s() INTO new_codd_job_status;
             -- TODO: Can unscheduling cancel the job and rollback the changes applied in the last run? Check. https://github.com/citusdata/pg_cron/issues/308 suggests it might be possible.
-            UPDATE codd_schema.background_jobs SET
-                num_jobs_no_error=num_jobs_no_error+1
-              , status=CASE WHEN succeeded THEN 'succeeded' ELSE status END
+            UPDATE codd_schema._background_jobs SET
+                num_jobs_succeeded=num_jobs_succeeded+1
+              , last_run_at=CLOCK_TIMESTAMP()
+              , status=COALESCE(new_codd_job_status, status)
               WHERE jobname=%s;
         EXCEPTION WHEN OTHERS THEN
           -- The EXCEPTION clause silences the error from the logs (understandably) so it's important we
           -- emit at least a warning (we can't re-raise EXCEPTION or this function's UPDATE won't have an effect)
           GET DIAGNOSTICS stack = PG_CONTEXT;
           RAISE WARNING 'Error in codd background job. %% %%. Stack: %%', SQLSTATE, SQLERRM, stack;
-          UPDATE codd_schema.background_jobs SET
+          UPDATE codd_schema._background_jobs SET
               num_jobs_error=num_jobs_error + 1
+            , last_run_at=CLOCK_TIMESTAMP()
+            , last_error_at=CLOCK_TIMESTAMP()
             , last_error=format('%%s: %%s', SQLSTATE, SQLERRM)
             WHERE jobname=%s;
         END;
@@ -148,19 +202,19 @@ BEGIN
 END;
 $func$ LANGUAGE plpgsql;
 
--- | Synchronously runs a job until it completes (or does not run it if it's already complete) or until the supplied timeout elapses.
--- This does nothing if the job does not exist.
+-- | Synchronously runs a job until it finalized or until the supplied timeout elapses, and raises an exception in case of the latter.
+-- This does nothing if the job does not exist or is already finalized.
 -- This doesn't run the job if it has been aborted.
 -- This drops database objects created by the job if it completes successfully or if the job was aborted.
--- This does update codd's background_jobs table with the count of every successful and error run until either the timeout or successful completion. TODO: Add test that errors don't make the entire transaction fail.
+-- This does update codd_schema._background_jobs table with the count of every successful and error run until either the timeout or successful completion. TODO: Add test that errors don't make the entire transaction fail.
 -- This will run the job in the isolation level of the caller's (yours) in a single transaction regardless of how many times the job needs to run.
--- If the timeout elapses and the job isn't succeeded, this function will raise an exception, and will therefore fail to update even codd_schema.background_jobs properly.
+-- If the timeout elapses and the job isn't finalized, this function will raise an exception, and will therefore fail to update even codd_schema._background_jobs properly.
 -- This will drop the auxiliary functions created by codd if it completes successfully.
-CREATE OR REPLACE FUNCTION codd_schema.synchronously_finish_background_job(job_name text, timeout interval) RETURNS VOID AS $func$
+CREATE OR REPLACE FUNCTION codd_schema.synchronously_finalize_background_job(job_name text, timeout interval) RETURNS VOID AS $func$
 DECLARE
   start_time timestamptz := clock_timestamp();
   end_time timestamptz := clock_timestamp() + timeout;
-  jobrow codd_schema.background_jobs;
+  jobrow codd_schema._background_jobs;
   jobstatus text;
   obj_to_drop codd_schema.obj_to_drop;
 BEGIN
@@ -171,42 +225,43 @@ BEGIN
     RAISE EXCEPTION 'Please supply a timeout for synchronously completing a job';
   END IF;
   -- TODO: Can we pause the job while we run? Document if this is a limitation. Maybe LOCK FOR UPDATE/SKIP LOCKED in the functions just to avoid repeated work anyway? Our tests should run with serializable isolation as that's the hardest level for this kind of thing
-  -- TODO: Add tests with aborted jobs
 
-  SELECT * INTO jobrow FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
-  IF jobrow.runs_outside_txn IS TRUE THEN
-    RAISE EXCEPTION 'It is not possible to synchronously force a job that runs outside transactions to finish';
-  END IF;
-  IF jobrow.jobname IS NULL THEN
+  SELECT * INTO jobrow FROM codd_schema._background_jobs WHERE jobname=job_name;
+  IF jobrow.jobname IS NULL OR jobrow.status='finalized' THEN
     RETURN;
+  ELSIF jobrow.status = 'aborted' THEN
+    RAISE EXCEPTION 'It is not possible to finalize the aborted job %. Please delete the aborted job row from codd_schema.background_migrations and do any cleanup necessary', job_name;
   END IF;
-  jobstatus := jobrow.status;
-  WHILE jobstatus NOT IN ('aborted', 'succeeded') LOOP
-    EXECUTE format('SELECT %s()', jobrow.job_func_or_stmt);
+  jobstatus = jobrow.status;
+  WHILE jobstatus NOT IN ('aborted', 'run-complete-awaiting-finalization', 'finalized') LOOP
+    EXECUTE format('SELECT %s()', jobrow.job_function);
     -- TODO: Make function above return new status to avoid this extra query?
-    SELECT status INTO jobstatus FROM codd_schema.background_jobs WHERE background_jobs.jobname=job_name;
-    IF clock_timestamp() >= end_time AND jobstatus <> 'succeeded' THEN
-      RAISE EXCEPTION 'Codd was unable to synchronously finish the background job % in the supplied time limit. The job has not been aborted and will continue to run.', job_name;
+    SELECT status INTO jobstatus FROM codd_schema._background_jobs WHERE jobname=job_name;
+    IF clock_timestamp() >= end_time AND jobstatus NOT IN ('run-complete-awaiting-finalization', 'finalized') THEN
+      RAISE EXCEPTION 'Codd was unable to synchronously finalize the background job % in the supplied time limit. The job has not been aborted.', job_name;
     END IF;
   END LOOP;
   FOREACH obj_to_drop IN ARRAY jobrow.objects_to_drop_in_order
   LOOP
     EXECUTE format('DROP %s IF EXISTS %s %s', (obj_to_drop).kind, (obj_to_drop).objname, CASE WHEN (obj_to_drop).on_ IS NULL THEN '' ELSE format('ON %s', (obj_to_drop).on_) END);
   END LOOP;
+  UPDATE codd_schema._background_jobs SET status='finalized' WHERE jobname=job_name;
 END;
 $func$ LANGUAGE plpgsql;
 
--- | Adds triggers and a background job to populate a column with values such that when the background job is completed,
--- every row in the table has been populated and new rows will also be automatically populated.
--- You can conclude the gradual migration with `synchronously_finish_background_job`, which will drop the triggers and
--- functions created here, but only after ensuring all rows are populated.
+-- | Adds triggers and a background job to populate a column with values such that eventually
+-- every existing and future row in the table will have values as you define.
+-- At that point, the status of the job will be 'run-complete-awaiting-finalization'. You can then
+-- finalize the migration with `synchronously_finalize_background_job`, which will drop the triggers and
+-- functions created here.
+-- It is up to you however to be careful and deploy an application that no longer needs any old columns
+-- that the gradually populated column might be replacing before finalizing the job created here.
 CREATE OR REPLACE FUNCTION codd_schema.populate_column_gradually(job_name text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, colname text, new_col_trigger_expr text) RETURNS VOID AS $func$
 DECLARE
   trigger_name text;
   triggfn_name text;
   qualif_table_name text;
 BEGIN
-  PERFORM codd_schema.assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);
   IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
     RAISE EXCEPTION $err$
 Did you forget to supply some arguments to populate_column_gradually? Here's an usage example that updates one row every second:
@@ -226,6 +281,8 @@ Did you forget to supply some arguments to populate_column_gradually? Here's an 
                         WHERE attname=colname AND relname=tablename AND nspname=current_schema) THEN
       RAISE EXCEPTION 'Column % of relation % does not exist in your preferred schema. Please create the column yourself before calling populate_column_gradually, and possibly check your search_paths setting', colname, tablename; 
   END IF;
+  PERFORM codd_schema.assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);
+
   trigger_name := format('%I', '_codd_bgjob_trig' || job_name);
   triggfn_name := format('%I.%I', current_schema, '_codd_bgjob_' || job_name);
   qualif_table_name := format('%I.%I', current_schema, tablename);
@@ -236,8 +293,8 @@ Did you forget to supply some arguments to populate_column_gradually? Here's an 
   -- TODO: Should we forbid changing values of the new column with a trigger? Or does the BEFORE trigger make such attempts futile?
   -- TODO: Add tests with various search_paths to check we're being diligent
   -- TODO: Add tests with various weird object names
-  PERFORM codd_schema.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically);
-  UPDATE codd_schema.background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd_schema.obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd_schema.obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
+  PERFORM codd_schema.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd_schema._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and pg_cron jobs are no longer running. You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep it up-to-date', tablename, colname), NULL);
+  UPDATE codd_schema._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd_schema.obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd_schema.obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
   EXECUTE format($triggers$
   CREATE FUNCTION %s() RETURNS TRIGGER AS $$
   BEGIN
@@ -265,16 +322,16 @@ BEGIN
   -- TODO: We need to make the DDL change run only once.. things like REINDEX CONCURRENTLY don't have an idempotent form available, and we don't want those to just keep on recreating indexes repeatedly. Maybe for now we ask users to `DROP INDEX` and `CREATE INDEX` again and just document this limitation.
   PERFORM codd_schema.background_job_begin(job_name, check_completion_cron_schedule,
     format($$
-      SELECT (COUNT(*)=1) INTO succeeded
+      SELECT CASE WHEN COUNT(*)=1 THEN 'finalized' END INTO new_codd_job_status 
       FROM pg_catalog.pg_index
       JOIN pg_catalog.pg_class index_class ON indexrelid=index_class.oid
       JOIN pg_catalog.pg_namespace ON relnamespace=pg_namespace.oid
       JOIN pg_catalog.pg_class index_table ON index_table.oid=indrelid
       WHERE nspname=%s AND index_class.relname=%s AND index_table.relname=%s AND indisready AND indislive AND indisvalid;$$, quote_literal(current_schema), quote_literal(indexname), quote_literal(tablename))
-    , 'select-boolean-into-succeeded');
+    , format('Periodically checking that the %I index on table %I was (concurrently) created successfully and is ready to be used', indexname, tablename), format('Given up on creating the %I index on table %I. You may DELETE this job from codd_schema._background_jobs at any time without side effects', indexname, tablename), NULL, format('Index %I on table %I successfully created. This job may be DELETEd from codd_schema._background_jobs', indexname, tablename), 'select-into-status-var');
 
   -- Add another cron job that does not run in a transaction to create the index
-  UPDATE codd_schema.background_jobs
+  UPDATE codd_schema._background_jobs
     SET pg_cron_jobs = pg_cron_jobs || ARRAY[job_name || '-try-create']
     WHERE jobname=job_name;
   PERFORM cron.schedule(job_name || '-try-create', try_create_cron_schedule, create_index_concurrently_if_not_exists_statement);
