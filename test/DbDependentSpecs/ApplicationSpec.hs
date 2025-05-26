@@ -360,7 +360,7 @@ downgradeCoddSchema conn targetVersion = go maxBound
             CoddSchemaV5 ->
               execvoid_
                 conn
-                "DROP VIEW codd.jobs; DROP TABLE codd._background_jobs; DROP FUNCTION codd.react_to_job_status_change; DROP FUNCTION codd.abort_background_job; DROP FUNCTION codd.assert_job_can_be_created; DROP FUNCTION codd._append_semi_colon; DROP FUNCTION codd.background_job_begin; DROP FUNCTION codd.synchronously_finalize_background_job; DROP FUNCTION codd.populate_column_gradually; DROP TYPE codd.obj_to_drop; DROP TYPE codd.succeeded_signal_kind; ALTER SCHEMA codd RENAME TO codd_schema;"
+                "DROP VIEW codd.jobs; DROP TABLE codd._background_jobs; DROP FUNCTION codd.react_to_job_status_change; DROP FUNCTION codd.abort_background_job; DROP FUNCTION codd.assert_job_can_be_created; DROP FUNCTION codd._append_semi_colon; DROP FUNCTION codd.background_job_begin; DROP FUNCTION codd.synchronously_finalize_background_job; DROP FUNCTION codd.populate_column_gradually; DROP FUNCTION codd.assert_pg_cron_setup; DROP TYPE codd.obj_to_drop; DROP TYPE codd.succeeded_signal_kind; ALTER SCHEMA codd RENAME TO codd_schema;"
 
           go (pred currentSchemaVersion)
 

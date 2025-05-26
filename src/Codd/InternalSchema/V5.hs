@@ -123,12 +123,16 @@ CREATE TRIGGER react_to_job_deletion
     FOR EACH ROW
     EXECUTE FUNCTION codd.react_to_job_status_change();
 
-CREATE FUNCTION codd.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
+CREATE FUNCTION codd.assert_pg_cron_setup() RETURNS VOID AS $func$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
   -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
     RAISE EXCEPTION 'Codd background migrations require the pg_cron extension to work. Please check https://github.com/citusdata/pg_cron for installation instructions';
   END IF;
+END;
+$func$ LANGUAGE plpgsql;
+CREATE FUNCTION codd.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
+BEGIN
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
   END IF;
@@ -160,6 +164,7 @@ DECLARE
   temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
+  PERFORM codd.assert_pg_cron_setup();
   PERFORM codd.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
   INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects'));
@@ -232,6 +237,7 @@ DECLARE
   jobstatus text;
   obj_to_drop codd.obj_to_drop;
 BEGIN
+  PERFORM codd.assert_pg_cron_setup();
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
   END IF;
@@ -276,6 +282,7 @@ DECLARE
   triggfn_name text;
   qualif_table_name text;
 BEGIN
+  PERFORM codd.assert_pg_cron_setup();
   IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
     RAISE EXCEPTION $err$
 Did you forget to supply some arguments to populate_column_gradually? Here is an usage example that updates one row every second:
