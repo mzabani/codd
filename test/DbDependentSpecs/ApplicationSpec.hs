@@ -357,6 +357,10 @@ downgradeCoddSchema conn targetVersion = go maxBound
               execvoid_
                 conn
                 "ALTER TABLE codd_schema.sql_migrations DROP COLUMN txnid, DROP COLUMN connid"
+            CoddSchemaV5 ->
+              execvoid_
+                conn
+                "DROP VIEW codd.jobs; DROP TABLE codd._background_jobs; DROP FUNCTION codd.react_to_job_status_change; DROP FUNCTION codd.abort_background_job; DROP FUNCTION codd.assert_job_can_be_created; DROP FUNCTION codd._append_semi_colon; DROP FUNCTION codd.background_job_begin; DROP FUNCTION codd.synchronously_finalize_background_job; DROP FUNCTION codd.populate_column_gradually; DROP TYPE codd.obj_to_drop; DROP TYPE codd.succeeded_signal_kind; ALTER SCHEMA codd RENAME TO codd_schema;"
 
           go (pred currentSchemaVersion)
 
@@ -862,7 +866,7 @@ spec = do
                         ( \conn ->
                             DB.query
                               conn
-                              "SELECT name from codd_schema.sql_migrations"
+                              "SELECT name from codd.sql_migrations"
                               ()
                         )
                   allRegisteredMigs
@@ -917,7 +921,7 @@ spec = do
                         ( \conn ->
                             DB.query
                               conn
-                              "SELECT name from codd_schema.sql_migrations"
+                              "SELECT name from codd.sql_migrations"
                               ()
                         )
                   allRegisteredMigs2
@@ -985,7 +989,7 @@ spec = do
                         ( \conn ->
                             DB.query
                               conn
-                              "SELECT name from codd_schema.sql_migrations"
+                              "SELECT name from codd.sql_migrations"
                               ()
                         )
                   allRegisteredMigs
@@ -1072,7 +1076,7 @@ spec = do
                                        "new_database_3"
                                      ]
 
-                    -- 2. Check applied_at is not the time we insert into codd_schema.sql_migrations,
+                    -- 2. Check applied_at is not the time we insert into codd.sql_migrations,
                     -- but the time when migrations are effectively applied.
                     runMigs ::
                       [ ( FilePath,
@@ -1082,7 +1086,7 @@ spec = do
                       ] <-
                       DB.query
                         conn
-                        "SET intervalstyle TO 'iso_8601'; SELECT name, applied_at, application_duration FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                        "SET intervalstyle TO 'iso_8601'; SELECT name, applied_at, application_duration FROM codd.sql_migrations ORDER BY applied_at, id"
                         ()
                     map (\(f, _, _) -> f) runMigs
                       `shouldBe` map
@@ -1164,7 +1168,7 @@ spec = do
                     . map DB.fromOnly
                     <$> DB.query
                       conn
-                      "SELECT name FROM codd_schema.sql_migrations"
+                      "SELECT name FROM codd.sql_migrations"
                       ()
                 runMigs
                   `shouldBe` Set.fromList
@@ -1231,7 +1235,7 @@ spec = do
                               liftIO $
                                 DB.query
                                   conn
-                                  "SELECT id, name, txnid, connid FROM codd_schema.sql_migrations ORDER BY applied_at, id"
+                                  "SELECT id, name, txnid, connid FROM codd.sql_migrations ORDER BY applied_at, id"
                                   ()
                           )
                     -- Check all migrations were applied in order, and that ordering only by their Ids gives the same order

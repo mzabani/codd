@@ -1,3 +1,17 @@
+{-# LANGUAGE QuasiQuotes #-}
+
+module Codd.InternalSchema.V5 (migrateInternalSchemaV4ToV5) where
+
+import Codd.Query (InTxn, pgExecvoid_)
+import Database.PostgreSQL.Query.TH.SqlExp (sqlExp)
+import qualified Database.PostgreSQL.Simple as DB
+import UnliftIO (MonadIO)
+
+migrateInternalSchemaV4ToV5 :: (InTxn m, MonadIO m) => DB.Connection -> m ()
+migrateInternalSchemaV4ToV5 conn = do
+  pgExecvoid_
+    conn
+    [sqlExp|
 ALTER SCHEMA codd_schema RENAME TO codd;
 CREATE TYPE codd.obj_to_drop AS (
     kind text,
@@ -26,6 +40,7 @@ CREATE TABLE IF NOT EXISTS codd._background_jobs (
   , CHECK (completed_or_aborted_at IS NULL OR status <> 'started')
   , CHECK ((finalized_at IS NOT NULL) = (status = 'finalized'))
 );
+GRANT INSERT,SELECT ON TABLE codd._background_jobs TO PUBLIC;
 CREATE VIEW codd.jobs AS
   SELECT jobname, created_at, status,
           CASE WHEN status='started' THEN description_started
@@ -108,7 +123,7 @@ CREATE TRIGGER react_to_job_deletion
     FOR EACH ROW
     EXECUTE FUNCTION codd.react_to_job_status_change();
 
-CREATE OR REPLACE FUNCTION codd.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
+CREATE FUNCTION codd.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
   -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
@@ -138,10 +153,9 @@ BEGIN
 END;
 $$ IMMUTABLE STRICT PARALLEL SAFE LANGUAGE plpgsql;
 CREATE TYPE codd.succeeded_signal_kind AS ENUM ('when-modifies-0-rows', 'select-into-status-var');
-
--- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
+  -- | This function schedules a background migration that must be a valid plpgsql function body. It will until the last statement in that body returns a row count of 0 (zero), and then will stop running.
 -- TODO: Is there no better way? The command tag check would be very nice. Maybe we ask to return a single boolean if that's not possible?
-CREATE OR REPLACE FUNCTION codd.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, description_started text, description_aborted text, description_awaiting_finalization text, description_finalized text, succeeded_signal codd.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$
+CREATE FUNCTION codd.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, description_started text, description_aborted text, description_awaiting_finalization text, description_finalized text, succeeded_signal codd.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$
 DECLARE
   temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
@@ -202,7 +216,6 @@ BEGIN
   PERFORM cron.schedule(jobname, cron_schedule, format('BEGIN; SELECT %s(); COMMIT;', temp_bg_wrapper_func_name));
 END;
 $func$ LANGUAGE plpgsql;
-
 -- | Synchronously runs a job until it finalized or until the supplied timeout elapses, and raises an exception in case of the latter.
 -- This does nothing if the job does not exist or is already finalized.
 -- This doesn't run the job if it has been aborted.
@@ -211,7 +224,7 @@ $func$ LANGUAGE plpgsql;
 -- This will run the job in the isolation level of the caller's (yours) in a single transaction regardless of how many times the job needs to run.
 -- If the timeout elapses and the job isn't finalized, this function will raise an exception, and will therefore fail to update even codd._background_jobs properly.
 -- This will drop the auxiliary functions created by codd if it completes successfully.
-CREATE OR REPLACE FUNCTION codd.synchronously_finalize_background_job(job_name text, timeout interval) RETURNS VOID AS $func$
+CREATE FUNCTION codd.synchronously_finalize_background_job(job_name text, timeout interval) RETURNS VOID AS $func$
 DECLARE
   start_time timestamptz := clock_timestamp();
   end_time timestamptz := clock_timestamp() + timeout;
@@ -257,7 +270,7 @@ $func$ LANGUAGE plpgsql;
 -- functions created here.
 -- It is up to you however to be careful and deploy an application that no longer needs any old columns
 -- that the gradually populated column might be replacing before finalizing the job created here.
-CREATE OR REPLACE FUNCTION codd.populate_column_gradually(job_name text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, colname text, new_col_trigger_expr text) RETURNS VOID AS $func$
+CREATE FUNCTION codd.populate_column_gradually(job_name text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, colname text, new_col_trigger_expr text) RETURNS VOID AS $func$
 DECLARE
   trigger_name text;
   triggfn_name text;
@@ -265,7 +278,7 @@ DECLARE
 BEGIN
   IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
     RAISE EXCEPTION $err$
-Did you forget to supply some arguments to populate_column_gradually? Here's an usage example that updates one row every second:
+Did you forget to supply some arguments to populate_column_gradually? Here is an usage example that updates one row every second:
 
       ALTER TABLE animals ADD COLUMN new_number INT;
       SELECT codd.populate_column_gradually('new-column-with-old-column-plus1', '1 seconds',
@@ -310,31 +323,4 @@ Did you forget to supply some arguments to populate_column_gradually? Here's an 
       EXECUTE FUNCTION %s();
   $triggers$, triggfn_name, colname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, tablename, triggfn_name);
 END;
-$func$ LANGUAGE plpgsql;
-
--- | I just want to check this is possible; we don't need it as much as e.g. populating columns and we'll need schema ignore rules before this works nicely with codd, too
-CREATE OR REPLACE FUNCTION codd.create_index_concurrently(job_name text, check_completion_cron_schedule text, create_index_concurrently_if_not_exists_statement text, tablename text, indexname text, try_create_cron_schedule text) RETURNS VOID AS $func$
-DECLARE
-  qualif_table_name text;
-BEGIN
-  -- TODO: Raise exception that disables this function completely until we have schema ignore rules in place to support it well
-  -- TODO: Check that no pg_cron job with the "-try-create" ending exists
-  -- TODO: If there is a schedule for trying (as opposed to just trying once), then we should be able to handle failure well, too.
-  -- TODO: We need to make the DDL change run only once.. things like REINDEX CONCURRENTLY don't have an idempotent form available, and we don't want those to just keep on recreating indexes repeatedly. Maybe for now we ask users to `DROP INDEX` and `CREATE INDEX` again and just document this limitation.
-  PERFORM codd.background_job_begin(job_name, check_completion_cron_schedule,
-    format($$
-      SELECT CASE WHEN COUNT(*)=1 THEN 'finalized' END INTO new_codd_job_status 
-      FROM pg_catalog.pg_index
-      JOIN pg_catalog.pg_class index_class ON indexrelid=index_class.oid
-      JOIN pg_catalog.pg_namespace ON relnamespace=pg_namespace.oid
-      JOIN pg_catalog.pg_class index_table ON index_table.oid=indrelid
-      WHERE nspname=%s AND index_class.relname=%s AND index_table.relname=%s AND indisready AND indislive AND indisvalid;$$, quote_literal(current_schema), quote_literal(indexname), quote_literal(tablename))
-    , format('Periodically checking that the %I index on table %I was (concurrently) created successfully and is ready to be used', indexname, tablename), format('Given up on creating the %I index on table %I. You may DELETE this job from codd._background_jobs at any time without side effects', indexname, tablename), NULL, format('Index %I on table %I successfully created. This job may be DELETEd from codd._background_jobs', indexname, tablename), 'select-into-status-var');
-
-  -- Add another cron job that does not run in a transaction to create the index
-  UPDATE codd._background_jobs
-    SET pg_cron_jobs = pg_cron_jobs || ARRAY[job_name || '-try-create']
-    WHERE jobname=job_name;
-  PERFORM cron.schedule(job_name || '-try-create', try_create_cron_schedule, create_index_concurrently_if_not_exists_statement);
-END;
-$func$ LANGUAGE plpgsql;
+$func$ LANGUAGE plpgsql; |]

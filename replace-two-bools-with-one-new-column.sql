@@ -8,7 +8,7 @@ UPDATE employee SET
 -- .. and will be replaced by a single new column
 CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');
 ALTER TABLE employee ADD COLUMN experience2 experience2;
-SELECT codd_schema.new_gradual_column('change-experience', '1 seconds',
+SELECT codd.new_gradual_column('change-experience', '1 seconds',
 $$
 UPDATE employee SET experience2=CASE WHEN very_experienced THEN 'senior'::experience2 WHEN very_immature THEN 'intern' WHEN very_experienced IS NOT NULL THEN 'junior' END
     WHERE employee_id=(SELECT employee_id FROM employee WHERE (very_experienced IS NULL) <> (experience2 IS NULL) LIMIT 1);

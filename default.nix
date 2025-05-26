@@ -76,20 +76,20 @@ in
           inherit coddexe;
         };
 
-  testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_16; };
-  testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_15; };
-  testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_14; };
-  testsPg13 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_13; };
-  testsPg12 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_12; };
+  testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_16.withPackages (ps: with ps; [ pg_cron ]); };
+  testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_15.withPackages (ps: with ps; [ pg_cron ]); };
+  testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_14.withPackages (ps: with ps; [ pg_cron ]); };
+  testsPg13 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_13.withPackages (ps: with ps; [ pg_cron ]); };
+  testsPg12 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = pkgs.postgresql_12.withPackages (ps: with ps; [ pg_cron ]); };
   testsNoDb = { hspecArgs ? "--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/" }: import ./nix/run-no-db-tests.nix { inherit pkgs coddtests hspecArgs; };
   testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs coddtests; postgres = pkgs.postgresql_16; };
 
   # Shells with specific-versioned postgres servers to run tests locally
-  shellPg16 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_16; };
-  shellPg15 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_15; };
-  shellPg14 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_14; };
-  shellPg13 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_13; };
-  shellPg12 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_12; };
+  shellPg16 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_16.withPackages (ps: with ps; [ pg_cron ]); };
+  shellPg15 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_15.withPackages (ps: with ps; [ pg_cron ]); };
+  shellPg14 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_14.withPackages (ps: with ps; [ pg_cron ]); };
+  shellPg13 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_13.withPackages (ps: with ps; [ pg_cron ]); };
+  shellPg12 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = pkgs.postgresql_12.withPackages (ps: with ps; [ pg_cron ]); };
 
   shellForCITests = import ./nix/test-shell-ci.nix { inherit pkgs; };
 

@@ -4,6 +4,7 @@ module Codd.Query
     InTxn,
     NotInTxn,
     execvoid_,
+    pgExecvoid_,
     query,
     txnStatus,
     unsafeQuery1,
@@ -31,6 +32,7 @@ import qualified Data.Attoparsec.Text as Parsec
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Database.PostgreSQL.LibPQ as PQ
+import Database.PostgreSQL.Query (PgMonadT, SqlBuilder, runSqlBuilder)
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Internal as PGInternal
 import UnliftIO
@@ -42,6 +44,11 @@ import UnliftIO.Resource (ResourceT)
 
 execvoid_ :: (MonadIO m) => DB.Connection -> DB.Query -> m ()
 execvoid_ conn q = liftIO $ void $ DB.execute_ conn q
+
+pgExecvoid_ :: (MonadIO m) => DB.Connection -> SqlBuilder -> m ()
+pgExecvoid_ conn sb = liftIO $ do
+  (qry, _) <- runSqlBuilder conn (\_ b -> b) sb
+  void $ DB.execute_ conn qry
 
 query ::
   (DB.FromRow b, MonadIO m, DB.ToRow a) =>
@@ -136,6 +143,8 @@ instance (NotInTxn m, Monoid w) => NotInTxn (WriterT w m)
 -- I wonder if it's worth it?
 -- instance (InTxn m, MonadTrans t, Monad (t m)) => InTxn (t m)
 instance (InTxn m) => InTxn (LoggingT m)
+
+instance (InTxn m) => InTxn (PgMonadT m)
 
 instance (InTxn m) => InTxn (ResourceT m)
 

@@ -5,8 +5,7 @@
         "employee_id",
         "employee_name",
         "experience",
-        "surname",
-        "experience2"
+        "surname"
     ],
     "compositetype": null,
     "forcerowsecurity": false,

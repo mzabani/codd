@@ -43,6 +43,11 @@ library
       Codd.Internal
       Codd.Internal.MultiQueryStatement
       Codd.Internal.Retry
+      Codd.InternalSchema.V1
+      Codd.InternalSchema.V2
+      Codd.InternalSchema.V3
+      Codd.InternalSchema.V4
+      Codd.InternalSchema.V5
       Codd.Logging
       Codd.Parsing
       Codd.Prelude
@@ -100,6 +105,7 @@ library
     , mtl
     , network-uri
     , postgresql-libpq
+    , postgresql-query
     , postgresql-simple
     , resourcet
     , streaming
