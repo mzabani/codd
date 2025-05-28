@@ -7,4 +7,5 @@ begin;
     set role "codd-user";
     grant select on table employee to codd_admin;
     grant select on table employee to PUBLIC;
+    RESET ROLE;
 commit;

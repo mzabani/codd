@@ -84,7 +84,7 @@ spec = do
                               testConnTimeout
                               (\conn -> DB.query
                                   conn
-                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
+                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
                                   ()
                               )
                       nonBootstrapAppliedMigs `shouldBe` []
@@ -130,7 +130,7 @@ spec = do
                               testConnTimeout
                               (\conn -> DB.query
                                   conn
-                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
+                                  "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id OFFSET 1 -- Skip the bootstrap migration"
                                   ()
                               )
                       nonBootstrapAppliedMigs `shouldBe` []
@@ -188,7 +188,7 @@ spec = do
                                   (,)
                                       <$> DB.query
                                               conn
-                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id"
                                               ()
                                       <*> DB.query
                                               conn
@@ -254,7 +254,7 @@ spec = do
                                   (,)
                                       <$> DB.query
                                               conn
-                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id"
                                               ()
                                       <*> DB.query
                                               conn
@@ -320,7 +320,7 @@ spec = do
                                   (,,)
                                       <$> DB.query
                                               conn
-                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id"
                                               ()
                                       <*> DB.query
                                               conn
@@ -412,7 +412,7 @@ spec = do
                                   (,,)
                                       <$> DB.query
                                               conn
-                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd_schema.sql_migrations order by id"
+                                              "SELECT name, num_applied_statements, no_txn_failed_at IS NULL from codd.sql_migrations order by id"
                                               ()
                                       <*> DB.query
                                               conn
@@ -501,7 +501,7 @@ spec = do
                                 (apname, apnstmts, apat, apfailedat) <-
                                     unsafeQuery1
                                         conn
-                                        "SELECT name, num_applied_statements, applied_at, no_txn_failed_at FROM codd_schema.sql_migrations"
+                                        "SELECT name, num_applied_statements, applied_at, no_txn_failed_at FROM codd.sql_migrations"
                                         ()
                                 (apname, apnstmts, apat)
                                     `shouldBe` ( "2000-01-01-00-00-00-bootstrap-but-fail.sql" :: String

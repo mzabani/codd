@@ -1715,7 +1715,7 @@ spec = do
                   ( \conn ->
                       DB.execute
                         conn
-                        "WITH reversedMigs (name) AS (SELECT name FROM codd_schema.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd_schema.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
+                        "WITH reversedMigs (name) AS (SELECT name FROM codd.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
                         (DB.Only num)
                   )
 
