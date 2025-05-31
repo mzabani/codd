@@ -210,6 +210,14 @@ aroundTestDbInfo = around $ \act -> do
 aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 
+-- -- | Same as `aroundTestDbInfo` but includes as one of its first in-txn migrations a pg_dump-like migration
+-- -- that creates a very old version of codd_schema.
+-- aroundTestDbInfoWithOldCoddSchema :: SpecWith CoddSettings -> Spec
+-- aroundTestDbInfoWithOldCoddSchema = around $ \act -> do
+--   aroundDatabaseWithMigs [oldPgDumpMigWithOldCoddSchema]
+--   coddSettings <- testCoddSettings
+--   act coddSettings `finally` cleanupAfterTest
+
 aroundDatabaseWithMigs ::
   (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
   SpecWith CoddSettings ->

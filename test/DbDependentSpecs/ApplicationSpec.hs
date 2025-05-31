@@ -162,7 +162,8 @@ alwaysPassingMig,
   createTableMig,
   addColumnMig,
   alwaysFailingMig,
-  alwaysFailingMigNoTxn ::
+  alwaysFailingMigNoTxn,
+  migrationRequiringLatestCoddSchemaVersion ::
     (MonadThrow m) => AddedSqlMigration m
 alwaysPassingMig =
   AddedSqlMigration
@@ -206,20 +207,40 @@ alwaysFailingMig =
         migrationEnvVars = mempty
       }
     (getIncreasingTimestamp 4)
+migrationRequiringLatestCoddSchemaVersion =
+  AddedSqlMigration
+    SqlMigration
+      { migrationName = "0005-fail-if-codd-internal-schema-not-recent.sql",
+        migrationSql =
+          mkValidSql
+            "DO\n\
+            \$do$\n\
+            \BEGIN\n\
+            \   IF NOT EXISTS (\n\
+            \select from pg_catalog.pg_proc join pg_catalog.pg_namespace on pronamespace=pg_namespace.oid where proname='background_job_begin' and pg_namespace.nspname='codd') THEN\n\
+            \      RAISE EXCEPTION $$Could not find a recent version of codd's internal schema$$;\n\
+            \   END IF;\n\
+            \END\n\
+            \$do$;",
+        migrationInTxn = True,
+        migrationCustomConnInfo = Nothing,
+        migrationEnvVars = mempty
+      }
+    (getIncreasingTimestamp 5)
 alwaysFailingMigNoTxn =
   AddedSqlMigration
     SqlMigration
-      { migrationName = "0005-always-failing-no-txn.sql",
+      { migrationName = "0006-always-failing-no-txn.sql",
         migrationSql = mkValidSql "SELECT 5/0",
         migrationInTxn = False,
         migrationCustomConnInfo = Nothing,
         migrationEnvVars = mempty
       }
-    (getIncreasingTimestamp 5)
+    (getIncreasingTimestamp 6)
 
 -- | A migration that creates the codd_schema itself (and an old version at that). This is like what a pg dump would have.
-pgDumpEmulatingMig :: (MonadThrow m) => AddedSqlMigration m
-pgDumpEmulatingMig =
+oldPgDumpEmulatingMig :: (MonadThrow m) => AddedSqlMigration m
+oldPgDumpEmulatingMig =
   AddedSqlMigration
     SqlMigration
       { migrationName = "0010-pg_dump-emulating-mig.sql",
@@ -235,7 +256,7 @@ pgDumpEmulatingMig =
             \GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
             \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;\
             \ -- Pretend a migration that always fails was applied. We'll be able to add this migration in our test as codd should skip it \n\
-            \INSERT INTO codd_schema.sql_migrations (migration_timestamp, applied_at, name) VALUES ('2000-01-01', '2000-01-01', '0004-always-failing.sql'), ('2000-01-02', '2000-01-01 00:00:01', '0005-always-failing-no-txn.sql')",
+            \INSERT INTO codd_schema.sql_migrations (migration_timestamp, applied_at, name) VALUES ('2000-01-01', '2000-01-01', '0004-always-failing.sql'), ('2000-01-02', '2000-01-01 00:00:01', '0006-always-failing-no-txn.sql')",
         migrationInTxn = True,
         migrationCustomConnInfo = Nothing,
         migrationEnvVars = mempty
@@ -1146,8 +1167,9 @@ spec = do
                   map (hoistAddedSqlMigration lift) $
                     fixMigsOrder
                       [ bootstrapMig,
-                        alwaysPassingMig,
-                        pgDumpEmulatingMig,
+                        alwaysPassingMig, -- TODO: Test scenario where both this and the next migration aren't applied!
+                        oldPgDumpEmulatingMig,
+                        migrationRequiringLatestCoddSchemaVersion, -- Will fail if codd doesn't update its internal schema before running it. TODO: Test with it being no-txn?
                         alwaysFailingMig, -- The previous migration pretends this was applied so codd should skip this
                         alwaysFailingMigNoTxn -- The previous migration pretends this was applied so codd should skip this
                       ]

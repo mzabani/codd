@@ -429,11 +429,12 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                             else pure Nothing
 
         createCoddSchemaAndFlushPendingMigrationsDefaultConnection ::
-          DB.Connection -> txn ()
-        createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn =
+          DB.Connection -> Bool -> txn ()
+        createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn onlyUpgradeNotCreate =
           do
-            csUpToDate <- coddSchemaUpToDate
-            unless csUpToDate $ do
+            schemaVersion <- readIORef lastKnownCoddSchemaVersionRef
+            -- liftIO $ print (schemaVersion, onlyUpgradeNotCreate, schemaVersion /= maxBound && (not onlyUpgradeNotCreate || schemaVersion /= CoddSchemaDoesNotExist))
+            when (schemaVersion /= maxBound && (not onlyUpgradeNotCreate || schemaVersion /= CoddSchemaDoesNotExist)) $ do
               logInfo
                 "Creating or updating <MAGENTA>codd's internal schema</MAGENTA>..."
               createCoddSchema @txn
@@ -443,40 +444,9 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
               modifyIORef'
                 lastKnownCoddSchemaVersionRef
                 (const maxBound)
-            apmigs <- readIORef unregisteredButAppliedMigs
-            withTransaction @txn txnIsolationLvl defaultConn $
-              forM_ apmigs $
-                \AppliedMigration {..} ->
-                  registerRanMigration @txn
-                    defaultConn
-                    txnIsolationLvl
-                    appliedMigrationName
-                    appliedMigrationTimestamp
-                    (SpecificTime appliedMigrationAt)
-                    appliedMigrationDuration
-                    appliedMigrationStatus
-                    ( SpecificIds
-                        appliedMigrationTxnId
-                        appliedMigrationConnId
-                    )
-            modifyIORef' unregisteredButAppliedMigs $ const []
-
-        createCoddSchemaAndFlushPendingMigrations :: m ()
-        createCoddSchemaAndFlushPendingMigrations = do
-          mDefaultConn <- queryConn defaultConnInfo
-          csUpToDate <- coddSchemaUpToDate
-          case mDefaultConn of
-            Just defaultConn -> do
-              unless csUpToDate $ do
-                logInfo
-                  "Creating or updating <MAGENTA>codd's internal schema</MAGENTA>..."
-                createCoddSchema @txn
-                  maxBound
-                  txnIsolationLvl
-                  defaultConn
-                modifyIORef'
-                  lastKnownCoddSchemaVersionRef
-                  (const maxBound)
+            schemaVersion2 <- readIORef lastKnownCoddSchemaVersionRef
+            when (schemaVersion2 == maxBound) $ do
+              -- liftIO $ putStrLn "codd schema at latest. Registering applied migrations."
               apmigs <- readIORef unregisteredButAppliedMigs
               withTransaction @txn txnIsolationLvl defaultConn $
                 forM_ apmigs $
@@ -494,10 +464,19 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                           appliedMigrationConnId
                       )
               modifyIORef' unregisteredButAppliedMigs $ const []
+
+        -- \| Uses the default connection if it's open to create codd's internal schema, or does
+        -- nothing if the default connection isn't open. Only use this from non-default connections,
+        -- otherwise use `createCoddSchemaAndFlushPendingMigrationsDefaultConnection`.
+        createCoddSchemaAndFlushPendingMigrationsIfPossible :: Bool -> m ()
+        createCoddSchemaAndFlushPendingMigrationsIfPossible onlyUpgradeNotCreate = do
+          mDefaultConn <- queryConn defaultConnInfo
+          case mDefaultConn of
             Nothing -> pure ()
+            Just defaultConn -> withTransaction txnIsolationLvl defaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn onlyUpgradeNotCreate
 
         -- \| The function used to register applied migrations for in-txn migrations.
-        -- This will use same transaction as the one used to apply the migrations to insert into codd.sql_migrations as long as the block's connection is on the default database (even under a different user) and codd's internal schema has been created, and will otherwise only register them in-memory so they're applied at the earliest future opportunity.
+        -- This will use same transaction as the one used to apply the migrations to insert into codd.sql_migrations as long as the block's connection is on the default database (even under a different user) and codd's internal schema has been created and is at the latest version, and will otherwise only register them in-memory so they're flushed to the schema as applied at a future opportunity.
         registerAppliedInTxnMig ::
           DB.Connection ->
           DB.ConnectInfo ->
@@ -509,6 +488,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         registerAppliedInTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus =
           do
             csReady <- coddSchemaUpToDate
+            -- liftIO $ print csReady
             -- If we are on the default database, we can insert into codd.sql_migrations with any user
             if DB.connectDatabase blockConnInfo
               == DB.connectDatabase defaultConnInfo
@@ -557,8 +537,10 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
           m ()
         registerAppliedNoTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus =
           do
-            csReady <- coddSchemaUpToDate
-            case (appliedMigrationStatus, csReady) of
+            csVersion <- readIORef lastKnownCoddSchemaVersionRef
+            -- TODO: Should we support downgrading codd? If not we should shout as early as possible if someone runs a downgraded codd.
+            unless (csVersion == maxBound || csVersion == CoddSchemaDoesNotExist) $ error $ "Did you downgrade codd? If not, this is a bug in codd itself: we upgrade codd's internal schema iff it exists before every migration, so when registering a migration it either exists and is the latest or it does not exist, and yet it is now at an intermediary version: " ++ show csVersion
+            case (appliedMigrationStatus, csVersion == maxBound) of
               (NoTxnMigrationFailed _, False) -> do
                 -- Super duper ultra extra special case: we try to create codd's internal schema as a partially-run no-txn migration may have applied statements that make the default connection string accessible. The same isn't possible with in-txn migrations.
                 -- This will increase the delay between retry intervals beyond what the user has specified since we're adding a bit of a timeout to each retry of failed no-txn migrations. Since this is an extremely rare error case, it probably doesn't
@@ -570,72 +552,65 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                     (min 0.3 connectTimeout)
                   $ \_conn -> do
                     void $ openConn defaultConnInfo
-                    createCoddSchemaAndFlushPendingMigrations
-              _ -> pure ()
-            mDefaultConn <- queryConn defaultConnInfo
-            case ( mDefaultConn,
-                   DB.connectDatabase blockConnInfo
-                     == DB.connectDatabase defaultConnInfo
-                     && csReady
-                 ) of
-              (Nothing, False) -> do
-                -- No default connection available and migrations running on non-default database
-                (appliedMigrationAt, appliedMigrationTxnId, appliedMigrationConnId) <-
-                  unsafeQuery1
-                    blockConn
-                    "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
-                    ()
-                modifyIORef' unregisteredButAppliedMigs $
-                  \apmigs ->
-                    apmigs
-                      ++ [ AppliedMigration
-                             { appliedMigrationName,
-                               appliedMigrationTimestamp,
-                               appliedMigrationAt,
-                               appliedMigrationDuration,
-                               appliedMigrationStatus,
-                               appliedMigrationTxnId,
-                               appliedMigrationConnId
-                             }
-                         ]
-              (Just defaultConn, False) -> do
-                -- Running migrations on non-default database, but default connection is available
-                (appliedMigrationTxnId, appliedMigrationConnId) <-
-                  unsafeQuery1
-                    blockConn
-                    "SELECT txid_current(), pg_backend_pid()"
-                    ()
-                void
-                  $ withTransaction @txn
-                    txnIsolationLvl
-                    defaultConn
-                  $ registerRanMigration @txn
-                    defaultConn
-                    txnIsolationLvl
-                    appliedMigrationName
-                    appliedMigrationTimestamp
-                    NowInPostgresTime
-                    appliedMigrationDuration
-                    appliedMigrationStatus
-                    ( SpecificIds
-                        appliedMigrationTxnId
-                        appliedMigrationConnId
-                    )
-              (_, True) -> do
-                -- Migrations running on default database means we can register them here if codd's internal schema exists and is up to date
-                void
-                  $ withTransaction @txn
-                    txnIsolationLvl
-                    blockConn
-                  $ registerRanMigration @txn
-                    blockConn
-                    txnIsolationLvl
-                    appliedMigrationName
-                    appliedMigrationTimestamp
-                    NowInPostgresTime
-                    appliedMigrationDuration
-                    appliedMigrationStatus
-                    OfCurrentTransaction
+                    createCoddSchemaAndFlushPendingMigrationsIfPossible False
+              (_, canRegisterNow) -> do
+                -- We either register this migration was applied now (iff we can) or later.
+                mDefaultConn <- queryConn defaultConnInfo
+                let blockConnSameDatabaseAsDefaultConn = DB.connectDatabase blockConnInfo == DB.connectDatabase defaultConnInfo
+                    mConnToRegister
+                      | not canRegisterNow = Nothing
+                      | blockConnSameDatabaseAsDefaultConn = Just blockConn
+                      | otherwise = mDefaultConn
+                case (mConnToRegister, canRegisterNow) of
+                  (Nothing, True) -> error "Impossible! Bug in codd: codd's internal schema version is up to date but no connection to the default database has been established"
+                  (_, False) -> do
+                    (appliedMigrationAt, appliedMigrationTxnId, appliedMigrationConnId) <-
+                      unsafeQuery1
+                        blockConn
+                        "SELECT clock_timestamp(), txid_current(), pg_backend_pid()"
+                        ()
+                    modifyIORef' unregisteredButAppliedMigs $
+                      \apmigs ->
+                        apmigs
+                          ++ [ AppliedMigration
+                                 { appliedMigrationName,
+                                   appliedMigrationTimestamp,
+                                   appliedMigrationAt,
+                                   appliedMigrationDuration,
+                                   appliedMigrationStatus,
+                                   appliedMigrationTxnId,
+                                   appliedMigrationConnId
+                                 }
+                             ]
+                  (Just connToRegister, True) -> do
+                    -- We want the txn and conn Ids we store in codd.sql_migrations to come from the block connection - the one that applied the migration.
+                    ids <-
+                      if blockConnSameDatabaseAsDefaultConn
+                        then
+                          -- This is a very minor optimisation and we could just run the SELECT further down
+                          -- below every time instead
+                          pure OfCurrentTransaction
+                        else do
+                          (appliedMigrationTxnId, appliedMigrationConnId) <-
+                            unsafeQuery1
+                              blockConn
+                              "SELECT txid_current(), pg_backend_pid()"
+                              ()
+                          pure $
+                            SpecificIds appliedMigrationTxnId appliedMigrationConnId
+                    void
+                      $ withTransaction @txn
+                        txnIsolationLvl
+                        connToRegister
+                      $ registerRanMigration @txn
+                        connToRegister
+                        txnIsolationLvl
+                        appliedMigrationName
+                        appliedMigrationTimestamp
+                        NowInPostgresTime
+                        appliedMigrationDuration
+                        appliedMigrationStatus
+                        ids
 
     singleInTxnBlockResult :: Maybe a <-
       foldM
@@ -650,17 +625,14 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
 
             case block of
               BlockInTxn inTxnBlock -> do
-                unless
-                  isDefaultConn
-                  createCoddSchemaAndFlushPendingMigrations
                 runInTxnBlock
                   ( do
-                      -- Creating codd's internal schema inside the same transaction as migrations increases atomicity
-                      -- and also allows for migrations themselves to create codd's internal schema, which is useful because then users
-                      -- can have dumps as migrations
+                      -- We create codd's internal schema before committing the first in-txn block
+                      -- of migrations for maximum consistency (only iff we can, of course)
                       when isDefaultConn $
                         createCoddSchemaAndFlushPendingMigrationsDefaultConnection
                           conn
+                          False
                       if isOneShotApplication
                         defaultConnInfo
                         pendingMigs
@@ -678,8 +650,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                           else Nothing
                       )
                   )
+                  (when isDefaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn True)
               BlockNoTxn noTxnBlock -> do
-                createCoddSchemaAndFlushPendingMigrations
                 runNoTxnMig
                   conn
                   noTxnBlock
@@ -690,6 +662,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                           else Nothing
                       )
                   )
+                  (when isDefaultConn $ withTransaction txnIsolationLvl conn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn True)
         )
         Nothing
         pendingMigs
@@ -701,7 +674,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         -- In those cases, we assume the default-connection-string will be valid after those migrations
         -- and use that to register all applied migrations and then run "actionAfter".
         (_, defaultConn) <- openConn defaultConnInfo
-        createCoddSchemaAndFlushPendingMigrations
+        createCoddSchemaAndFlushPendingMigrationsIfPossible False
         withTransaction txnIsolationLvl defaultConn $
           actionAfter hoistedBlocks defaultConn
 
@@ -724,8 +697,10 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
       -- \^ Using the `txn` monad is right: registering applied migrations happens in the same connection that applies migrations if that is a default-database connection, and otherwise will be scheduled to be inserted into codd.sql_migrations in the first future opportunity, meaning when this function is called it's merely an in-memory operation, which can also run in `txn`.
       (FilePath -> txn (Maybe MigrationApplicationStatus)) ->
       -- \^ Function to check if a migration has been applied
+      txn () ->
+      -- \^ A function to upgrade codd's internal schema IFF it already exists. It might not do anything if e.g. the connection is not the default.
       m b
-    runInTxnBlock act conn migBlock registerMig hasMigBeenApplied =
+    runInTxnBlock act conn migBlock registerMig hasMigBeenApplied upgradeCoddSchemaToLatestIfItExists =
       -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
       retryFold
         retryPolicy
@@ -752,6 +727,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
             errorOrOk <- forMExcept hoistedMigs $ \mig -> do
               let migname = migrationName $ addedSqlMig mig
               appStatus <- hasMigBeenApplied migname
+              upgradeCoddSchemaToLatestIfItExists
               case appStatus of
                 Just (NoTxnMigrationFailed _) ->
                   error $
@@ -808,9 +784,12 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
       -- \^ This is `m` instead of `txn` and is correct. The reason is that there is no transaction opened by codd for no-txn migrations, and so the function that registers applied migrations needs to start its own transaction.
       (FilePath -> m (Maybe MigrationApplicationStatus)) ->
       -- \^ Function to check if a migration has been applied
+      m () ->
+      -- \^ A function to upgrade codd's internal schema IFF it already exists. It might not do anything if e.g. the connection is not the default.
       m (Maybe x)
-    runNoTxnMig conn mig registerMig hasMigBeenApplied = do
+    runNoTxnMig conn mig registerMig hasMigBeenApplied upgradeCoddSchemaToLatestIfItExists = do
       let migname = migrationName $ addedSqlMig $ singleNoTxnMig mig
+      upgradeCoddSchemaToLatestIfItExists
       retryFold
         retryPolicy
         ( \(previousMig, _) RetryIteration {lastError} ->
@@ -1640,7 +1619,7 @@ data MigrationTxnAndConnIds = OfCurrentTransaction | SpecificIds Int64 Int
 registerRanMigration ::
   forall txn m.
   (MonadUnliftIO m, MonadIO txn, CanStartTxn m txn) =>
-  -- | The default connection, not any other or this might fail.
+  -- | A connection that is in the same database as the one in CODD_CONNECTION, but not necessarily the default connection itself.
   DB.Connection ->
   TxnIsolationLvl ->
   FilePath ->

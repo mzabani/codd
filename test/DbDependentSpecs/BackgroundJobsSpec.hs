@@ -8,7 +8,7 @@ import Control.Monad (void)
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.List (isInfixOf)
 import Database.PostgreSQL.Simple (ConnectInfo)
-import DbUtils (aroundFreshDatabase, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec)
 import Test.Hspec.Core.Spec (describe, it)
@@ -17,20 +17,14 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Background jobs" $ do
-      aroundFreshDatabase $ do
+      aroundTestDbInfo $ do
         it "Nice error message when pg_cron is not installed" $ \emptyTestDbInfo -> do
           void @IO $
             runCoddLogger $ do
-              -- Delayed codd's internal schema creation is a problem if we want to run the migration in a single
-              -- "up" because the background job functions still don't exist. So we run "up" twice.
+              bootstrapMig <- createTestUserMig
               applyMigrationsNoCheck
                 emptyTestDbInfo
-                (Just [])
-                testConnTimeout
-                (const $ pure ())
-              applyMigrationsNoCheck
-                emptyTestDbInfo
-                (Just [beginSomeBackgroundJob])
+                (Just [bootstrapMig, beginSomeBackgroundJob])
                 testConnTimeout
                 (const $ pure ())
                 `shouldThrow` (\(e :: SqlStatementException) -> "background migrations require the pg_cron extension to work" `isInfixOf` show e)
