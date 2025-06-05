@@ -1,0 +1,33 @@
+{
+    "accessmethod": "heap",
+    "amoptions": null,
+    "columns_in_order": [
+        "jobid",
+        "schedule",
+        "command",
+        "nodename",
+        "nodeport",
+        "database",
+        "username",
+        "active",
+        "jobname"
+    ],
+    "compositetype": null,
+    "forcerowsecurity": false,
+    "kind": "r",
+    "owner": "postgres",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "public": [
+            [
+                "r",
+                "postgres"
+            ]
+        ]
+    },
+    "replident": "d",
+    "rowsecurity": true,
+    "rowtype": "job",
+    "shared": false
+}

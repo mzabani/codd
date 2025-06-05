@@ -282,7 +282,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
         nonIdentWhere = Just $ case schemaSel of
           IncludeSchemas schemas -> "nspname" `sqlIn` schemas
           AllNonInternalSchemas ->
-            "nspname != 'information_schema' AND nspname != 'codd_schema' AND nspname !~ '^pg_'",
+            "nspname != 'information_schema' AND nspname != 'codd' AND nspname !~ '^pg_'",
         identWhere = Nothing,
         groupByCols = []
       }
