@@ -38,6 +38,7 @@ createExtPgCron superUserConnInfo =
           mkValidSql
             "CREATE EXTENSION pg_cron; GRANT USAGE ON SCHEMA cron TO codd_admin;",
         migrationInTxn = True,
+        migrationRequiresCoddSchema = False,
         migrationCustomConnInfo = Just superUserConnInfo,
         migrationEnvVars = mempty
       }
@@ -50,6 +51,7 @@ beginSomeBackgroundJob =
       { migrationName = "0001-begin-some-bg-job.sql",
         migrationSql = mkValidSql "SELECT codd.populate_column_gradually('jobname', 'cron schedule', 'plpgsql', 'tablename', 'colname', 'triggerexpr');",
         migrationInTxn = True,
+        migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
         migrationEnvVars = mempty
       }

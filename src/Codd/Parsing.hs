@@ -157,6 +157,7 @@ data SqlMigration m = SqlMigration
   { migrationName :: FilePath,
     migrationSql :: ParsedSql m,
     migrationInTxn :: Bool,
+    migrationRequiresCoddSchema :: Bool,
     migrationCustomConnInfo :: Maybe ConnectInfo,
     migrationEnvVars :: Map Text Text
   }
@@ -240,7 +241,7 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) =
     hoistParsedSql (UnparsedSql t) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
-data SectionOption = OptInTxn Bool | OptNoParse Bool
+data SectionOption = OptInTxn Bool | OptNoParse Bool | OptRequiresCoddSchema
   deriving stock (Eq, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
@@ -925,6 +926,7 @@ optionParser = do
   skipJustSpace
   return x
   where
+    -- TODO: Parser for "require-codd-schema"
     inTxn = string "in-txn" >> pure (OptInTxn True)
     noTxn = string "no-txn" >> pure (OptInTxn False)
     noParse = string "no-parse" >> pure (OptNoParse True)
@@ -1205,6 +1207,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
         { migrationName = name,
           migrationSql = sql,
           migrationInTxn = inTxn opts,
+          migrationRequiresCoddSchema = OptRequiresCoddSchema `elem` opts,
           migrationCustomConnInfo = customConnString,
           migrationEnvVars
         }

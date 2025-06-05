@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Codd.Internal where
 
@@ -430,13 +431,18 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
 
         createCoddSchemaAndFlushPendingMigrationsDefaultConnection ::
           DB.Connection -> Bool -> txn ()
-        createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn onlyUpgradeNotCreate =
+        createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn forceCreate =
           do
             schemaVersion <- readIORef lastKnownCoddSchemaVersionRef
             -- liftIO $ print (schemaVersion, onlyUpgradeNotCreate, schemaVersion /= maxBound && (not onlyUpgradeNotCreate || schemaVersion /= CoddSchemaDoesNotExist))
-            when (schemaVersion /= maxBound && (not onlyUpgradeNotCreate || schemaVersion /= CoddSchemaDoesNotExist)) $ do
-              logInfo
-                "Creating or updating <MAGENTA>codd's internal schema</MAGENTA>..."
+            when (schemaVersion /= maxBound && (forceCreate || schemaVersion /= CoddSchemaDoesNotExist)) $ do
+              if schemaVersion /= CoddSchemaDoesNotExist
+                then
+                  logInfo
+                    "Updating <MAGENTA>codd's internal schema</MAGENTA>..."
+                else
+                  logInfo
+                    "Creating <MAGENTA>codd's internal schema</MAGENTA>..."
               createCoddSchema @txn
                 maxBound
                 txnIsolationLvl
@@ -468,12 +474,12 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         -- \| Uses the default connection if it's open to create codd's internal schema, or does
         -- nothing if the default connection isn't open. Only use this from non-default connections,
         -- otherwise use `createCoddSchemaAndFlushPendingMigrationsDefaultConnection`.
-        createCoddSchemaAndFlushPendingMigrationsIfPossible :: Bool -> m ()
-        createCoddSchemaAndFlushPendingMigrationsIfPossible onlyUpgradeNotCreate = do
+        createCoddSchemaAndFlushPendingMigrationsIfPossible :: m ()
+        createCoddSchemaAndFlushPendingMigrationsIfPossible = do
           mDefaultConn <- queryConn defaultConnInfo
           case mDefaultConn of
             Nothing -> pure ()
-            Just defaultConn -> withTransaction txnIsolationLvl defaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn onlyUpgradeNotCreate
+            Just defaultConn -> withTransaction txnIsolationLvl defaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn True
 
         -- \| The function used to register applied migrations for in-txn migrations.
         -- This will use same transaction as the one used to apply the migrations to insert into codd.sql_migrations as long as the block's connection is on the default database (even under a different user) and codd's internal schema has been created and is at the latest version, and will otherwise only register them in-memory so they're flushed to the schema as applied at a future opportunity.
@@ -552,7 +558,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                     (min 0.3 connectTimeout)
                   $ \_conn -> do
                     void $ openConn defaultConnInfo
-                    createCoddSchemaAndFlushPendingMigrationsIfPossible False
+                    createCoddSchemaAndFlushPendingMigrationsIfPossible
               (_, canRegisterNow) -> do
                 -- We either register this migration was applied now (iff we can) or later.
                 mDefaultConn <- queryConn defaultConnInfo
@@ -628,11 +634,11 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                 runInTxnBlock
                   ( do
                       -- We create codd's internal schema before committing the first in-txn block
-                      -- of migrations for maximum consistency (only iff we can, of course)
+                      -- of migrations for maximum consistency (if we can, of course)
                       when isDefaultConn $
                         createCoddSchemaAndFlushPendingMigrationsDefaultConnection
                           conn
-                          False
+                          True
                       if isOneShotApplication
                         defaultConnInfo
                         pendingMigs
@@ -650,7 +656,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                           else Nothing
                       )
                   )
-                  (when isDefaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn True)
+                  {-# HLINT ignore "Avoid lambda" #-}
+                  (\forceCreate -> when isDefaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn forceCreate)
               BlockNoTxn noTxnBlock -> do
                 runNoTxnMig
                   conn
@@ -662,7 +669,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                           else Nothing
                       )
                   )
-                  (when isDefaultConn $ withTransaction txnIsolationLvl conn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn True)
+                  (\forceCreate -> when isDefaultConn $ withTransaction txnIsolationLvl conn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection conn forceCreate)
         )
         Nothing
         pendingMigs
@@ -674,7 +681,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         -- In those cases, we assume the default-connection-string will be valid after those migrations
         -- and use that to register all applied migrations and then run "actionAfter".
         (_, defaultConn) <- openConn defaultConnInfo
-        createCoddSchemaAndFlushPendingMigrationsIfPossible False
+        createCoddSchemaAndFlushPendingMigrationsIfPossible
         withTransaction txnIsolationLvl defaultConn $
           actionAfter hoistedBlocks defaultConn
 
@@ -697,8 +704,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
       -- \^ Using the `txn` monad is right: registering applied migrations happens in the same connection that applies migrations if that is a default-database connection, and otherwise will be scheduled to be inserted into codd.sql_migrations in the first future opportunity, meaning when this function is called it's merely an in-memory operation, which can also run in `txn`.
       (FilePath -> txn (Maybe MigrationApplicationStatus)) ->
       -- \^ Function to check if a migration has been applied
-      txn () ->
-      -- \^ A function to upgrade codd's internal schema IFF it already exists. It might not do anything if e.g. the connection is not the default.
+      (Bool -> txn ()) ->
+      -- \^ A function to upgrade codd's internal schema if it already exists in some version or forcibly in any case (the first argument to the function). It might not do anything if e.g. the connection is not the default.
       m b
     runInTxnBlock act conn migBlock registerMig hasMigBeenApplied upgradeCoddSchemaToLatestIfItExists =
       -- Naturally, we retry entire in-txn block transactions on error, not individual statements or individual migrations
@@ -727,7 +734,6 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
             errorOrOk <- forMExcept hoistedMigs $ \mig -> do
               let migname = migrationName $ addedSqlMig mig
               appStatus <- hasMigBeenApplied migname
-              upgradeCoddSchemaToLatestIfItExists
               case appStatus of
                 Just (NoTxnMigrationFailed _) ->
                   error $
@@ -739,7 +745,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                         <> Text.pack migname
                     )
                   pure (Right ())
-                Nothing ->
+                Nothing -> do
+                  upgradeCoddSchemaToLatestIfItExists (migrationRequiresCoddSchema $ addedSqlMig mig)
                   applySingleMigration
                     conn
                     registerMig
@@ -784,12 +791,12 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
       -- \^ This is `m` instead of `txn` and is correct. The reason is that there is no transaction opened by codd for no-txn migrations, and so the function that registers applied migrations needs to start its own transaction.
       (FilePath -> m (Maybe MigrationApplicationStatus)) ->
       -- \^ Function to check if a migration has been applied
-      m () ->
-      -- \^ A function to upgrade codd's internal schema IFF it already exists. It might not do anything if e.g. the connection is not the default.
+      (Bool -> m ()) ->
+      -- \^ A function to upgrade codd's internal schema if it already exists in some version or forcibly in any case (the first argument to the function). It might not do anything if e.g. the connection is not the default.
       m (Maybe x)
     runNoTxnMig conn mig registerMig hasMigBeenApplied upgradeCoddSchemaToLatestIfItExists = do
       let migname = migrationName $ addedSqlMig $ singleNoTxnMig mig
-      upgradeCoddSchemaToLatestIfItExists
+      upgradeCoddSchemaToLatestIfItExists (migrationRequiresCoddSchema $ addedSqlMig $ singleNoTxnMig mig)
       retryFold
         retryPolicy
         ( \(previousMig, _) RetryIteration {lastError} ->

@@ -174,6 +174,7 @@ createTestUserMigPol = do
         { migrationName = "bootstrap-test-db-and-user.sql",
           migrationSql = psql,
           migrationInTxn = False,
+          migrationRequiresCoddSchema = False,
           -- A custom connection string is necessary because the DB doesn't yet exist
           migrationCustomConnInfo =
             Just
