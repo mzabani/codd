@@ -310,7 +310,7 @@ collectAndApplyMigrations lastAction settings@CoddSettings {migsConnString, sqlM
 
 -- | Applies the supplied migrations, running blocks of (in-txn, same-connection-string) migrations each within their own
 -- separate transactions.
--- Behaviour here unfortunately is _really_ complex right now. Important notes:
+-- Behaviour here unfortunately is quite complex. Important notes:
 -- - Iff there's a single (in-txn, same-connection-string) block of migrations *with* the default connection string,
 --   then "actionAfter" runs in the same transaction (and thus in the same connection as well) as that block.
 --   Otherwise it runs after all migrations, in an explicit transaction of
@@ -618,6 +618,9 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                         appliedMigrationStatus
                         ids
 
+    -- To the extent my primate brain's comprehension works, the `foldM`
+    -- below _feels_ like the main loop when applying migrations. It folds
+    -- over each block of migrations applying them.
     singleInTxnBlockResult :: Maybe a <-
       foldM
         ( \_ block -> do
@@ -629,6 +632,18 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                     == DB.connectDatabase defaultConnInfo
             (_, conn) <- openConn cinfo
 
+            -- If even one migration in the block has require-codd-schema and codd's internal schema
+            -- hasn't been created, and this is not the default connection, then we must at least try
+            -- and open the default connection to create it before opening the transaction to apply
+            -- the migrations.
+            schemaVersion <- readIORef lastKnownCoddSchemaVersionRef
+            let migsInBlock = case block of
+                  BlockInTxn inTxnBlock -> NE.toList $ inTxnMigs inTxnBlock
+                  BlockNoTxn noTxnBlock -> [singleNoTxnMig noTxnBlock]
+            when (schemaVersion /= maxBound && not isDefaultConn && any (migrationRequiresCoddSchema . addedSqlMig) migsInBlock) $ do
+              logWarn "A future migration requires codd's internal schema but it does not run on the default connection. Attempting to connect and create codd's internal schema.."
+              (_, defaultConn) <- openConn defaultConnInfo
+              withTransaction txnIsolationLvl defaultConn $ createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn True
             case block of
               BlockInTxn inTxnBlock -> do
                 runInTxnBlock

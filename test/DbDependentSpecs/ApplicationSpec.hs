@@ -1416,7 +1416,7 @@ mergeShuffle ll1 ll2 f = go ll1 ll2 (0 :: Int)
         then (f i x :) <$> go xs l2 (i + 1)
         else (f i y :) <$> go l1 ys (i + 1)
 
-data MigToCreate = CreateCoddTestDb | CreateCoddInternalSchema | MigrationThatRequiresLatestCoddSchema Bool | CreatePassingMig Bool | CreatePassingMigDifferentUser Bool | CreateDbCreationMig Int
+data MigToCreate = CreateCoddTestDb | CreateCoddInternalSchema | MigrationThatRequiresLatestCoddSchema Bool | MigrationThatRequiresLatestCoddSchemaDifferentUser Bool | CreatePassingMig Bool | CreatePassingMigDifferentUser Bool | CreateDbCreationMig Int
 
 -- | Holds migrations that test codd_schema's internal management while migrations are applied.
 -- Look at the `diversifyAppCheckMigs` function, which generates migrations that explore a combination space
@@ -1452,7 +1452,9 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
             CreatePassingMigDifferentUser True,
             CreatePassingMigDifferentUser False,
             MigrationThatRequiresLatestCoddSchema False,
-            MigrationThatRequiresLatestCoddSchema True
+            MigrationThatRequiresLatestCoddSchema True,
+            MigrationThatRequiresLatestCoddSchemaDifferentUser False,
+            MigrationThatRequiresLatestCoddSchemaDifferentUser True
           ]
   createCoddSchemaMig <- QC.elements [[CreateCoddInternalSchema], []]
 
@@ -1506,6 +1508,18 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
           [ AddedSqlMigration
               (createMigThatRequiresCoddSchema migOrder "fail-if-codd-internal-schema-not-recent")
                 { migrationInTxn
+                }
+              (getIncreasingTimestamp 0)
+          ]
+        MigrationThatRequiresLatestCoddSchemaDifferentUser migrationInTxn ->
+          [ AddedSqlMigration
+              (createMigThatRequiresCoddSchema migOrder "fail-if-codd-internal-schema-not-recent-custom-user")
+                { migrationInTxn,
+                  migrationCustomConnInfo =
+                    Just
+                      defaultConnInfo
+                        { DB.connectUser = "codd-test-user"
+                        }
                 }
               (getIncreasingTimestamp 0)
           ]
