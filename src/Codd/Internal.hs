@@ -345,9 +345,23 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
     connsPerInfo <- newIORef (mempty :: [(DB.ConnectInfo, DB.Connection)])
     unregisteredButAppliedMigs <- newIORef (mempty :: [AppliedMigration])
     lastKnownCoddSchemaVersionRef <- newIORef $ coddSchemaVersion bootstrapCheck
-    let coddSchemaUpToDate :: forall n. (MonadUnliftIO n) => n Bool
-        coddSchemaUpToDate =
-          (== maxBound) <$> readIORef lastKnownCoddSchemaVersionRef
+    let queryCoddSchemaVersion :: forall n. (MonadUnliftIO n) => n CoddSchemaVersion
+        queryCoddSchemaVersion = do
+          lastKnownVersion <- readIORef lastKnownCoddSchemaVersionRef
+          if lastKnownVersion == maxBound
+            then pure maxBound
+            else do
+              -- Double-check by querying the database what version of
+              -- codd's internal schema we have. This is a cheap price to pay
+              -- considering it's a cheap query and soon after a dump is found
+              -- we'll pay this price no more.
+              mDefaultConn <- queryConn defaultConnInfo
+              case mDefaultConn of
+                Nothing -> pure lastKnownVersion
+                Just defaultConn -> do
+                  actualSchemaVersion <- detectCoddSchema defaultConn
+                  modifyIORef' lastKnownCoddSchemaVersionRef (const actualSchemaVersion)
+                  pure actualSchemaVersion
 
         openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
         openConn cinfo = flip allocate DB.close $ do
@@ -381,7 +395,6 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
           n (Maybe MigrationApplicationStatus)
         hasMigBeenApplied mDefaultDatabaseConn fp = do
           mDefaultConn <- queryConn defaultConnInfo
-          lastKnownCoddSchemaVersion <- readIORef lastKnownCoddSchemaVersionRef
           apunregmigs <- readIORef unregisteredButAppliedMigs
           let appliedUnreg =
                 List.find
@@ -394,34 +407,22 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
               case mDefaultDatabaseConn <|> mDefaultConn of
                 Nothing -> pure Nothing
                 Just connToUse -> do
-                  -- If in-memory info says codd's internal schema does not exist or is not the latest, a migration may have created it or upgraded it and we're just not aware yet, so check that.
-                  refinedCoddSchemaVersion <-
-                    if lastKnownCoddSchemaVersion < maxBound
-                      then do
-                        actualVersion <-
-                          detectCoddSchema
-                            connToUse
-                        modifyIORef'
-                          lastKnownCoddSchemaVersionRef
-                          (const actualVersion)
-                        pure actualVersion
-                      else
-                        pure lastKnownCoddSchemaVersion
-                  if refinedCoddSchemaVersion >= CoddSchemaV5
+                  schemaVersion <- queryCoddSchemaVersion
+                  if schemaVersion >= CoddSchemaV5
                     then
                       queryMay
                         connToUse
                         "SELECT num_applied_statements, no_txn_failed_at FROM codd.sql_migrations WHERE name=?"
                         (DB.Only fp)
                     else
-                      if refinedCoddSchemaVersion >= CoddSchemaV3
+                      if schemaVersion >= CoddSchemaV3
                         then
                           queryMay
                             connToUse
                             "SELECT num_applied_statements, no_txn_failed_at FROM codd_schema.sql_migrations WHERE name=?"
                             (DB.Only fp)
                         else
-                          if refinedCoddSchemaVersion >= CoddSchemaV1
+                          if schemaVersion >= CoddSchemaV1
                             then do
                               queryMay
                                 connToUse
@@ -433,7 +434,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
           DB.Connection -> Bool -> txn ()
         createCoddSchemaAndFlushPendingMigrationsDefaultConnection defaultConn forceCreate =
           do
-            schemaVersion <- readIORef lastKnownCoddSchemaVersionRef
+            schemaVersion <- queryCoddSchemaVersion
             -- liftIO $ print (schemaVersion, onlyUpgradeNotCreate, schemaVersion /= maxBound && (not onlyUpgradeNotCreate || schemaVersion /= CoddSchemaDoesNotExist))
             when (schemaVersion /= maxBound && (forceCreate || schemaVersion /= CoddSchemaDoesNotExist)) $ do
               if schemaVersion /= CoddSchemaDoesNotExist
@@ -450,7 +451,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
               modifyIORef'
                 lastKnownCoddSchemaVersionRef
                 (const maxBound)
-            schemaVersion2 <- readIORef lastKnownCoddSchemaVersionRef
+            schemaVersion2 <- queryCoddSchemaVersion
             when (schemaVersion2 == maxBound) $ do
               -- liftIO $ putStrLn "codd schema at latest. Registering applied migrations."
               apmigs <- readIORef unregisteredButAppliedMigs
@@ -493,7 +494,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
           txn ()
         registerAppliedInTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus =
           do
-            csReady <- coddSchemaUpToDate
+            csReady <- (== maxBound) <$> queryCoddSchemaVersion
             -- liftIO $ print csReady
             -- If we are on the default database, we can insert into codd.sql_migrations with any user
             if DB.connectDatabase blockConnInfo
@@ -543,7 +544,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
           m ()
         registerAppliedNoTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus =
           do
-            csVersion <- readIORef lastKnownCoddSchemaVersionRef
+            csVersion <- queryCoddSchemaVersion
             case (appliedMigrationStatus, csVersion == maxBound) of
               (NoTxnMigrationFailed _, False) -> do
                 -- Super duper ultra extra special case: we try to create codd's internal schema as a partially-run no-txn migration may have applied statements that make the default connection string accessible. The same isn't possible with in-txn migrations.
@@ -634,7 +635,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
             -- hasn't been created, and this is not the default connection, then we must at least try
             -- and open the default connection to create it before opening the transaction to apply
             -- the migrations.
-            schemaVersion <- readIORef lastKnownCoddSchemaVersionRef
+            schemaVersion <- queryCoddSchemaVersion
             let migsInBlock = case block of
                   BlockInTxn inTxnBlock -> NE.toList $ inTxnMigs inTxnBlock
                   BlockNoTxn noTxnBlock -> [singleNoTxnMig noTxnBlock]
