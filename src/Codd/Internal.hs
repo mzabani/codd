@@ -544,8 +544,6 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         registerAppliedNoTxnMig blockConn blockConnInfo appliedMigrationName appliedMigrationTimestamp appliedMigrationDuration appliedMigrationStatus =
           do
             csVersion <- readIORef lastKnownCoddSchemaVersionRef
-            -- TODO: Should we support downgrading codd? If not we should shout as early as possible if someone runs a downgraded codd.
-            unless (csVersion == maxBound || csVersion == CoddSchemaDoesNotExist) $ error $ "Did you downgrade codd? If not, this is a bug in codd itself: we upgrade codd's internal schema iff it exists before every migration, so when registering a migration it either exists and is the latest or it does not exist, and yet it is now at an intermediary version: " ++ show csVersion
             case (appliedMigrationStatus, csVersion == maxBound) of
               (NoTxnMigrationFailed _, False) -> do
                 -- Super duper ultra extra special case: we try to create codd's internal schema as a partially-run no-txn migration may have applied statements that make the default connection string accessible. The same isn't possible with in-txn migrations.

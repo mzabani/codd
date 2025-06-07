@@ -279,8 +279,8 @@ oldPgDumpEmulatingMigWithAppliedMigs =
 
 -- | A migration that creates the codd_schema itself (and an old version at that), but does not pretends
 -- other migrations have been applied. This is like what a pg dump could have.
-oldPgDumpEmulatingMigNoAppliedMigs :: (MonadThrow m) => AddedSqlMigration m
-oldPgDumpEmulatingMigNoAppliedMigs =
+oldPgDumpEmulatingMigNoAppliedMigs :: (MonadThrow m) => Bool -> AddedSqlMigration m
+oldPgDumpEmulatingMigNoAppliedMigs migrationInTxn =
   AddedSqlMigration
     SqlMigration
       { migrationName = "0010-pg_dump-emulating-mig.sql",
@@ -295,7 +295,7 @@ oldPgDumpEmulatingMigNoAppliedMigs =
             \, unique (name), unique (migration_timestamp));\
             \GRANT INSERT,SELECT ON TABLE codd_schema.sql_migrations TO PUBLIC;\
             \GRANT USAGE ,SELECT ON SEQUENCE codd_schema.sql_migrations_id_seq TO PUBLIC;",
-        migrationInTxn = True,
+        migrationInTxn,
         migrationRequiresCoddSchema = False,
         migrationCustomConnInfo = Nothing,
         migrationEnvVars = mempty
@@ -1416,7 +1416,7 @@ mergeShuffle ll1 ll2 f = go ll1 ll2 (0 :: Int)
         then (f i x :) <$> go xs l2 (i + 1)
         else (f i y :) <$> go l1 ys (i + 1)
 
-data MigToCreate = CreateCoddTestDb | CreateCoddInternalSchema | MigrationThatRequiresLatestCoddSchema Bool | MigrationThatRequiresLatestCoddSchemaDifferentUser Bool | CreatePassingMig Bool | CreatePassingMigDifferentUser Bool | CreateDbCreationMig Int
+data MigToCreate = CreateCoddTestDb | CreateCoddInternalSchema Bool | MigrationThatRequiresLatestCoddSchema Bool | MigrationThatRequiresLatestCoddSchemaDifferentUser Bool | CreatePassingMig Bool | CreatePassingMigDifferentUser Bool | CreateDbCreationMig Int
 
 -- | Holds migrations that test codd_schema's internal management while migrations are applied.
 -- Look at the `diversifyAppCheckMigs` function, which generates migrations that explore a combination space
@@ -1456,7 +1456,7 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
             MigrationThatRequiresLatestCoddSchemaDifferentUser False,
             MigrationThatRequiresLatestCoddSchemaDifferentUser True
           ]
-  createCoddSchemaMig <- QC.elements [[CreateCoddInternalSchema], []]
+  createCoddSchemaMig <- QC.elements [[CreateCoddInternalSchema True], [CreateCoddInternalSchema False], []]
 
   migsInOrder <-
     fmap (fixMigsOrder . concat)
@@ -1465,7 +1465,7 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
         (map CreateDbCreationMig [0 .. numCreateOtherDbMigs])
       $ \migOrder migType -> case migType of
         CreateCoddTestDb -> [createCoddTestDbMigs]
-        CreateCoddInternalSchema -> [oldPgDumpEmulatingMigNoAppliedMigs]
+        CreateCoddInternalSchema migrationInTxn -> [oldPgDumpEmulatingMigNoAppliedMigs migrationInTxn]
         CreateDbCreationMig i ->
           [ AddedSqlMigration
               ( createDatabaseMig
