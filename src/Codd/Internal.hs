@@ -997,7 +997,7 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
 
     unless (defaultConnAccessible bootCheck) $ do
       logInfo
-        "Default connection string is not accessible. Codd will run in bootstrap mode, expecting the first migrations will contain custom connection strings and will create/bootstrap the database."
+        "Default connection string is not accessible. Assuming no migrations have ever been applied."
 
       -- The specific error below isn't necessary at this stage, but it's much more informative
       -- than the errors we'd generate further ahead.

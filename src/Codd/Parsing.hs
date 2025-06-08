@@ -131,6 +131,7 @@ import Streaming
 import qualified Streaming.Internal as S
 import Streaming.Prelude (Stream)
 import qualified Streaming.Prelude as Streaming
+import System.FilePath (takeFileName)
 import UnliftIO
   ( IORef,
     MonadIO,
@@ -1221,10 +1222,11 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
 
 parseAddedSqlMigration ::
   (Monad m, MigrationStream m s, EnvVars m) =>
+  -- | Can be a pure file name or absolute path to file name of an already timestamp migration file
   String ->
   s ->
   m (Either String (AddedSqlMigration m))
-parseAddedSqlMigration name s = do
+parseAddedSqlMigration (takeFileName -> name) s = do
   sqlMig <- parseSqlMigration name s
   pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 

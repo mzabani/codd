@@ -22,7 +22,6 @@ library
   exposed-modules:
       Codd
       Codd.Analysis
-      Codd.AppCommands
       Codd.AppCommands.AddMigration
       Codd.AppCommands.VerifySchema
       Codd.AppCommands.WriteSchema
@@ -115,6 +114,7 @@ library
     , unliftio
     , unliftio-core
     , unordered-containers
+    , uuid
     , vector
   default-language: Haskell2010
 

@@ -164,6 +164,7 @@ DECLARE
   temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
+  NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd.assert_pg_cron_setup();
   PERFORM codd.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
@@ -237,6 +238,7 @@ DECLARE
   jobstatus text;
   obj_to_drop codd.obj_to_drop;
 BEGIN
+  NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd.assert_pg_cron_setup();
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
