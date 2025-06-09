@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS codd._background_jobs (
   , CHECK (completed_or_aborted_at IS NULL OR status <> 'started')
   , CHECK ((finalized_at IS NOT NULL) = (status = 'finalized'))
 );
-GRANT INSERT,SELECT ON TABLE codd._background_jobs TO PUBLIC;
+GRANT INSERT,SELECT,UPDATE,DELETE ON TABLE codd._background_jobs TO PUBLIC;
 CREATE VIEW codd.jobs AS
   SELECT jobname, created_at, status,
           CASE WHEN status='started' THEN description_started
