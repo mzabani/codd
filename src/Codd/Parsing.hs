@@ -244,7 +244,7 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) =
     hoistParsedSql (UnparsedSql t) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
-data SectionOption = OptInTxn Bool | OptNoParse | OptRequiresCoddSchema
+data SectionOption = OptInTxn | OptNoTxn | OptNoParse | OptRequiresCoddSchema
   deriving stock (Eq, Ord, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
@@ -932,8 +932,8 @@ optionParser = do
   where
     -- TODO: Parser for "require-codd-schema"
     requiresCoddSchema = string "requires-codd-schema" >> pure OptRequiresCoddSchema
-    inTxn = string "in-txn" >> pure (OptInTxn True)
-    noTxn = string "no-txn" >> pure (OptInTxn False)
+    inTxn = string "in-txn" >> pure OptInTxn
+    noTxn = string "no-txn" >> pure OptNoTxn
     noParse = string "no-parse" >> pure OptNoParse
 
 -- | Parser that consumes only the space character, not other kinds of white space.
@@ -1150,7 +1150,7 @@ parseAndClassifyMigration sqlStream = do
                   Left
                     "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
                 else
-                  if OptNoParse `elem` goodOptSections && OptInTxn False `elem` goodOptSections
+                  if OptNoParse `elem` goodOptSections && OptNoTxn `elem` goodOptSections
                     then Left "It is not possible to set both 'no-txn' and 'no-parse', because the latter implies the entire migration will be applied as a single SQL statement and thus in its own implicit transaction"
                     else Right (goodOptSections, headMay goodCustomConnStrings)
 
@@ -1208,8 +1208,8 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
           Just "Some options are duplicated"
       | otherwise =
           Nothing
-    inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
-    noTxn opts = OptInTxn False `elem` opts
+    inTxn opts = OptNoTxn `notElem` opts || OptInTxn `elem` opts
+    noTxn opts = OptNoTxn `elem` opts
 
     mkMig ::
       (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->
