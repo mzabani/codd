@@ -47,6 +47,7 @@ module Codd.Parsing
     toMigrationTimestamp,
     -- Exported for tests
     ParserState (..),
+    SectionOption (..),
     coddConnStringCommentParser,
     copyFromStdinAfterStatementParser,
     manyStreaming,
@@ -94,6 +95,7 @@ import qualified Data.Attoparsec.Text as Parsec
 import Data.Bifunctor (first)
 import qualified Data.Char as Char
 import qualified Data.DList as DList
+import Data.Either (partitionEithers)
 import Data.Int (Int64)
 import Data.Kind (Type)
 import Data.List
@@ -242,8 +244,8 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) =
     hoistParsedSql (UnparsedSql t) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
-data SectionOption = OptInTxn Bool | OptNoParse Bool | OptRequiresCoddSchema
-  deriving stock (Eq, Show)
+data SectionOption = OptInTxn | OptNoTxn | OptNoParse | OptRequiresCoddSchema
+  deriving stock (Eq, Ord, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -922,15 +924,17 @@ optionParser = do
     inTxn
       <|> noTxn
       <|> noParse
+      <|> requiresCoddSchema
       <|> fail
-        "Valid options after '-- codd:' are 'in-txn', 'no-txn' or 'no-parse' (the last implies in-txn)"
+        "Valid options after '-- codd:' are 'in-txn', 'no-txn', 'requires-codd-schema' or 'no-parse' (the last implies in-txn)"
   skipJustSpace
   return x
   where
     -- TODO: Parser for "require-codd-schema"
-    inTxn = string "in-txn" >> pure (OptInTxn True)
-    noTxn = string "no-txn" >> pure (OptInTxn False)
-    noParse = string "no-parse" >> pure (OptNoParse True)
+    requiresCoddSchema = string "requires-codd-schema" >> pure OptRequiresCoddSchema
+    inTxn = string "in-txn" >> pure OptInTxn
+    noTxn = string "no-txn" >> pure OptNoTxn
+    noParse = string "no-parse" >> pure OptNoParse
 
 -- | Parser that consumes only the space character, not other kinds of white space.
 skipJustSpace :: Parser ()
@@ -1115,39 +1119,46 @@ parseAndClassifyMigration sqlStream = do
           headMay (x : _) = Just x
 
       -- Urgh.. is there no better way of pattern matching the stuff below?
-      eExtr <- case (allOptSections, customConnString) of
-        (_ : _ : _, _) ->
-          pure $
-            Left
-              "There must be at most one '-- codd:' comment in the first lines of a migration"
-        (_, _ : _ : _) ->
-          pure $
-            Left
-              "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
-        _ -> case (headMay allOptSections, headMay customConnString) of
-          (Just (CoddCommentWithGibberish badOptions), _) ->
-            pure $
+      let (badOptSections, mconcat -> goodOptSections) =
+            partitionEithers $
+              map
+                ( \case
+                    CoddCommentWithGibberish badOpts -> Left badOpts
+                    CoddCommentSuccess goodOpts -> Right goodOpts
+                )
+                allOptSections
+          (badCustomConnStrings, goodCustomConnStrings) =
+            partitionEithers $
+              map
+                ( \case
+                    CoddCommentWithGibberish badConn -> Left badConn
+                    CoddCommentSuccess goodConn -> Right goodConn
+                )
+                customConnString
+          eExtr = case (badOptSections, badCustomConnStrings) of
+            (badOptions : _, _) ->
               Left $
                 "The options '"
                   <> Text.unpack badOptions
-                  <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
-          (_, Just (CoddCommentWithGibberish _badConn)) ->
-            pure $
+                  <> "' are invalid. Valid options after '-- codd:' are 'in-txn', 'no-txn', 'requires-codd-schema' or 'no-parse' (the last implies in-txn)"
+            (_, _badConn : _) ->
               Left
                 "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
-          (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
-            pure $ Right (opts, Just conn)
-          (Just (CoddCommentSuccess opts), Nothing) ->
-            pure $ Right (opts, Nothing)
-          (Nothing, Just (CoddCommentSuccess conn)) ->
-            pure $ Right ([], Just conn)
-          (Nothing, Nothing) -> pure $ Right ([], Nothing)
+            ([], []) ->
+              if length goodCustomConnStrings > 1
+                then
+                  Left
+                    "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+                else
+                  if OptNoParse `elem` goodOptSections && OptNoTxn `elem` goodOptSections
+                    then Left "It is not possible to set both 'no-txn' and 'no-parse', because the latter implies the entire migration will be applied as a single SQL statement and thus in its own implicit transaction"
+                    else Right (goodOptSections, headMay goodCustomConnStrings)
 
       case eExtr of
         Left err -> pure $ Left err
         Right (opts, customConnStr)
           | -- Detect "-- codd: no-parse"
-            OptNoParse True `elem` opts -> do
+            OptNoParse `elem` opts -> do
               -- Remember: the original Stream (Of Text) has already been advanced
               -- beyond its first SQL statement, but **only** if this is an IO-based
               -- Stream. If this is a pure Stream it will start from the beginning when
@@ -1192,13 +1203,13 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
     checkOpts opts
       | inTxn opts && noTxn opts =
           Just
-            "Choose either in-txn, no-txn or leave blank for the default of in-txn"
+            "Choose either 'in-txn' or 'no-txn', but not both. If you don't specify anything the default is 'in-txn'"
       | dupOpts opts =
           Just "Some options are duplicated"
       | otherwise =
           Nothing
-    inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
-    noTxn opts = OptInTxn False `elem` opts
+    inTxn opts = OptNoTxn `notElem` opts || OptInTxn `elem` opts
+    noTxn opts = OptNoTxn `elem` opts
 
     mkMig ::
       (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->

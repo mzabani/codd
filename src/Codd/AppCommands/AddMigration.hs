@@ -251,7 +251,7 @@ writeFinalMigrationFile originalMigFile finalMigFile addedMigRequiresCoddSchema 
   migStream@FileStream {fileStream} <- delayedOpenStreamFile originalMigFile
   when addedMigRequiresCoddSchema $ liftIO $ do
     Text.hPutStrLn handle "-- codd: requires-codd-schema"
-    Text.hPutStrLn handle "-- Comment above added automatically by codd since this migration requires the 'codd' schema to exist. Please don't remove it."
+    Text.hPutStrLn handle "-- Comment above added automatically by codd since this migration requires the 'codd' schema to exist. Please don't remove it. You can add more '-- codd:' top-level comments at the top of the file or even below this line. You can also remove this comment as it's purely instructive."
   Streaming.mapsM_ (\(chunk :> x) -> liftIO $ Text.hPutStr handle chunk >> pure x) fileStream
   closeFileStream migStream
 

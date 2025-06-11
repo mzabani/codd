@@ -1,5 +1,7 @@
 module EnvironmentSpec
   ( ConnStringGen (..),
+    renderConnStringGen,
+    connInfoFromConnStringGen,
     spec,
   )
 where
@@ -113,6 +115,7 @@ data KwvpConnGen = KwvpConnGen
     port :: Maybe (Word16, Bool, Int),
     dbname :: (ObjName, Bool, Int)
   }
+  deriving stock (Show)
 
 getKeywordValuePairConnString :: KwvpConnGen -> Text
 getKeywordValuePairConnString KwvpConnGen {..} =
@@ -152,8 +155,7 @@ getKeywordValuePairConnString KwvpConnGen {..} =
         `Text.isInfixOf` v
         || "\\"
           `Text.isInfixOf` v
-        || " "
-          `Text.isInfixOf` v
+        || Text.any Char.isSpace v
         || v
           == ""
 
@@ -163,8 +165,45 @@ escapeHost (Hostname host) =
   if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
 escapeHost (HostUnixSocket socketpath) = Text.pack $ encodeURIComponent $ Text.unpack socketpath
 
-data ConnStringGen = ConnStringGen Text ConnectInfo
-  deriving stock (Show)
+newtype ConnStringGen = ConnStringGen (Either KwvpConnGen (String, ObjName, String, HostString, Word16, ObjName))
+
+instance Show ConnStringGen where
+  show (ConnStringGen kwvpOrUriScheme) = Text.unpack $
+    case kwvpOrUriScheme of
+      Left kwvpConnGen -> getKeywordValuePairConnString kwvpConnGen
+      Right (uriScheme, usr, pwd, host, port, dbName) ->
+        getURIConnString uriScheme usr pwd host port dbName
+
+renderConnStringGen :: ConnStringGen -> Text
+renderConnStringGen (ConnStringGen kwvpOrUriScheme) =
+  case kwvpOrUriScheme of
+    Left kwvpConnGen -> getKeywordValuePairConnString kwvpConnGen
+    Right (uriScheme, usr, pwd, host, port, dbName) ->
+      getURIConnString uriScheme usr pwd host port dbName
+
+connInfoFromConnStringGen :: ConnStringGen -> ConnectInfo
+connInfoFromConnStringGen (ConnStringGen kwvpOrUriScheme) =
+  case kwvpOrUriScheme of
+    Left KwvpConnGen {user = (user, _, _), host = (host, _, _), dbname = (dbname, _, _), password, port} ->
+      ConnectInfo
+        { connectHost = Text.unpack $ originalHost host,
+          connectPort = case port of
+            Nothing -> 5432
+            Just (p, _, _) -> p,
+          connectUser = Text.unpack $ unObjName user,
+          connectPassword = case password of
+            Nothing -> ""
+            Just (p, _, _) -> p,
+          connectDatabase = Text.unpack $ unObjName dbname
+        }
+    Right (uriScheme, user, password, host, port, dbname) ->
+      ConnectInfo
+        { connectHost = Text.unpack $ originalHost host,
+          connectPort = port,
+          connectUser = Text.unpack $ unObjName user,
+          connectPassword = password,
+          connectDatabase = Text.unpack $ unObjName dbname
+        }
 
 instance Arbitrary ConnStringGen where
   arbitrary = do
@@ -202,30 +241,53 @@ instance Arbitrary ConnStringGen where
             then arbitrary @Bool
             else pure True
         pure $
-          ConnStringGen
-            ( getKeywordValuePairConnString
-                KwvpConnGen
-                  { shuffleIdx,
-                    user = (usr, b1, s1),
-                    password =
-                      if withPwd
-                        then Just (pwd, b2, s2)
-                        else Nothing,
-                    host = (host, b3, s3),
-                    port =
-                      if withPort
-                        then Just (port, b4, s4)
-                        else Nothing,
-                    dbname = (dbName, b5, s5)
-                  }
-            )
-            connInfo
+          ConnStringGen $
+            Left $
+              KwvpConnGen
+                { shuffleIdx,
+                  user = (usr, b1, s1),
+                  password =
+                    if withPwd
+                      then Just (pwd, b2, s2)
+                      else Nothing,
+                  host = (host, b3, s3),
+                  port =
+                    if withPort
+                      then Just (port, b4, s4)
+                      else Nothing,
+                  dbname = (dbName, b5, s5)
+                }
       URIpostgres -> do
         uriScheme <- elements ["postgres:", "postgresql:"]
         pure $
+          ConnStringGen $
+            Right (uriScheme, usr, pwd, host, port, dbName)
+  shrink (ConnStringGen genInfo) =
+    case genInfo of
+      Left kwvpGen@KwvpConnGen {user = (user, _, _), host = (host, _, _), dbname = (dbname, _, _)} ->
+        [ ConnStringGen
+            ( Left $
+                KwvpConnGen
+                  { shuffleIdx = 0,
+                    user = (user, False, 0),
+                    password = Nothing, -- Remove password
+                    host = (host, False, 0),
+                    port = Nothing, -- Remove port
+                    dbname = (ObjName "simpledb", False, 0)
+                  }
+            ),
           ConnStringGen
-            (getURIConnString uriScheme usr pwd host port dbName)
-            connInfo
+            ( Left $
+                KwvpConnGen
+                  { shuffleIdx = 0,
+                    user = (ObjName "", False, 0), -- Remove user
+                    password = Nothing, -- Remove password
+                    host = (host, False, 0),
+                    port = Nothing, -- Remove port
+                    dbname = (ObjName "simpledb", False, 0)
+                  }
+            )
+        ]
 
 spec :: Spec
 spec = do
@@ -298,6 +360,16 @@ spec = do
                       connectPassword = "",
                       connectDatabase = "codd-experiments"
                     }
+                ),
+                -- I didn't really test this with psql, but IIUC = signs should be accepted as parts of values
+                ( "dbname=codd-experiments\t  user=  post=gres password='abc = def'  host=127.0.0.1",
+                  ConnectInfo
+                    { connectHost = "127.0.0.1",
+                      connectPort = 5432,
+                      connectUser = "post=gres",
+                      connectPassword = "abc = def",
+                      connectDatabase = "codd-experiments"
+                    }
                 )
               ]
         forM_ stringsAndExpectedConnInfos $ \(connString, expectedConnInfo) -> do
@@ -312,9 +384,9 @@ spec = do
             parseOnly (coddConnStringCommentParser <* endOfInput) ("-- codd-connection: " <> connString) `shouldBe` Right (CoddCommentSuccess expectedConnInfo)
 
       it "Randomized valid connection strings" $ do
-        property $ \(ConnStringGen connStr connInfo) ->
-          parseOnly (connStringParser <* endOfInput) connStr
-            `shouldBe` Right connInfo
+        property $ \(connGen :: ConnStringGen) ->
+          parseOnly (connStringParser <* endOfInput) (renderConnStringGen connGen)
+            `shouldBe` Right (connInfoFromConnStringGen connGen)
     context "Retry policy parsing" $ do
       it "Invalid policy strings" $ do
         parseOnly
