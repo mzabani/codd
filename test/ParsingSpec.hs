@@ -13,29 +13,12 @@ import Codd.Internal.MultiQueryStatement
     skipCountableRunnableStatements,
   )
 import Codd.Logging (runCoddLogger)
-import Codd.Parsing
-  ( AddedSqlMigration (..),
-    EnvVars (..),
-    ParsedSql (..),
-    PureStream (..),
-    SqlMigration (..),
-    SqlPiece (..),
-    copyFromStdinAfterStatementParser,
-    isCommentPiece,
-    isWhiteSpacePiece,
-    manyStreaming,
-    parseAndClassifyMigration,
-    parseSqlMigration,
-    parseSqlPiecesStreaming,
-    parseSqlPiecesStreaming',
-    parsedSqlText,
-    piecesToText,
-    sqlPieceText,
-  )
+import Codd.Parsing (AddedSqlMigration (..), EnvVars (..), ParsedSql (..), PureStream (..), SectionOption (..), SqlMigration (..), SqlPiece (..), copyFromStdinAfterStatementParser, isCommentPiece, isWhiteSpacePiece, manyStreaming, parseAndClassifyMigration, parseSqlMigration, parseSqlPiecesStreaming, parseSqlPiecesStreaming', parsedSqlText, piecesToText, sqlPieceText)
 import Control.Monad
   ( forM,
     forM_,
     forever,
+    guard,
     unless,
     void,
     when,
@@ -47,7 +30,9 @@ import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, mapMaybe)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
@@ -67,6 +52,7 @@ import System.Random
 import Test.Hspec
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
+import qualified Test.QuickCheck as QC
 import UnliftIO
   ( IORef,
     MonadIO,
@@ -824,6 +810,21 @@ spec = do
               parseSqlMigrationIO "any-name.sql" $
                 mkRandStream randomSeed sql
 
+      it "All valid combinations of codd top-level comment markers" $
+        property $
+          \(randomSeed, opts :: ValidMigrationOptions) -> do
+            let plainSql = "SOME SQL"
+                sql = renderOptsAsComments opts <> plainSql
+            eMig <-
+              parseSqlMigrationIO
+                "any-name.sql"
+                $ mkRandStream
+                  randomSeed
+                  sql
+            case eMig of
+              Left e -> error $ "Got Left: " ++ show e
+              Right mig -> pure ()
+
       it "Gibberish after -- codd:" $ property $ \randomSeed -> do
         let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
         mig <-
@@ -887,10 +888,15 @@ spec = do
           \randomSeed -> do
             let sql =
                   "-- codd: no-parse\n-- codd: no-txn\nSome statement"
-            shouldReturnLeft $
+            mig <-
               parseSqlMigrationIO "no-parse-migration.sql" $
                 mkRandStream randomSeed sql
-
+            case mig of
+              Left err ->
+                err
+                  `shouldSatisfy` ( "It is not possible to set both 'no-txn' and 'no-parse'" `List.isInfixOf`
+                                  )
+              Right _ -> expectationFailure "Got Right"
       it
         "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith
@@ -1016,3 +1022,55 @@ spec = do
                 )
                 parsed
                 `shouldReturn` True
+
+-- | The Bools are line numbers and are 0 for False and 1 for True.
+-- These are line numbers for the "-- codd:" comments, which can be
+-- split across more than one line
+data ValidMigrationOptions = ValidMigrationOptions
+  { addUserCommentAsFirstLine :: Bool,
+    line0 :: Set SectionOption,
+    line1 :: Set SectionOption,
+    addUserCommentInBetween :: Bool
+  }
+  deriving stock (Show)
+
+renderOptsAsComments :: ValidMigrationOptions -> Text
+renderOptsAsComments
+  ValidMigrationOptions
+    { addUserCommentAsFirstLine,
+      line0,
+      line1,
+      addUserCommentInBetween
+    } =
+    let l0 = if null line0 then "" else "-- codd: " <> Text.intercalate "," (map sectionText $ Set.toList line0) <> "\n"
+        l1 = if null line1 then "" else "-- codd: " <> Text.intercalate "," (map sectionText $ Set.toList line1) <> "\n"
+     in -- TODO: interleave user comments
+        l0 <> l1
+    where
+      sectionText = \case
+        OptInTxn True -> "in-txn"
+        OptInTxn False -> "no-txn"
+        OptNoParse -> "no-parse"
+        OptRequiresCoddSchema -> "requires-codd-schema"
+
+instance Arbitrary ValidMigrationOptions where
+  arbitrary =
+    flip QC.suchThat isValid $ do
+      sec1 <- arbsetsections
+      sec2 <- (`Set.difference` sec1) <$> arbsetsections
+      ValidMigrationOptions
+        <$> arbitrary
+        <*> pure sec1
+        <*> pure sec2
+        <*> arbitrary
+    where
+      arbsection = QC.elements [OptInTxn True, OptInTxn False, OptNoParse, OptRequiresCoddSchema]
+      arbsetsections = Set.fromList <$> QC.listOf arbsection
+      isValid ValidMigrationOptions {line0, line1} =
+        let all = line0 <> line1
+         in not
+              ( OptInTxn False `Set.member` all
+                  && OptNoParse `Set.member` all
+              )
+              && not
+                (OptInTxn True `Set.member` all && OptInTxn False `Set.member` all)
