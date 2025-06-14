@@ -18,7 +18,7 @@ in rec {
       export PGPORT="5434"
       export PGHOST="/tmp"
       export PGUSER="postgres"
-      export PATH="$PATH:${pkgs.postgresql_16}/bin" # Some tests require pg_dump in PATH
+      export PATH="$PATH:${pkgs.postgresql_16.withPackages (ps: with ps; [ pg_cron ])}/bin" # Some tests require pg_dump in PATH
       export HSPEC_SKIP="/SystemResourcesSpecs/" # This test requires strace-wrapping, and I don't expect different libs would make it fail anyway
       scripts/init-pg-cluster.sh ./conf
       trap "pg_ctl stop || true" EXIT ERR

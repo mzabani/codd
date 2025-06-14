@@ -1,0 +1,13 @@
+{
+    "collation": null,
+    "collation_nsp": null,
+    "default": null,
+    "generated": "",
+    "hasdefault": false,
+    "identity": "",
+    "inhcount": 0,
+    "local": true,
+    "notnull": false,
+    "privileges": null,
+    "type": "public.experience2"
+}

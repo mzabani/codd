@@ -1,0 +1,30 @@
+{
+    "argmodes": null,
+    "argnames": [
+        "schedule",
+        "command"
+    ],
+    "args": "schedule text, command text",
+    "config": null,
+    "definition": null,
+    "kind": "f",
+    "lang": "c",
+    "leakproof": false,
+    "nargs": 2,
+    "nargs_defaults": 0,
+    "owner": "postgres",
+    "parallel": "u",
+    "privileges": {
+        "public": [
+            [
+                "X",
+                "postgres"
+            ]
+        ]
+    },
+    "return_type": "int8",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": true,
+    "volatile": "v"
+}
