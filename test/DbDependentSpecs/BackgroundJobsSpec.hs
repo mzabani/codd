@@ -8,7 +8,7 @@ import Control.Monad (void)
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.List (isInfixOf)
 import Database.PostgreSQL.Simple (ConnectInfo)
-import DbUtils (aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec)
 import Test.Hspec.Core.Spec (describe, it)
@@ -29,20 +29,16 @@ spec = do
                 (const $ pure ())
                 `shouldThrow` (\(e :: SqlStatementException) -> "background migrations require the pg_cron extension to work" `isInfixOf` show e)
 
-createExtPgCron :: (MonadThrow m) => ConnectInfo -> AddedSqlMigration m
-createExtPgCron superUserConnInfo =
-  AddedSqlMigration
-    SqlMigration
-      { migrationName = "0000-create-ext-pg_cron.sql",
-        migrationSql =
-          mkValidSql
-            "CREATE EXTENSION pg_cron; GRANT USAGE ON SCHEMA cron TO codd_admin;",
-        migrationInTxn = True,
-        migrationRequiresCoddSchema = False,
-        migrationCustomConnInfo = Just superUserConnInfo,
-        migrationEnvVars = mempty
-      }
-    (getIncreasingTimestamp 0)
+      aroundDatabaseWithMigsAndPgCron [] $ do
+        it "Nice error message when pg_cron is not installed" $ \emptyTestDbInfo -> do
+          void @IO $
+            runCoddLogger $ do
+              applyMigrationsNoCheck
+                emptyTestDbInfo
+                (Just [beginSomeBackgroundJob])
+                testConnTimeout
+                (const $ pure ())
+                `shouldThrow` (\(e :: SqlStatementException) -> "background migrations require the pg_cron extension to work" `isInfixOf` show e)
 
 beginSomeBackgroundJob :: (MonadThrow m) => AddedSqlMigration m
 beginSomeBackgroundJob =

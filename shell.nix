@@ -37,7 +37,7 @@ project.shellFor {
     # I tried to daemonize starting postgres but was not able
     # to make it work, so we only init the cluster.
     # See https://github.com/direnv/direnv/issues/755
-    ./scripts/init-pg-cluster.sh ./conf
+    ./scripts/init-pg-cluster.sh ./conf/dev-db
 
     echo You should be able to start postgres with 'pg_ctl start' and use 'psql' to connect to it, and it will be independent from any your own system might have provided.
     echo If 'psql' fails to connect, check logs at $PGDATA/log/

@@ -211,14 +211,6 @@ aroundTestDbInfo = around $ \act -> do
 aroundFreshDatabase :: SpecWith CoddSettings -> Spec
 aroundFreshDatabase = aroundDatabaseWithMigs []
 
--- -- | Same as `aroundTestDbInfo` but includes as one of its first in-txn migrations a pg_dump-like migration
--- -- that creates a very old version of codd_schema.
--- aroundTestDbInfoWithOldCoddSchema :: SpecWith CoddSettings -> Spec
--- aroundTestDbInfoWithOldCoddSchema = around $ \act -> do
---   aroundDatabaseWithMigs [oldPgDumpMigWithOldCoddSchema]
---   coddSettings <- testCoddSettings
---   act coddSettings `finally` cleanupAfterTest
-
 aroundDatabaseWithMigs ::
   (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
   SpecWith CoddSettings ->
@@ -238,6 +230,39 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     )
     `finally` cleanupAfterTest
 
+aroundDatabaseWithMigsAndPgCron ::
+  (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
+  SpecWith CoddSettings ->
+  Spec
+aroundDatabaseWithMigsAndPgCron startingMigs = around $ \act -> do
+  coddSettings <- testCoddSettings
+  cinfo <- testConnInfo
+  let superUserConnInfo = cinfo {connectUser = "postgres"}
+      createPgCronExtMig =
+        AddedSqlMigration
+          SqlMigration
+            { migrationName = "0000-create-ext-pg_cron.sql",
+              migrationSql =
+                mkValidSql
+                  "CREATE EXTENSION pg_cron",
+              migrationInTxn = True,
+              migrationRequiresCoddSchema = False,
+              migrationCustomConnInfo = Just superUserConnInfo,
+              migrationEnvVars = mempty
+            }
+          (getIncreasingTimestamp 0)
+  runCoddLogger
+    ( do
+        bootstrapMig <- createTestUserMig
+        applyMigrationsNoCheck
+          coddSettings
+          (Just $ bootstrapMig : createPgCronExtMig : startingMigs)
+          testConnTimeout
+          (const $ pure ())
+        liftIO (act coddSettings)
+    )
+    `finally` cleanupAfterTest
+
 cleanupAfterTest :: IO ()
 cleanupAfterTest = do
   CoddSettings {migsConnString} <- testCoddSettings
@@ -251,7 +276,7 @@ cleanupAfterTest = do
     -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
     -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
     ( \conn -> do
-        execvoid_ conn "ALTER ROLE postgres RESET ALL;"
+        execvoid_ conn "ALTER ROLE postgres RESET ALL; DROP EXTENSION IF EXISTS pg_cron;"
         dbs :: [String] <-
           map DB.fromOnly
             <$> query
