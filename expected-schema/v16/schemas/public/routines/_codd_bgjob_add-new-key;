@@ -1,0 +1,33 @@
+{
+    "argmodes": null,
+    "argnames": null,
+    "args": "",
+    "config": null,
+    "definition": " BEGIN NEW.new_id = (SELECT new_id FROM unique_uuids WHERE unique_uuids.uuid_key=NEW.uuid_key); RETURN NEW; END; ",
+    "kind": "f",
+    "lang": "plpgsql",
+    "leakproof": false,
+    "nargs": 0,
+    "nargs_defaults": 0,
+    "owner": "codd_admin",
+    "parallel": "u",
+    "privileges": {
+        "codd_admin": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ]
+    },
+    "return_type": "trigger",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}

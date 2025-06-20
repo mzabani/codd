@@ -1,0 +1,33 @@
+{
+    "argmodes": null,
+    "argnames": null,
+    "args": "",
+    "config": null,
+    "definition": " DECLARE affected_row_count bigint; new_codd_job_status TEXT; BEGIN \nUPDATE ref_uuids SET new_id=unique_uuids.new_id\n    FROM unique_uuids\n    WHERE unique_uuids.uuid_key=ref_uuids.uuid_key AND ref_uuids.uuid_key IN (SELECT uuid_key FROM ref_uuids WHERE new_id IS NULL LIMIT 10000);\n  GET DIAGNOSTICS affected_row_count = row_count; new_codd_job_status = CASE WHEN affected_row_count=0 THEN 'run-complete-awaiting-finalization' END; RETURN new_codd_job_status; END; ",
+    "kind": "f",
+    "lang": "plpgsql",
+    "leakproof": false,
+    "nargs": 0,
+    "nargs_defaults": 0,
+    "owner": "codd_admin",
+    "parallel": "u",
+    "privileges": {
+        "codd_admin": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ]
+    },
+    "return_type": "text",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}
