@@ -13,12 +13,38 @@ migrateInternalSchemaV4ToV5 conn = do
     conn
     [sqlExp|
 ALTER SCHEMA codd_schema RENAME TO codd;
+CREATE TABLE codd._background_worker_type (
+  id INT NOT NULL PRIMARY KEY CHECK (id = 1) -- Enforce a single row
+  , worker_type TEXT NOT NULL CHECK (worker_type IN ('pg_cron', 'external'))
+);
+GRANT INSERT,SELECT,UPDATE,DELETE ON TABLE codd._background_worker_type TO PUBLIC;
+CREATE FUNCTION codd.setup_background_worker(worker_type TEXT) RETURNS VOID AS $$
+BEGIN
+  IF worker_type NOT IN ('pg_cron', 'external') THEN
+    RAISE EXCEPTION 'Background workers supported by codd are either "pg_cron", which requires the extension, or "external", which requires you to set up an external job runner yourself to periodically run scheduled jobs.';
+  END IF;
+  IF worker_type = 'pg_cron' AND NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
+    -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
+    RAISE EXCEPTION 'Setting up codd background migrations with pg_cron requires the pg_cron extension to be installed first. Please check https://github.com/citusdata/pg_cron for installation instructions';
+  END IF;
+
+  INSERT INTO codd._background_worker_type (id, worker_type) VALUES (1, worker_type)
+  ON CONFLICT (id) DO UPDATE SET worker_type=EXCLUDED.worker_type;
+END;
+$$ LANGUAGE plpgsql;
+CREATE FUNCTION codd._assert_worker_is_setup() RETURNS VOID AS $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM codd._background_worker_type) THEN
+    RAISE EXCEPTION 'You must call the codd.setup_background_worker function before scheduling jobs. You can either add `SELECT codd.setup_background_worker(''pg_cron'')` or `SELECT codd.setup_background_worker(''external'')` to your migration depending on whether you would like the pg_cron extension to run periodic jobs or if you wish to implement a job runner yourself otherwise';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
 CREATE TYPE codd.obj_to_drop AS (
     kind text,
     objname text,
     on_ text
 );
-CREATE TABLE IF NOT EXISTS codd._background_jobs (
+CREATE TABLE codd._background_jobs (
   jobname TEXT NOT NULL PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'started',
   created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
@@ -78,7 +104,7 @@ BEGIN
   IF TG_OP='DELETE' OR NEW.status IN ('aborted', 'run-complete-awaiting-finalization', 'finalized') THEN
     FOREACH pg_cron_job_name IN ARRAY OLD.pg_cron_jobs
     LOOP
-      IF EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
+      IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') AND EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
          PERFORM cron.unschedule(pg_cron_job_name);
       END IF;
     END LOOP;
@@ -123,21 +149,13 @@ CREATE TRIGGER react_to_job_deletion
     FOR EACH ROW
     EXECUTE FUNCTION codd.react_to_job_status_change();
 
-CREATE FUNCTION codd.assert_pg_cron_setup() RETURNS VOID AS $func$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
-  -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
-    RAISE EXCEPTION 'Codd background migrations require the pg_cron extension to work. Please check https://github.com/citusdata/pg_cron for installation instructions';
-  END IF;
-END;
-$func$ LANGUAGE plpgsql;
 CREATE FUNCTION codd.assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 BEGIN
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
   END IF;
   IF cron_schedule IS NULL THEN
-    RAISE EXCEPTION 'Please supply a cron schedule. It could be e.g. "5 seconds" to run every 5 seconds or "0 10 * * *" for every day at 10AM. Check https://github.com/citusdata/pg_cron for more examples and explanations';
+    RAISE EXCEPTION 'Please supply a cron schedule. It could be e.g. "5 seconds" to run every 5 seconds or "0 10 * * *" for every day at 10AM.';
   END IF;
   IF plpgsql_to_run_periodically IS NULL THEN
     RAISE EXCEPTION 'Please supply a body of valid SQL or plpgsql to run on the supplied schedule';
@@ -145,7 +163,7 @@ BEGIN
   IF EXISTS (SELECT FROM codd._background_jobs WHERE jobname=job_name) THEN
     RAISE EXCEPTION 'Codd background job named % already exists. Please choose another name or clean up the codd._background_jobs table by deleting successful jobs if that would help', job_name;
   END IF;
-  IF EXISTS (SELECT FROM cron.job WHERE jobname=job_name) THEN
+  IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') AND EXISTS (SELECT FROM cron.job WHERE jobname=job_name) THEN
     RAISE EXCEPTION 'There already exists a pg_cron job named %. Please choose another name or clean up the the list of pg_cron jobs', job_name;
   END IF;
 END;
@@ -165,7 +183,7 @@ DECLARE
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
 BEGIN
   NOTIFY "codd.___require_codd_schema_channel";
-  PERFORM codd.assert_pg_cron_setup();
+  PERFORM codd._assert_worker_is_setup();
   PERFORM codd.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
   INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects'));
@@ -219,7 +237,9 @@ BEGIN
   $sqltext$, temp_bg_wrapper_func_name, temp_bg_success_func_name, quote_literal(jobname), quote_literal(jobname));
 
   -- TODO: Control isolation level
-  PERFORM cron.schedule(jobname, cron_schedule, format('BEGIN; SELECT %s(); COMMIT;', temp_bg_wrapper_func_name));
+  IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') THEN
+    PERFORM cron.schedule(jobname, cron_schedule, format('BEGIN; SELECT %s(); COMMIT;', temp_bg_wrapper_func_name));
+  END IF;
 END;
 $func$ LANGUAGE plpgsql;
 -- | Synchronously runs a job until it finalized or until the supplied timeout elapses, and raises an exception in case of the latter.
@@ -239,7 +259,7 @@ DECLARE
   obj_to_drop codd.obj_to_drop;
 BEGIN
   NOTIFY "codd.___require_codd_schema_channel";
-  PERFORM codd.assert_pg_cron_setup();
+  PERFORM codd._assert_worker_is_setup();
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
   END IF;
@@ -284,7 +304,7 @@ DECLARE
   triggfn_name text;
   qualif_table_name text;
 BEGIN
-  PERFORM codd.assert_pg_cron_setup();
+  PERFORM codd._assert_worker_is_setup();
   IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
     RAISE EXCEPTION $err$
 Did you forget to supply some arguments to populate_column_gradually? Here is an usage example that updates one row every second:

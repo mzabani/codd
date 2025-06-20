@@ -123,6 +123,7 @@ withCoddDbAndDrop migs f = do
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier
                     (Text.pack $ connectDatabase migsConnString)
+                  <> "(FORCE)"
 
 -- | Runs an action and drops a database afterwards in a finally block.
 finallyDrop :: (MonadIO m, MonadUnliftIO m) => Text -> m a -> m a
@@ -142,6 +143,7 @@ finallyDrop dbName f = f `finally` dropDb
               DB.execute_ conn $
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier dbName
+                  <> "(FORCE)"
 
 createTestUserMig ::
   forall m. (MonadIO m, MonadThrow m) => m (AddedSqlMigration m)
@@ -276,7 +278,7 @@ cleanupAfterTest = do
     -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
     -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
     ( \conn -> do
-        execvoid_ conn "ALTER ROLE postgres RESET ALL; DROP EXTENSION IF EXISTS pg_cron;"
+        execvoid_ conn "ALTER ROLE postgres RESET ALL; SET client_min_messages='warning'; DROP EXTENSION IF EXISTS pg_cron; RESET client_min_messages;"
         dbs :: [String] <-
           map DB.fromOnly
             <$> query
@@ -284,7 +286,7 @@ cleanupAfterTest = do
               "SELECT datname FROM pg_catalog.pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1')"
               ()
         forM_ dbs $ \db ->
-          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\""
+          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\" (FORCE)"
 
         allRoles :: [String] <-
           map DB.fromOnly
