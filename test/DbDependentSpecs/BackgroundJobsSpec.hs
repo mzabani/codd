@@ -182,6 +182,9 @@ createEmployeesTable =
 
 -- | Begins and synchronously finishes a job to gradually transform 'master' employees into 'senior'.
 -- Inserts some employees before finishing the job to test any triggers' code paths.
+-- The idea is to migrate columns of an "employee" table and a temporary "experience2" column for
+-- the new values, before it replaces the "experience" column. However, there's a lot of templating code,
+-- so we do test bizarre object names for both the table and the column.
 scheduleExperienceMigration :: (MonadThrow m) => AddedSqlMigration m
 scheduleExperienceMigration =
   AddedSqlMigration
@@ -190,15 +193,16 @@ scheduleExperienceMigration =
         migrationSql =
           mkValidSql
             "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
-            \ALTER TABLE employee ADD COLUMN experience2 experience2;\n\
+            \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
+            \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \SELECT codd.populate_column_gradually('change-experience', '1 seconds',\n\
             \$$\n\
-            \UPDATE employee SET experience2=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
-            \WHERE employee_id=(SELECT employee_id FROM employee WHERE (experience IS NULL) <> (experience2 IS NULL) LIMIT 1);\n\
+            \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
+            \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
-            \, 'employee', 'experience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
-            \INSERT INTO employee (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
+            \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
@@ -214,8 +218,9 @@ finalizeExperienceMigration =
         migrationSql =
           mkValidSql
             "SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds');\n\
+            \ALTER TABLE \"empl  oyee\" RENAME TO employee;\n\
             \ALTER TABLE employee DROP COLUMN experience;\n\
-            \ALTER TABLE employee RENAME COLUMN experience2 TO experience;\n\
+            \ALTER TABLE employee RENAME COLUMN \"expE Rience2\" TO experience;\n\
             \DROP TYPE experience;\n\
             \ALTER TYPE experience2 RENAME TO experience;\n\
             \INSERT INTO employee (name, experience) VALUES ('Goku', 'senior');",

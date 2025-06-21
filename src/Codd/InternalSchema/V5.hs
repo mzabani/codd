@@ -194,7 +194,6 @@ BEGIN
   -- Why two functions instead of just one? Because each function's effects are atomic, as if
   -- there was a savepoint around each function call, and that enables us to update codd._background_jobs
   -- even if the job errors out. Still, write a test or look for official docs to assert this property.
-  -- TODO: Test very long job names (more than 63 chars) and with weird characters too
   EXECUTE format($sqltext$
         CREATE FUNCTION %s () RETURNS TEXT AS $$
         DECLARE
@@ -353,6 +352,6 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
       ON %s
       FOR EACH ROW
       EXECUTE FUNCTION %s();
-  $triggers$, triggfn_name, colname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, tablename, triggfn_name);
+  $triggers$, triggfn_name, colname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, qualif_table_name, triggfn_name);
 END;
 $func$ LANGUAGE plpgsql; |]
