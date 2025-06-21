@@ -34,7 +34,6 @@ ci-tests:
     run test-with-db --nix --pg 15
     run test-with-db --nix --pg 14
     run test-with-db --nix --pg 13
-    run test-with-db --nix --pg 12
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         echo "Running system-resources test"
@@ -83,7 +82,7 @@ test-no-db:
 test-with-db:
     set -eo pipefail
     [ -z "$PG" ] && PG=(16)
-    [ "${PG[0]}" = "all" ] && PG=(12 13 14 15 16)
+    [ "${PG[0]}" = "all" ] && PG=(13 14 15 16)
     TARGS="--match '/DbDependentSpecs/'" && [ -n "$1" ] && TARGS=$(printf "'%s' " "${@}")
     
     for pg in "${PG[@]}"; do
