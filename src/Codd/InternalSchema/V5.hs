@@ -20,6 +20,7 @@ CREATE TABLE codd._background_worker_type (
 GRANT INSERT,SELECT,UPDATE,DELETE ON TABLE codd._background_worker_type TO PUBLIC;
 CREATE FUNCTION codd.setup_background_worker(worker_type TEXT) RETURNS VOID AS $$
 BEGIN
+  NOTIFY "codd.___require_codd_schema_channel";
   IF worker_type NOT IN ('pg_cron', 'external') THEN
     RAISE EXCEPTION 'Background workers supported by codd are either "pg_cron", which requires the extension, or "external", which requires you to set up an external job runner yourself to periodically run scheduled jobs.';
   END IF;
