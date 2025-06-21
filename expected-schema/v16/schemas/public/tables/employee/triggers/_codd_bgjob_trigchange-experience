@@ -1,9 +1,9 @@
 {
     "associated_constraint": null,
     "deferrable": false,
-    "definition": "CREATE TRIGGER \"_codd_bgjob_trigadd-new-key\" BEFORE INSERT OR UPDATE ON public.ref_uuids FOR EACH ROW EXECUTE FUNCTION public.\"_codd_bgjob_add-new-key\"()",
+    "definition": "CREATE TRIGGER \"_codd_bgjob_trigchange-experience\" BEFORE INSERT OR UPDATE ON public.employee FOR EACH ROW EXECUTE FUNCTION public.\"_codd_bgjob_change-experience\"()",
     "enabled": "O",
-    "function": "_codd_bgjob_add-new-key;",
+    "function": "_codd_bgjob_change-experience;",
     "initdeferred": false,
     "nargs": 0,
     "newtblname": null,

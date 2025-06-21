@@ -1,5 +1,5 @@
 -- codd: requires-codd-schema
--- Comment above added automatically by codd since this migration requires the 'codd' schema to exist. Please don't remove it.
+-- Comment above added automatically by codd since this migration requires the 'codd' schema to exist. Please don't remove it. You can add more '-- codd:' top-level comments at the top of the file or even below this line. You can also remove this comment as it's purely instructive.
 CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');
 ALTER TABLE employee ADD COLUMN experience2 experience2;
 SELECT codd.populate_column_gradually('change-experience', '1 seconds',

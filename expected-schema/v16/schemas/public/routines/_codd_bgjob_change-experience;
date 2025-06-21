@@ -3,7 +3,7 @@
     "argnames": null,
     "args": "",
     "config": null,
-    "definition": " BEGIN NEW.new_id = (SELECT new_id FROM unique_uuids WHERE unique_uuids.uuid_key=NEW.uuid_key); RETURN NEW; END; ",
+    "definition": " BEGIN NEW.experience2 = CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END; RETURN NEW; END; ",
     "kind": "f",
     "lang": "plpgsql",
     "leakproof": false,

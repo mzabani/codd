@@ -46,7 +46,8 @@ CREATE TYPE codd.obj_to_drop AS (
     on_ text
 );
 CREATE TABLE codd._background_jobs (
-  jobname TEXT NOT NULL PRIMARY KEY,
+  jobid SERIAL PRIMARY KEY,
+  jobname TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'started',
   created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   last_run_at TIMESTAMPTZ,
@@ -63,6 +64,7 @@ CREATE TABLE codd._background_jobs (
   job_function TEXT NOT NULL,
   objects_to_drop_in_order codd.obj_to_drop[] NOT NULL,
   pg_cron_jobs TEXT[] NOT NULL
+  , UNIQUE (jobname)
   , CHECK (status IN ('started', 'aborted', 'run-complete-awaiting-finalization', 'finalized'))
   , CHECK (completed_or_aborted_at IS NULL OR status <> 'started')
   , CHECK ((finalized_at IS NOT NULL) = (status = 'finalized'))

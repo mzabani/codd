@@ -17,24 +17,14 @@
     "privileges": {
         "codd-user": [
             [
-                "daxr*tDw",
+                "daxrtDw",
                 "codd_admin"
             ]
         ],
         "codd_admin": [
             [
-                "r",
-                "codd-user"
-            ],
-            [
                 "daxrtDw",
                 "codd_admin"
-            ]
-        ],
-        "public": [
-            [
-                "r",
-                "codd-user"
             ]
         ]
     },

@@ -12,9 +12,11 @@ import Codd.Analysis
   )
 import Codd.Environment (CoddSettings (..))
 import Codd.Internal
-  ( closeFileStream,
+  ( CoddSchemaVersion (..),
+    closeFileStream,
     collectPendingMigrations,
     delayedOpenStreamFile,
+    detectCoddSchema,
     listMigrationsFromDisk,
     pendingMigs,
     withConnection,
@@ -34,7 +36,7 @@ import Codd.Parsing
     parseSqlMigration,
     toMigrationTimestamp,
   )
-import Codd.Query (NotInTxn, queryServerMajorAndFullVersion)
+import Codd.Query (NotInTxn, query, queryMay, queryServerMajorAndFullVersion)
 import Codd.Representations
   ( persistRepsToDisk,
     readRepresentationsFromDbWithSettings,
@@ -48,6 +50,7 @@ import Control.Monad
 import Control.Monad.Trans.Resource (MonadThrow)
 import qualified Data.List as List
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import Data.Time (getCurrentTime, secondsToDiffTime)
@@ -193,12 +196,18 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                 --    making custom settings and listening on the same connection difficult.
                 -- 3) Migrations might be no-txn, making "ON COMMIT DROP" tables difficult to use and normal
                 --    tables difficult to clean up.
-                -- 4) A better approach would be to parse all SQL in the migration properly and then detect calls
+                -- 4) Migrations might begin a new job and synchronously finalize it, then DELETE from
+                --    codd._background_jobs all in the same txn, so querying `codd.jobs` before and after the
+                --    migration is not sufficient.
+                -- 5) A better approach would be to parse all SQL in the migration properly and then detect calls
                 --    to codd.* functions, but that's not an implementation I can afford right now.
+                --    In fact, a migration SELECTing from codd.jobs without invoking any function will fail to
+                --    be detected with the current approach.. oh, well.
                 let addedMigConnInfo = fromMaybe defaultConnInfo $ migrationCustomConnInfo $ addedSqlMig sqlMig
-                ((pgMajorVer, databaseSchemas), addedMigRequiresCoddSchema) <-
+                ((pgMajorVer, databaseSchemas), addedMigRequiresCoddSchema, newlyStartedBackgroundJobs) <-
                   withConnection addedMigConnInfo connTimeout $ \listenConn -> do
                     liftIO $ void $ DB.execute listenConn "LISTEN ?" (DB.Only $ DB.Identifier "codd.___require_codd_schema_channel")
+                    maxBackgroundJobIdBefore <- getMaxBackgroundJobId listenConn
                     pgVerAndSchemas <-
                       Codd.applyMigrationsNoCheck
                         dbInfo
@@ -209,8 +218,9 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                             (pgMajorVer,) <$> readRepresentationsFromDbWithSettings dbInfo conn
                         )
                     addedMigRequiresCoddSchema <- liftIO $ checkCoddSchemaFunctionsHaveBeenCalled listenConn
+                    newlyStartedJobs <- getAddedJobsStillRunning listenConn maxBackgroundJobIdBefore
                     closeFileStream migStream
-                    pure (pgVerAndSchemas, addedMigRequiresCoddSchema)
+                    pure (pgVerAndSchemas, addedMigRequiresCoddSchema, newlyStartedJobs)
                 persistRepsToDisk pgMajorVer databaseSchemas onDiskRepsDir
 
                 -- Copy file to target and prepend a special -- codd: requires-codd-schema line when necessary
@@ -224,6 +234,8 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                   "Updated expected DB schema representations in the <MAGENTA>"
                     <> Text.pack onDiskRepsDir
                     <> "</MAGENTA> folder"
+                printTipForBackgroundJobs newlyStartedBackgroundJobs
+
                 fileRemoved <- try $ removeFile fp
                 case fileRemoved of
                   Right _ -> pure ()
@@ -319,3 +331,33 @@ checkCoddSchemaFunctionsHaveBeenCalled listenConn = go
       case mNotif of
         Nothing -> pure False
         Just DB.Notification {notificationChannel} -> if notificationChannel == "codd.___require_codd_schema_channel" then pure True else go
+
+getMaxBackgroundJobId :: (MonadIO m) => DB.Connection -> m (Maybe Int)
+getMaxBackgroundJobId conn = do
+  coddSchemaVersion <- detectCoddSchema conn
+  if coddSchemaVersion < CoddSchemaV5
+    then pure Nothing
+    else fmap DB.fromOnly <$> queryMay conn "SELECT jobid FROM codd._background_jobs ORDER BY jobid DESC LIMIT 1" ()
+
+-- | Returns at most 2 new jobs with the status 'started', because we don't need
+-- to warn users of jobs they added and are finished - that means their stopping conditions
+-- have already ran and been tested.
+getAddedJobsStillRunning :: (MonadIO m) => DB.Connection -> Maybe Int -> m [Text]
+getAddedJobsStillRunning conn maxPrevJobId = do
+  -- After adding a migration codd's internal schema must exist, but this check protects us
+  -- against running in non-default-db connections
+  coddSchemaVersion <- detectCoddSchema conn
+  if coddSchemaVersion < CoddSchemaV5
+    then pure []
+    else
+      fmap DB.fromOnly <$> query conn "SELECT quote_literal(jobname) FROM codd._background_jobs WHERE (? IS NULL OR jobid>?) AND status='started' ORDER BY jobid LIMIT 2" (maxPrevJobId, maxPrevJobId)
+
+printTipForBackgroundJobs :: (CoddLogger m, Monad m) => [Text] -> m ()
+printTipForBackgroundJobs = \case
+  [] -> pure ()
+  [singleNewJobName] -> do
+    logInfoAlways "---------------------------------------------"
+    logInfoAlways $ "<GREEN>Tip:</GREEN> your migration added a background job. Run <MAGENTA>SELECT * FROM codd.jobs</MAGENTA> to see it and do try to call <MAGENTA>SELECT codd.synchronously_finalize_background_job(" <> singleNewJobName <> ", '100 seconds')</MAGENTA> (with a longer timeout if necessary) to ensure your job stopping conditions are sound. Then, run <MAGENTA>SELECT * FROM codd.jobs</MAGENTA> again to see its new status."
+  _ -> do
+    logInfoAlways "---------------------------------------------"
+    logInfoAlways "<GREEN>Tip:</GREEN> your migration added background jobs. Run <MAGENTA>SELECT * FROM codd.jobs</MAGENTA> to see them and do try to call something like <MAGENTA>SELECT codd.synchronously_finalize_background_job('job-name', '100 seconds')</MAGENTA> for each of your jobs to ensure their stopping conditions are sound. Then, run <MAGENTA>SELECT * FROM codd.jobs</MAGENTA> again to see its new status."

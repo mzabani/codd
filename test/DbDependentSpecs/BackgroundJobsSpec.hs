@@ -72,13 +72,13 @@ spec = do
                 -- Wait a few seconds and check that the job runs once a second
                 startedCoddJob <- unsafeQuery1 conn "SELECT pg_sleep(5); SELECT * FROM codd.jobs" ()
                 DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
-                scheduledCronJob `shouldBe` "change-experience"
-                numJobsSucceeded startedCoddJob + numJobsError startedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
                 -- The periodic job updates 1 employee per run, and it has 80% chance of failing (look at the random() expression).
                 -- Since there are 5 employees to migrate (some are inserted after the job and thus the trigger are created),
                 -- the chance that 5 seconds (at most 5 runs) have all succeeded is 0.2^5=0.032%, which I consider to be 0
                 -- for the purposes of this test.
+                numJobsSucceeded startedCoddJob + numJobsError startedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
                 status startedCoddJob `shouldBe` "started"
+                scheduledCronJob `shouldBe` "change-experience"
                 lastRunAt startedCoddJob `shouldNotBe` Nothing
                 completedOrAbortedAt startedCoddJob `shouldBe` Nothing
                 finalizedAt startedCoddJob `shouldBe` Nothing
