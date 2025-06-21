@@ -30,9 +30,7 @@ import Codd.Logging
 import Codd.Parsing
   ( EnvVars,
     FileStream (..),
-    addedSqlMig,
     migrationCustomConnInfo,
-    parseAddedSqlMigration,
     parseSqlMigration,
     toMigrationTimestamp,
   )
@@ -94,7 +92,7 @@ import UnliftIO.Resource (MonadResource, runResourceT)
 
 addMigration ::
   forall m.
-  (MonadUnliftIO m, CoddLogger m, MonadThrow m, EnvVars m, NotInTxn m) =>
+  (MonadUnliftIO m, CoddLogger m, MonadThrow m, Codd.Parsing.EnvVars m, NotInTxn m) =>
   CoddSettings ->
   Maybe FilePath ->
   SqlFilePath ->
@@ -142,7 +140,7 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
     isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
     runResourceT $ do
       migStream <- delayedOpenStreamFile fp
-      parsedSqlMigE <- parseSqlMigration (takeFileName fp) migStream
+      parsedSqlMigE <- Codd.Parsing.parseSqlMigration (takeFileName fp) migStream
       case parsedSqlMigE of
         Left err -> do
           logError $ "Could not add migration: " <> Text.pack err
@@ -152,6 +150,7 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
               (printSuggestedFirstMigration defaultConnInfo)
           liftIO $ exitWith $ ExitFailure 96
         Right sqlMig -> do
+          let newMigrationConnInfo = fromMaybe defaultConnInfo $ migrationCustomConnInfo sqlMig
           migCheck <- checkMigration sqlMig
           let migError = case migCheck of
                 Left err -> Just err
@@ -174,8 +173,6 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
               tempDir <- getEmptyTempDir
               (tempDirMigFile, _) <- getTimestampedAbsoluteDestMigrationPath sqlFp tempDir
               copyFile fp tempDirMigFile
-              migStream <- delayedOpenStreamFile tempDirMigFile
-              sqlMig <- either (\e -> error $ "Bug in codd: unable to parseAddedSqlMigration from temp dir: " ++ show e) Prelude.id <$> parseAddedSqlMigration tempDirMigFile migStream
 
               let connTimeout = secondsToDiffTime 10
               pendingMigsBeforeAdd <- runWithoutLogging $ collectPendingMigrations defaultConnInfo (Left sqlMigrations) txnIsolationLvl connTimeout
@@ -203,15 +200,14 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                 --    to codd.* functions, but that's not an implementation I can afford right now.
                 --    In fact, a migration SELECTing from codd.jobs without invoking any function will fail to
                 --    be detected with the current approach.. oh, well.
-                let addedMigConnInfo = fromMaybe defaultConnInfo $ migrationCustomConnInfo $ addedSqlMig sqlMig
                 ((pgMajorVer, databaseSchemas), addedMigRequiresCoddSchema, newlyStartedBackgroundJobs) <-
-                  withConnection addedMigConnInfo connTimeout $ \listenConn -> do
+                  withConnection newMigrationConnInfo connTimeout $ \listenConn -> do
                     liftIO $ void $ DB.execute listenConn "LISTEN ?" (DB.Only $ DB.Identifier "codd.___require_codd_schema_channel")
                     maxBackgroundJobIdBefore <- getMaxBackgroundJobId listenConn
                     pgVerAndSchemas <-
                       Codd.applyMigrationsNoCheck
-                        dbInfo
-                        (Just [sqlMig])
+                        dbInfo {sqlMigrations = [tempDir]}
+                        Nothing
                         connTimeout
                         ( \conn -> do
                             (pgMajorVer, _) <- queryServerMajorAndFullVersion conn
@@ -260,7 +256,7 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
 -- top-level comment if necessary, copying the remainder of the migration next.
 writeFinalMigrationFile :: (MonadUnliftIO m, MonadResource m) => FilePath -> FilePath -> Bool -> m ()
 writeFinalMigrationFile originalMigFile finalMigFile addedMigRequiresCoddSchema = withFile finalMigFile WriteMode $ \handle -> do
-  migStream@FileStream {fileStream} <- delayedOpenStreamFile originalMigFile
+  migStream@Codd.Parsing.FileStream {fileStream} <- delayedOpenStreamFile originalMigFile
   when addedMigRequiresCoddSchema $ liftIO $ do
     Text.hPutStrLn handle "-- codd: requires-codd-schema"
     Text.hPutStrLn handle "-- Comment above added automatically by codd since this migration requires the 'codd' schema to exist. Please don't remove it. You can add more '-- codd:' top-level comments at the top of the file or even below this line. You can also remove this comment as it's purely instructive."
@@ -298,7 +294,7 @@ getTimestampedAbsoluteDestMigrationPath (unSqlFilePath -> migrationPath) folderT
     --   2. Chance of naming conflicts with migrations added by other developers is small.
     -- One desirable property, however, is that filenames are human-readable
     -- and convey more or less an idea of when they were added.
-    (migTimestamp, dbTimestamp) <- toMigrationTimestamp <$> liftIO getCurrentTime
+    (migTimestamp, dbTimestamp) <- Codd.Parsing.toMigrationTimestamp <$> liftIO getCurrentTime
     let finalName =
           folderToCopyTo
             </> nicerTimestampFormat (iso8601Show migTimestamp)

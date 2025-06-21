@@ -95,7 +95,7 @@ spec = do
                 numJobsError finalizedCoddJob `shouldSatisfy` (> 0)
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 lastError finalizedCoddJob `shouldSatisfy` ("22P02" `List.isInfixOf`) . show -- This is invalid input value for the enum
-                numJobsSucceeded finalizedCoddJob `shouldBe` 6 -- 5 + 1 last finalizedCoddJob that updates no rows
+                numJobsSucceeded finalizedCoddJob `shouldBe` 6 -- 5 + 1 last job run that updates no rows
                 jobname finalizedCoddJob `shouldBe` "change-experience"
                 status finalizedCoddJob `shouldBe` "finalized"
                 lastRunAt finalizedCoddJob `shouldNotBe` Nothing
