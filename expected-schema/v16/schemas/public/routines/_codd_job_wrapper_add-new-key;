@@ -1,0 +1,33 @@
+{
+    "argmodes": null,
+    "argnames": null,
+    "args": "",
+    "config": null,
+    "definition": " DECLARE new_codd_job_status TEXT; stack text; BEGIN SELECT public.\"_codd_job_add-new-key\"() INTO new_codd_job_status;  UPDATE codd._background_jobs SET num_jobs_succeeded=num_jobs_succeeded+1 , last_run_at=CLOCK_TIMESTAMP() , status=COALESCE(new_codd_job_status, status) WHERE jobname='add-new-key'; EXCEPTION WHEN OTHERS THEN   GET DIAGNOSTICS stack = PG_CONTEXT; RAISE WARNING 'Error in codd background job. % %. Stack: %', SQLSTATE, SQLERRM, stack; UPDATE codd._background_jobs SET num_jobs_error=num_jobs_error + 1 , last_run_at=CLOCK_TIMESTAMP() , last_error_at=CLOCK_TIMESTAMP() , last_error=format('%s: %s', SQLSTATE, SQLERRM) WHERE jobname='add-new-key'; END; ",
+    "kind": "f",
+    "lang": "plpgsql",
+    "leakproof": false,
+    "nargs": 0,
+    "nargs_defaults": 0,
+    "owner": "codd_admin",
+    "parallel": "u",
+    "privileges": {
+        "codd_admin": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ]
+    },
+    "return_type": "void",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}

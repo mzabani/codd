@@ -11,7 +11,7 @@ pkgs.mkShell {
     export PGHOST="/tmp"
     export PGUSER="postgres"
     trap "pg_ctl stop" EXIT ERR
-    scripts/init-pg-cluster.sh ./conf
+    scripts/init-pg-cluster.sh ./conf/test-db
     pg_ctl start
     scripts/wait-for-pg-ready.sh
   '';

@@ -1,0 +1,16 @@
+{
+    "deferrable": false,
+    "deferred": false,
+    "definition": "FOREIGN KEY (new_id) REFERENCES public.unique_uuids(new_id)",
+    "fk_deltype": "a",
+    "fk_matchtype": "s",
+    "fk_ref_table": "unique_uuids",
+    "fk_updtype": "a",
+    "inhcount": 0,
+    "local": true,
+    "noinherit": true,
+    "parent_constraint": null,
+    "supporting_index": "unique_uuids_new_id_idx",
+    "type": "f",
+    "validated": true
+}

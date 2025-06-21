@@ -89,7 +89,6 @@ jobs:
         nix-build --no-out-link -A testsPg15
         nix-build --no-out-link -A testsPg14
         nix-build --no-out-link -A testsPg13
-        nix-build --no-out-link -A testsPg12
 
         echo "Running system resource usage tests"
         nix-build --no-out-link -A testsSystemResources
@@ -162,7 +161,6 @@ jobs:
         nix-build --no-out-link -A testsPg15
         nix-build --no-out-link -A testsPg14
         nix-build --no-out-link -A testsPg13
-        nix-build --no-out-link -A testsPg12
 
     - name: Create macOS app bundle
       run: |

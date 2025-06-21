@@ -123,6 +123,7 @@ withCoddDbAndDrop migs f = do
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier
                     (Text.pack $ connectDatabase migsConnString)
+                  <> "(FORCE)"
 
 -- | Runs an action and drops a database afterwards in a finally block.
 finallyDrop :: (MonadIO m, MonadUnliftIO m) => Text -> m a -> m a
@@ -142,6 +143,7 @@ finallyDrop dbName f = f `finally` dropDb
               DB.execute_ conn $
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier dbName
+                  <> "(FORCE)"
 
 createTestUserMig ::
   forall m. (MonadIO m, MonadThrow m) => m (AddedSqlMigration m)
@@ -174,6 +176,7 @@ createTestUserMigPol = do
         { migrationName = "bootstrap-test-db-and-user.sql",
           migrationSql = psql,
           migrationInTxn = False,
+          migrationRequiresCoddSchema = False,
           -- A custom connection string is necessary because the DB doesn't yet exist
           migrationCustomConnInfo =
             Just
@@ -229,6 +232,39 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     )
     `finally` cleanupAfterTest
 
+aroundDatabaseWithMigsAndPgCron ::
+  (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
+  SpecWith CoddSettings ->
+  Spec
+aroundDatabaseWithMigsAndPgCron startingMigs = around $ \act -> do
+  coddSettings <- testCoddSettings
+  cinfo <- testConnInfo
+  let superUserConnInfo = cinfo {connectUser = "postgres"}
+      createPgCronExtMig =
+        AddedSqlMigration
+          SqlMigration
+            { migrationName = "0000-create-ext-pg_cron.sql",
+              migrationSql =
+                mkValidSql
+                  "CREATE EXTENSION pg_cron",
+              migrationInTxn = True,
+              migrationRequiresCoddSchema = False,
+              migrationCustomConnInfo = Just superUserConnInfo,
+              migrationEnvVars = mempty
+            }
+          (getIncreasingTimestamp 0)
+  runCoddLogger
+    ( do
+        bootstrapMig <- createTestUserMig
+        applyMigrationsNoCheck
+          coddSettings
+          (Just $ bootstrapMig : createPgCronExtMig : startingMigs)
+          testConnTimeout
+          (const $ pure ())
+        liftIO (act coddSettings)
+    )
+    `finally` cleanupAfterTest
+
 cleanupAfterTest :: IO ()
 cleanupAfterTest = do
   CoddSettings {migsConnString} <- testCoddSettings
@@ -242,7 +278,7 @@ cleanupAfterTest = do
     -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
     -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
     ( \conn -> do
-        execvoid_ conn "ALTER ROLE postgres RESET ALL;"
+        execvoid_ conn "ALTER ROLE postgres RESET ALL; SET client_min_messages='warning'; DROP EXTENSION IF EXISTS pg_cron; RESET client_min_messages;"
         dbs :: [String] <-
           map DB.fromOnly
             <$> query
@@ -250,7 +286,7 @@ cleanupAfterTest = do
               "SELECT datname FROM pg_catalog.pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1')"
               ()
         forM_ dbs $ \db ->
-          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\""
+          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\" (FORCE)"
 
         allRoles :: [String] <-
           map DB.fromOnly

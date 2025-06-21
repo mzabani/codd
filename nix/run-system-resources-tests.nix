@@ -5,7 +5,7 @@ in
      name = "codd-test-system-resources-results";
      src = fs.toSource {
       root = ../.;
-      fileset = fs.unions [ ../conf ../expected-schema ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
+      fileset = fs.unions [ ../conf/test-db ../expected-schema ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
      };
      nativeBuildInputs = [ postgres pkgs.strace pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
      installPhase = ''
@@ -18,7 +18,7 @@ in
       export PGPORT="5434"
       export PGHOST="/tmp"
       export PGUSER="postgres"
-      scripts/init-pg-cluster.sh ./conf
+      scripts/init-pg-cluster.sh ./conf/test-db
       pg_ctl -l "$out/pg_ctl_init.log" start
       scripts/wait-for-pg-ready.sh
       # This isn't deterministic due to randomised testing and timing
