@@ -4,6 +4,7 @@ module Codd.Types
     SqlRole (..),
     PgMajorVersion (..),
     SqlSchema (..),
+    ConnectionString (..),
     RetryPolicy (..),
     RetryBackoffPolicy (..),
     SchemaSelection (..),
@@ -11,15 +12,22 @@ module Codd.Types
     defaultRetryPolicy,
     retryPolicyIterate,
     singleTryPolicy,
+    libpqConnString,
   )
 where
 
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
+import Data.Maybe (catMaybes)
 import Data.String (IsString)
 import Data.Text (Text)
+import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
 import Data.Time
   ( DiffTime,
     secondsToDiffTime,
   )
+import Data.Word (Word16)
 import Database.PostgreSQL.Simple.ToField
   ( ToField,
   )
@@ -38,6 +46,41 @@ data RetryPolicy = RetryPolicy Int RetryBackoffPolicy
   deriving stock (Show, Eq)
 
 data TxnIsolationLvl = DbDefault | Serializable | RepeatableRead | ReadCommitted | ReadUncommitted deriving stock (Show, Eq)
+
+data ConnectionString = ConnectionString
+  { hostname :: String,
+    port :: Word16,
+    user :: String,
+    password :: String,
+    database :: String,
+    options :: Maybe String
+  }
+  deriving stock (Eq)
+
+libpqConnString :: ConnectionString -> ByteString
+libpqConnString ConnectionString {..} =
+  ByteString.intercalate " " $
+    map (\(kw, v) -> kw <> "=" <> v) mixedKwvps
+  where
+    mixedKwvps =
+      catMaybes
+        [ Just ("user", quote user),
+          Just
+            ("host", quote hostname),
+          Just
+            ("dbname", quote database),
+          Just ("password", quote password),
+          Just ("port", quote (show port)),
+          options >>= (Just . ("options",)) . quote
+        ]
+    quote (Text.pack -> un) =
+      encodeUtf8 $
+        "'"
+          <> Text.replace "'" "\\'" (Text.replace "\\" "\\\\" un)
+          <> "'"
+
+instance Show ConnectionString where
+  show _ = "ConnectionString"
 
 data SchemaAlgo = SchemaAlgo
   { strictCollations :: Bool,

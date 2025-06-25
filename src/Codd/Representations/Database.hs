@@ -34,7 +34,8 @@ import Codd.Representations.Database.SqlGen
   )
 import Codd.Representations.Types
 import Codd.Types
-  ( PgMajorVersion (..),
+  ( ConnectionString (..),
+    PgMajorVersion (..),
     SchemaAlgo,
     SchemaSelection,
     SqlRole (..),
@@ -294,7 +295,7 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
   do
     (majorVersion, fullVersion) <- queryServerMajorAndFullVersion conn
     let rolesToCheck =
-          (SqlRole . Text.pack . DB.connectUser $ migsConnString)
+          (SqlRole . Text.pack . user $ migsConnString)
             : extraRolesToCheck
     case majorVersion of
       PgMajorVersion 12 ->

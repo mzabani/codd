@@ -1,0 +1,27 @@
+{
+    "argmodes": null,
+    "argnames": null,
+    "args": "",
+    "config": null,
+    "definition": null,
+    "kind": "f",
+    "lang": "c",
+    "leakproof": false,
+    "nargs": 0,
+    "nargs_defaults": 0,
+    "owner": "postgres",
+    "parallel": "u",
+    "privileges": {
+        "public": [
+            [
+                "X",
+                "postgres"
+            ]
+        ]
+    },
+    "return_type": "trigger",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}
