@@ -14,6 +14,7 @@ import Codd.Internal.MultiQueryStatement
   )
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing (AddedSqlMigration (..), EnvVars (..), ParsedSql (..), PureStream (..), SectionOption (..), SqlMigration (..), SqlPiece (..), copyFromStdinAfterStatementParser, isCommentPiece, isWhiteSpacePiece, manyStreaming, parseAndClassifyMigration, parseSqlMigration, parseSqlPiecesStreaming, parseSqlPiecesStreaming', parsedSqlText, piecesToText, sqlPieceText)
+import Codd.Types (ConnectionString (..))
 import Control.Monad
   ( forM,
     forM_,
@@ -737,12 +738,13 @@ spec = do
             migrationInTxn mig `shouldBe` True
             migrationCustomConnInfo mig
               `shouldBe` Just
-                DB.ConnectInfo
-                  { DB.connectUser = "codd_admin",
-                    DB.connectHost = "127.0.0.1",
-                    DB.connectPort = 5433,
-                    DB.connectPassword = "",
-                    DB.connectDatabase = "codd-experiments"
+                ConnectionString
+                  { user = "codd_admin",
+                    hostname = "127.0.0.1",
+                    port = 5433,
+                    password = "",
+                    database = "codd-experiments",
+                    options = Nothing
                   }
 
       it "-- codd-env-vars templating" $ do

@@ -39,7 +39,7 @@ import Codd.Representations
   ( persistRepsToDisk,
     readRepresentationsFromDbWithSettings,
   )
-import Codd.Types (SqlFilePath (..))
+import Codd.Types (ConnectionString (..), SqlFilePath (..))
 import Control.Monad
   ( unless,
     void,
@@ -263,8 +263,8 @@ writeFinalMigrationFile originalMigFile finalMigFile addedMigRequiresCoddSchema 
   Streaming.mapsM_ (\(chunk :> x) -> liftIO $ Text.hPutStr handle chunk >> pure x) fileStream
   closeFileStream migStream
 
-printSuggestedFirstMigration :: DB.ConnectInfo -> IO ()
-printSuggestedFirstMigration DB.ConnectInfo {connectDatabase, connectUser} =
+printSuggestedFirstMigration :: ConnectionString -> IO ()
+printSuggestedFirstMigration ConnectionString {database, user} =
   putStrLn $
     "\nTip: It looks like this is your first migration. Make sure either the target database of your default connection string already exists, or add a migration that creates your database with a custom connection string. Example:\n\
     \\n\
@@ -272,9 +272,9 @@ printSuggestedFirstMigration DB.ConnectInfo {connectDatabase, connectUser} =
     \    -- codd-connection: dbname=postgres user=postgres host=localhost\n\
     \    -- Make sure the connection string above works, or change it to one that works.\n\
     \    CREATE DATABASE \""
-      ++ connectDatabase
+      ++ database
       ++ "\" OWNER \""
-      ++ connectUser
+      ++ user
         <> "\";\n\
            \    -- Also make sure the DB above doesn't exist yet, and that the DB owner does.\n\
            \\n\

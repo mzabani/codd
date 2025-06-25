@@ -1,3 +1,6 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use fewer imports" #-}
 module DbDependentSpecs.SchemaVerificationSpec where
 
 import Codd (applyMigrationsNoCheck)
@@ -28,7 +31,7 @@ import Codd.Representations.Database
   ( readRepsFromDbWithNewTxn,
   )
 import Codd.Representations.Types (ObjName (..))
-import Codd.Types (PgMajorVersion (..), SchemaAlgo (..), SchemaSelection (..))
+import Codd.Types (ConnectionString (..), PgMajorVersion (..), SchemaAlgo (..), SchemaSelection (..))
 import Control.Monad
   ( foldM,
     forM,
@@ -1591,12 +1594,12 @@ spec = do
 
         -- Take the pg_dump and drop the database
         pg_dump_output <-
-          finallyDrop (Text.pack $ connectDatabase connInfo) $ do
+          finallyDrop (Text.pack $ database connInfo) $ do
             (pg_dump_exitCode, pg_dump_output) <-
               readProcessStdout $
                 shell $
                   "pg_dump --create -d \""
-                    ++ connectDatabase connInfo
+                    ++ database connInfo
                     ++ "\""
             pg_dump_exitCode `shouldBe` ExitSuccess
             pure pg_dump_output

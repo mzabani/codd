@@ -55,6 +55,7 @@ module Codd.Parsing
   )
 where
 
+import Codd.Types (ConnectionString (..))
 import Control.Applicative
   ( optional,
     (<|>),
@@ -117,7 +118,6 @@ import Data.Time
     secondsToDiffTime,
   )
 import Data.Time.Clock (UTCTime (..))
-import Database.PostgreSQL.Simple (ConnectInfo (..))
 import qualified Database.PostgreSQL.Simple.FromRow as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import Network.URI
@@ -161,7 +161,7 @@ data SqlMigration m = SqlMigration
     migrationSql :: ParsedSql m,
     migrationInTxn :: Bool,
     migrationRequiresCoddSchema :: Bool,
-    migrationCustomConnInfo :: Maybe ConnectInfo,
+    migrationCustomConnInfo :: Maybe ConnectionString,
     migrationEnvVars :: Map Text Text
   }
 
@@ -775,8 +775,8 @@ eitherToMay (Right v) = Just v
 
 -- | Parses a URI with scheme 'postgres' or 'postgresql', as per https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
 -- The difference here is that URIs with a query string or with a fragment are not allowed.
-uriConnParser :: Text -> Either String ConnectInfo
-uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
+uriConnParser :: Text -> Either String ConnectionString
+uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectionString $ do
   case parseURI (Text.unpack line) of
     Nothing -> throwE "Connection string is not a URI"
     Just URI {..} -> do
@@ -789,11 +789,11 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
           throwE
             "Connection string must contain at least user and host"
         Just URIAuth {..} -> do
-          let connectDatabase =
+          let database =
                 unEscapeString $ trimFirst '/' uriPath
               hasQueryString = not $ null uriQuery
               hasFragment = not $ null uriFragment
-          when (null connectDatabase) $
+          when (null database) $
             throwE
               "Connection string must contain a database name"
           when (hasQueryString || hasFragment) $
@@ -810,18 +810,19 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
               ) of
             Nothing ->
               throwE "Invalid port in connection string"
-            Just connectPort -> do
-              let (unEscapeString . trimLast '@' -> connectUser, unEscapeString . trimLast '@' . trimFirst ':' -> connectPassword) =
+            Just parsedPort -> do
+              let (unEscapeString . trimLast '@' -> user, unEscapeString . trimLast '@' . trimFirst ':' -> password) =
                     break (== ':') uriUserInfo
               pure
-                ConnectInfo
-                  { connectHost =
+                ConnectionString
+                  { hostname =
                       unEscapeString $
                         unescapeIPv6 uriRegName,
-                    connectPort,
-                    connectUser,
-                    connectPassword,
-                    connectDatabase
+                    port = parsedPort,
+                    user,
+                    password,
+                    database,
+                    options = Nothing
                   }
   where
     unescapeIPv6 :: String -> String
@@ -836,7 +837,7 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
       Nothing -> s
       Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
 
-keywordValueConnParser :: Text -> Either String ConnectInfo
+keywordValueConnParser :: Text -> Either String ConnectionString
 keywordValueConnParser line = runIdentity $ runExceptT $ do
   kvs <-
     sortOn fst
@@ -844,12 +845,13 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
         (singleKeyVal `Parsec.sepBy` takeWhile1 Char.isSpace)
         (Text.strip line)
         "Invalid connection string"
-  ConnectInfo
+  ConnectionString
     <$> getVal "host" Nothing txtToString kvs
     <*> getVal "port" (Just 5432) Parsec.decimal kvs
     <*> getVal "user" Nothing txtToString kvs
     <*> getVal "password" (Just "") txtToString kvs
     <*> getVal "dbname" Nothing txtToString kvs
+    <*> pure Nothing
   where
     getVal key def parser pairs =
       case (map snd $ filter ((== key) . fst) pairs, def) of
@@ -897,7 +899,7 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
 -- | Parses a string in one of libpq allowed formats. See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
 -- The difference here is that only a subset of all connection parameters are allowed.
 -- I wish this function existed in postgresql-simple or some form of it in postgresql-libpq, but if it does I couldn't find it.
-connStringParser :: Parser ConnectInfo
+connStringParser :: Parser ConnectionString
 connStringParser = do
   connStr <-
     Parsec.takeWhile1 (const True)
@@ -967,7 +969,7 @@ coddCommentParser = do
       pure $ CoddCommentSuccess opts
 
 -- | Parses a "-- codd-connection: some-connection-string(newline|EOF)" line.
-coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectInfo)
+coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectionString)
 coddConnStringCommentParser = do
   void $ string "--"
   skipJustSpace
@@ -1053,7 +1055,7 @@ parseAndClassifyMigration ::
         String
         ( Map Text Text,
           [SectionOption],
-          Maybe ConnectInfo,
+          Maybe ConnectionString,
           ParsedSql m
         )
     )
@@ -1212,7 +1214,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
     noTxn opts = OptNoTxn `elem` opts
 
     mkMig ::
-      (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->
+      (Map Text Text, [SectionOption], Maybe ConnectionString, ParsedSql m) ->
       SqlMigration m
     mkMig (migrationEnvVars, opts, customConnString, sql) =
       SqlMigration
@@ -1225,7 +1227,7 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
         }
 
     toMig ::
-      (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->
+      (Map Text Text, [SectionOption], Maybe ConnectionString, ParsedSql m) ->
       Either String (SqlMigration m)
     toMig x@(_, ops, _, _) = case checkOpts ops of
       Just err -> Left err

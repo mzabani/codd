@@ -13,7 +13,8 @@ import Codd.Parsing
   )
 import Codd.Representations.Types (DbRep)
 import Codd.Types
-  ( RetryBackoffPolicy (..),
+  ( ConnectionString,
+    RetryBackoffPolicy (..),
     RetryPolicy (..),
     SchemaAlgo (..),
     SchemaSelection
@@ -43,13 +44,12 @@ import Data.Bifunctor (first)
 import Data.Functor (($>), (<&>))
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Database.PostgreSQL.Simple (ConnectInfo (..))
 import UnliftIO (MonadIO (..))
 import UnliftIO.Environment (lookupEnv)
 
 data CoddSettings = CoddSettings
   { -- | The Connection String which will be used to run migrations.
-    migsConnString :: ConnectInfo,
+    migsConnString :: ConnectionString,
     -- | A list of directories with .sql files.
     --   All .sql files from all directories are collected into a single list and then run in alphabetical order. Files whose names don't end in .sql are ignored.
     sqlMigrations :: [FilePath],
@@ -150,7 +150,7 @@ parseEnv defaultValue parser var = do
             ++ Text.unpack err
       Right x -> pure x
 
-getAdminConnInfo :: (MonadIO m) => m ConnectInfo
+getAdminConnInfo :: (MonadIO m) => m ConnectionString
 getAdminConnInfo = do
   adminConnStr <- readEnv "CODD_CONNECTION"
   let connInfoE = parseOnly (connStringParser <* endOfInput) adminConnStr

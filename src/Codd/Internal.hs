@@ -61,7 +61,7 @@ import Codd.Representations
     readRepsFromDisk,
   )
 import Codd.Timing (prettyPrintDuration, timeAction)
-import Codd.Types (TxnIsolationLvl (..))
+import Codd.Types (ConnectionString (..), TxnIsolationLvl (..), libpqConnString)
 import Control.Applicative (Alternative (..))
 import Control.Monad
   ( foldM,
@@ -149,7 +149,7 @@ dbIdentifier s = "\"" <> fromString (Text.unpack s) <> "\""
 
 -- | Tries to connect until a connection succeeds or until a timeout, and returns a connection or throws an exception.
 connectWithTimeout ::
-  (MonadUnliftIO m) => DB.ConnectInfo -> DiffTime -> m DB.Connection
+  (MonadUnliftIO m) => ConnectionString -> DiffTime -> m DB.Connection
 connectWithTimeout connStr timeLimit = do
   -- It feels bad using `timeout` for this given the asynchronous exception it can throw, but name resolution can block `DB.connect` for an arbitrary amount of time.
   -- The risk is we interrupt `DB.connect` after the operating system socket is open, which would mean we'd leave it hanging
@@ -176,7 +176,7 @@ connectWithTimeout connStr timeLimit = do
                 then Just e
                 else Nothing
           )
-          $ liftIO (DB.connect connStr)
+          $ liftIO (DB.connectPostgreSQL $ libpqConnString connStr)
       case attempt of
         Right conn -> pure conn
         Left e -> do
@@ -188,7 +188,7 @@ connectWithTimeout connStr timeLimit = do
 --   executes the supplied action and disposes of the opened Connection.
 withConnection ::
   (MonadUnliftIO m) =>
-  DB.ConnectInfo ->
+  ConnectionString ->
   DiffTime ->
   (DB.Connection -> m a) ->
   m a
@@ -225,7 +225,7 @@ data BootstrapCheck = BootstrapCheck
 -- waiting up to the time limit for postgres to be up before throwing
 -- an exception.
 checkNeedsBootstrapping ::
-  (MonadUnliftIO m) => DB.ConnectInfo -> DiffTime -> m BootstrapCheck
+  (MonadUnliftIO m) => ConnectionString -> DiffTime -> m BootstrapCheck
 checkNeedsBootstrapping connInfo connectTimeout =
   handleJust
     ( \e ->
@@ -281,7 +281,7 @@ collectAndApplyMigrations ::
   m a
 collectAndApplyMigrations lastAction settings@CoddSettings {migsConnString, sqlMigrations, txnIsolationLvl} mOverrideMigs connectTimeout =
   do
-    let dbName = Text.pack $ DB.connectDatabase migsConnString
+    let dbName = Text.pack $ database migsConnString
     let waitTimeInSecs :: Double = realToFrac connectTimeout
     logInfo $
       "Checking if database <MAGENTA>"
@@ -336,13 +336,13 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
     -- 3. While the item above says we want to register applied migrations as early as possible, we want to delay that sufficiently to allow for migrations that create codd's internal schema themselves, so as to allow dumps to be migrations, as long as there is no harm to atomicity.
     -- 4. We allow migrations to insert into codd.sql_migrations themselves (the reasonable use case here is having dumps as migrations), so we need to skip migrations if a migration registers they were applied.
     -- 5. When possible, we want to insert into codd.sql_migrations in the same transaction the migrations are running.
-    let dbName = Text.pack $ DB.connectDatabase defaultConnInfo
+    let dbName = Text.pack $ database defaultConnInfo
         hoistedBlocks :: [BlockOfMigrations txn] =
           map (hoistBlockOfMigrations lift) pendingMigs
 
     -- Note: We could probably compound this Monad with StateT instead of using IORefs, but IIRC that creates issues
     -- with MonadUnliftIO.
-    connsPerInfo <- newIORef (mempty :: [(DB.ConnectInfo, DB.Connection)])
+    connsPerInfo <- newIORef (mempty :: [(ConnectionString, DB.Connection)])
     unregisteredButAppliedMigs <- newIORef (mempty :: [AppliedMigration])
     lastKnownCoddSchemaVersionRef <- newIORef $ coddSchemaVersion bootstrapCheck
     let queryCoddSchemaVersion :: forall n. (MonadUnliftIO n) => n CoddSchemaVersion
@@ -363,7 +363,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                   modifyIORef' lastKnownCoddSchemaVersionRef (const actualSchemaVersion)
                   pure actualSchemaVersion
 
-        openConn :: DB.ConnectInfo -> m (ReleaseKey, DB.Connection)
+        openConn :: ConnectionString -> m (ReleaseKey, DB.Connection)
         openConn cinfo = flip allocate DB.close $ do
           mConn <- lookup cinfo <$> readIORef connsPerInfo
           case mConn of
@@ -380,7 +380,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         queryConn ::
           forall n.
           (MonadIO n) =>
-          DB.ConnectInfo ->
+          ConnectionString ->
           n (Maybe DB.Connection)
         queryConn cinfo = lookup cinfo <$> readIORef connsPerInfo
 
@@ -486,7 +486,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         -- This will use same transaction as the one used to apply the migrations to insert into codd.sql_migrations as long as the block's connection is on the default database (even under a different user) and codd's internal schema has been created and is at the latest version, and will otherwise only register them in-memory so they're flushed to the schema as applied at a future opportunity.
         registerAppliedInTxnMig ::
           DB.Connection ->
-          DB.ConnectInfo ->
+          ConnectionString ->
           FilePath ->
           DB.UTCTimestamp ->
           DiffTime ->
@@ -497,8 +497,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
             csReady <- (== maxBound) <$> queryCoddSchemaVersion
             -- liftIO $ print csReady
             -- If we are on the default database, we can insert into codd.sql_migrations with any user
-            if DB.connectDatabase blockConnInfo
-              == DB.connectDatabase defaultConnInfo
+            if database blockConnInfo
+              == database defaultConnInfo
               && csReady
               then
                 void $
@@ -536,7 +536,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
         -- This will account for the possibility that the default connection string still isn't accessible and that codd's internal schema still hasn't been created by storing in memory that some migrations were applied but not registered, leaving flushing of those to the database to a later opportunity.
         registerAppliedNoTxnMig ::
           DB.Connection ->
-          DB.ConnectInfo ->
+          ConnectionString ->
           FilePath ->
           DB.UTCTimestamp ->
           DiffTime ->
@@ -561,7 +561,7 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
               (_, canRegisterNow) -> do
                 -- We either register this migration was applied now (iff we can) or later.
                 mDefaultConn <- queryConn defaultConnInfo
-                let blockConnSameDatabaseAsDefaultConn = DB.connectDatabase blockConnInfo == DB.connectDatabase defaultConnInfo
+                let blockConnSameDatabaseAsDefaultConn = database blockConnInfo == database defaultConnInfo
                     mConnToRegister
                       | not canRegisterNow = Nothing
                       | blockConnSameDatabaseAsDefaultConn = Just blockConn
@@ -627,8 +627,8 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
                   fromMaybe defaultConnInfo (blockCustomConnInfo block)
                 isDefaultConn = cinfo == defaultConnInfo
                 connUsesDefaultDb =
-                  DB.connectDatabase cinfo
-                    == DB.connectDatabase defaultConnInfo
+                  database cinfo
+                    == database defaultConnInfo
             (_, conn) <- openConn cinfo
 
             -- If even one migration in the block has require-codd-schema and codd's internal schema
@@ -985,7 +985,7 @@ collectPendingMigrations ::
     NotInTxn m,
     EnvVars m
   ) =>
-  DB.ConnectInfo ->
+  ConnectionString ->
   Either [FilePath] [AddedSqlMigration m] ->
   TxnIsolationLvl ->
   DiffTime ->
@@ -1017,8 +1017,8 @@ collectPendingMigrations defaultConnString sqlMigrations txnIsolationLvl connect
        in case mConnInfo of
             Nothing -> False
             Just connInfo ->
-              DB.connectDatabase defaultConnString
-                /= DB.connectDatabase connInfo
+              database defaultConnString
+                /= database connInfo
     collect bootCheck = do
       logInfoNoNewline "Looking for pending migrations..."
       migsAlreadyApplied :: Map FilePath MigrationApplicationStatus <-
@@ -1406,14 +1406,14 @@ hoistBlockOfMigrations hoist = \case
 
 -- | Returns True only if all pending migrations are in-txn and of the same connection string, meaning they'll all be applied
 -- in a single transaction.
-isOneShotApplication :: DB.ConnectInfo -> [BlockOfMigrations m] -> Bool
+isOneShotApplication :: ConnectionString -> [BlockOfMigrations m] -> Bool
 isOneShotApplication defaultConnInfo pending = case pending of
   [] -> True
   [block@(BlockInTxn _)] ->
     fromMaybe defaultConnInfo (blockCustomConnInfo block) == defaultConnInfo
   _ -> False
 
-blockCustomConnInfo :: BlockOfMigrations m -> Maybe DB.ConnectInfo
+blockCustomConnInfo :: BlockOfMigrations m -> Maybe ConnectionString
 blockCustomConnInfo (BlockInTxn (ConsecutiveInTxnMigrations (AddedSqlMigration {addedSqlMig} :| _) _)) =
   migrationCustomConnInfo addedSqlMig
 blockCustomConnInfo (BlockNoTxn (SingleNoTxnMigration (AddedSqlMigration {addedSqlMig}) _ _)) =

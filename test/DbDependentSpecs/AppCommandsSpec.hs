@@ -20,6 +20,7 @@ import Codd.Query
     unsafeQuery1,
   )
 import Codd.Representations (DbRep (..))
+import Codd.Types (ConnectionString (..))
 import Control.Monad.Trans.Resource (MonadThrow)
 import qualified Data.Aeson as Aeson
 import Data.List (isInfixOf)
@@ -66,7 +67,7 @@ doesNotCreateDB _act = do
           { onDiskReps = Right $ DbRep Aeson.Null Map.empty Map.empty,
             migsConnString =
               (migsConnString vanillaTestSettings)
-                { DB.connectDatabase = "non-existing-db-name"
+                { database = "non-existing-db-name"
                 }
           }
   runCoddLogger $ do
@@ -78,7 +79,7 @@ doesNotCreateDB _act = do
                     )
 
   withConnection
-    (migsConnString testSettings) {DB.connectDatabase = "postgres"}
+    (migsConnString testSettings) {database = "postgres"}
     testConnTimeout
     $ \conn -> do
       dbExists :: Int <-
@@ -86,7 +87,7 @@ doesNotCreateDB _act = do
           <$> unsafeQuery1
             conn
             "SELECT COUNT(*) FROM pg_database WHERE datname = ?"
-            (DB.Only $ DB.connectDatabase $ migsConnString testSettings)
+            (DB.Only $ database $ migsConnString testSettings)
       dbExists `shouldBe` 0
 
 doesNotModifyExistingDb ::
@@ -98,7 +99,7 @@ doesNotModifyExistingDb act assert = do
           { onDiskReps = Right $ DbRep Aeson.Null Map.empty Map.empty,
             migsConnString =
               (migsConnString vanillaTestSettings)
-                { DB.connectDatabase =
+                { database =
                     "new_checksums_test_db"
                 }
           }
@@ -106,7 +107,7 @@ doesNotModifyExistingDb act assert = do
       getCounts =
         withConnection
           (migsConnString vanillaTestSettings)
-            { DB.connectDatabase = "postgres"
+            { database = "postgres"
             }
           testConnTimeout
           $ \conn ->
@@ -116,7 +117,7 @@ doesNotModifyExistingDb act assert = do
               ()
   withConnection
     (migsConnString vanillaTestSettings)
-      { DB.connectDatabase = "postgres"
+      { database = "postgres"
       }
     testConnTimeout
     $ \conn -> do

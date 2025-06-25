@@ -27,6 +27,17 @@ spec = do
   describe "DbDependentSpecs" $ do
     describe "Background jobs" $ do
       aroundTestDbInfo $ do
+        it "Settings in connection string" $ \emptyTestDbInfo -> do
+          conn <- DB.connectPostgreSQL "host=/tmp user=postgres dbname='postgres' port=5434"
+          -- conn <- DB.connectPostgreSQL "options='-c cron.test=yay' host=/tmp user=postgres dbname='postgres' port=5434"
+          void $ DB.execute conn "SET cron.test='yay';" ()
+          [DB.Only (s1 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
+          void $ DB.execute conn "RESET cron.test; RESET ALL;" ()
+          [DB.Only (s2 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
+          s1 `shouldBe` "yay"
+          s2 `shouldBe` "yay"
+
+      aroundTestDbInfo $ do
         it "Nice error message when setup has not been called" $ \emptyTestDbInfo -> do
           void @IO $
             runCoddLogger $ do

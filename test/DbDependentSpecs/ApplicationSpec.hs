@@ -24,7 +24,7 @@ import Codd.Query
     unsafeQuery1,
   )
 import Codd.Representations.Types (DbRep (..))
-import Codd.Types (TxnIsolationLvl (..))
+import Codd.Types (ConnectionString (..), TxnIsolationLvl (..))
 import Control.Monad
   ( forM_,
     void,
@@ -137,7 +137,7 @@ createTableNewTableMig tableName inTxn migOrder =
     (getIncreasingTimestamp (fromIntegral migOrder))
 
 createDatabaseMig ::
-  (MonadThrow m) => DB.ConnectInfo -> String -> Int -> Int -> SqlMigration m
+  (MonadThrow m) => ConnectionString -> String -> Int -> Int -> SqlMigration m
 createDatabaseMig customConnInfo dbName sleepInSeconds migOrder =
   SqlMigration
     { migrationName = "000" <> show migOrder <> "-create-database-mig.sql",
@@ -313,7 +313,7 @@ changeConnUser dbInfo newUser mig =
                     fromMaybe
                       (migsConnString dbInfo)
                       (migrationCustomConnInfo (addedSqlMig mig))
-               in Just cinfo {DB.connectUser = newUser}
+               in Just cinfo {user = newUser}
           }
     }
 
@@ -328,7 +328,7 @@ changeConnDb dbInfo newDb mig =
                     fromMaybe
                       (migsConnString dbInfo)
                       (migrationCustomConnInfo (addedSqlMig mig))
-               in Just cinfo {DB.connectDatabase = newDb}
+               in Just cinfo {database = newDb}
           }
     }
 
@@ -1090,8 +1090,8 @@ spec = do
 
             let postgresCinfo =
                   defaultConnInfo
-                    { DB.connectDatabase = "postgres",
-                      DB.connectUser = "postgres"
+                    { database = "postgres",
+                      user = "postgres"
                     }
 
                 allMigs =
@@ -1100,7 +1100,7 @@ spec = do
                       [ AddedSqlMigration
                           ( createDatabaseMig
                               postgresCinfo
-                                { DB.connectDatabase =
+                                { database =
                                     previousDbName
                                 }
                               ("new_database_" <> show i)
@@ -1205,8 +1205,8 @@ spec = do
 
             let postgresCinfo =
                   defaultConnInfo
-                    { DB.connectDatabase = "postgres",
-                      DB.connectUser = "postgres"
+                    { database = "postgres",
+                      user = "postgres"
                     }
 
                 allMigs =
@@ -1431,14 +1431,14 @@ instance Show (DiverseMigrationOrder m) where
 
 diversifyAppCheckMigs ::
   (MonadThrow m) =>
-  DB.ConnectInfo ->
+  ConnectionString ->
   AddedSqlMigration m ->
   Gen (DiverseMigrationOrder m)
 diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
   let postgresCinfo =
         defaultConnInfo
-          { DB.connectDatabase = "postgres",
-            DB.connectUser = "postgres"
+          { database = "postgres",
+            user = "postgres"
           }
 
   numPassingMigs <- chooseInt (0, 5)
@@ -1470,7 +1470,7 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
           [ AddedSqlMigration
               ( createDatabaseMig
                   postgresCinfo
-                    { DB.connectDatabase = previousDbName
+                    { database = previousDbName
                     }
                   ("new_database_" <> show i)
                   0 {- no pg_sleep, another test already tests this -}
@@ -1498,7 +1498,7 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                 { migrationCustomConnInfo =
                     Just
                       defaultConnInfo
-                        { DB.connectUser = "codd-test-user"
+                        { user = "codd-test-user"
                         },
                   migrationInTxn = inTxn
                 }
@@ -1518,7 +1518,7 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                   migrationCustomConnInfo =
                     Just
                       defaultConnInfo
-                        { DB.connectUser = "codd-test-user"
+                        { user = "codd-test-user"
                         }
                 }
               (getIncreasingTimestamp 0)
