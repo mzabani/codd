@@ -1,23 +1,24 @@
 module DbDependentSpecs.BackgroundJobsSpec where
 
 import Codd (applyMigrationsNoCheck, migsConnString)
+import Codd.Environment (CoddSettings (..))
 import Codd.Internal (withConnection)
 import Codd.Internal.MultiQueryStatement (SqlStatementException)
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing (AddedSqlMigration (..), SqlMigration (..))
 import Codd.Query (query, unsafeQuery1)
 import Codd.Representations (readRepresentationsFromDbWithSettings)
+import Codd.Types (ConnectionString (..), TxnIsolationLvl (..))
 import Control.Monad (forM_, void, when)
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.List (isInfixOf, sortOn)
 import qualified Data.List as List
 import Data.Time (UTCTime)
-import Database.PostgreSQL.Simple (ConnectInfo)
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils (aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import GHC.Generics (Generic)
 import LiftedExpectations (shouldThrow)
-import Test.Hspec (Spec, shouldBe, shouldNotBe, shouldSatisfy)
+import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldSatisfy)
 import Test.Hspec.Core.Spec (describe, it)
 import qualified Test.QuickCheck as QC
 import UnliftIO (liftIO)
@@ -26,16 +27,15 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Background jobs" $ do
-      aroundTestDbInfo $ do
-        it "Settings in connection string" $ \emptyTestDbInfo -> do
-          conn <- DB.connectPostgreSQL "host=/tmp user=postgres dbname='postgres' port=5434"
-          -- conn <- DB.connectPostgreSQL "options='-c cron.test=yay' host=/tmp user=postgres dbname='postgres' port=5434"
-          void $ DB.execute conn "SET cron.test='yay';" ()
-          [DB.Only (s1 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
-          void $ DB.execute conn "RESET cron.test; RESET ALL;" ()
-          [DB.Only (s2 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
-          s1 `shouldBe` "yay"
-          s2 `shouldBe` "yay"
+      aroundFreshDatabase $ do
+        it "Settings in connection string" $ \dbSettings -> do
+          let connStr = (migsConnString dbSettings) {options = Just "-c cron.test=yay"}
+          withConnection connStr testConnTimeout $ \conn -> do
+            [DB.Only (s1 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
+            void $ DB.execute conn "RESET cron.test; RESET ALL;" ()
+            [DB.Only (s2 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
+            s1 `shouldBe` "yay"
+            s2 `shouldBe` "yay"
 
       aroundTestDbInfo $ do
         it "Nice error message when setup has not been called" $ \emptyTestDbInfo -> do
@@ -69,6 +69,35 @@ spec = do
                 (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner])
                 testConnTimeout
                 (const $ pure ())
+
+      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, Serializable, RepeatableRead, ReadCommitted, ReadUncommitted], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
+        it ("Isolation level used correctly - " ++ show (txnIsolationLvl, pgCronSetup)) $ \testDbInfo -> do
+          void @IO $
+            runCoddLogger $ do
+              applyMigrationsNoCheck
+                testDbInfo {txnIsolationLvl}
+                (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner, createEmployeesTable, scheduleExperienceMigration])
+                testConnTimeout
+                (const $ pure ())
+              withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
+                DB.Only storedIsolLvl <- unsafeQuery1 conn "SELECT txn_isolation_level FROM codd._background_jobs" ()
+                let expectedStoredIsolLvl = case txnIsolationLvl of
+                      DbDefault -> "db-default" :: String
+                      ReadUncommitted -> "read-uncommitted"
+                      ReadCommitted -> "read-committed"
+                      RepeatableRead -> "repeatable-read"
+                      Serializable -> "serializable"
+                liftIO $ storedIsolLvl `shouldBe` expectedStoredIsolLvl
+                when pgCronSetup $ do
+                  DB.Only (scheduledCronCommand :: String) <- unsafeQuery1 conn "SELECT command FROM cron.job" ()
+                  let expectedBegin = case txnIsolationLvl of
+                        DbDefault -> "BEGIN;" :: String
+                        Serializable -> "BEGIN,ISOLATION LEVEL SERIALIZABLE"
+                        RepeatableRead -> "BEGIN,ISOLATION LEVEL REPEATABLE READ"
+                        ReadCommitted -> "BEGIN,ISOLATION LEVEL READ COMMITTED"
+                        ReadUncommitted -> "BEGIN,ISOLATION LEVEL READ UNCOMMITTED"
+                  -- The pg_cron command must have the right isolation level, too
+                  liftIO $ scheduledCronCommand `shouldContain` expectedBegin
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show pgCronSetup) $ \testDbInfo -> do

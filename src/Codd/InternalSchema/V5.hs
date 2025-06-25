@@ -50,6 +50,8 @@ CREATE TABLE codd._background_jobs (
   jobname TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'started',
   created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  created_by_role TEXT NOT NULL DEFAULT current_user,
+  txn_isolation_level TEXT NOT NULL DEFAULT COALESCE(CURRENT_SETTING('codd.___txn_isolation_level', TRUE), 'db-default'),
   last_run_at TIMESTAMPTZ,
   last_error_at TIMESTAMPTZ,
   completed_or_aborted_at TIMESTAMPTZ,
@@ -65,6 +67,7 @@ CREATE TABLE codd._background_jobs (
   objects_to_drop_in_order codd.obj_to_drop[] NOT NULL,
   pg_cron_jobs TEXT[] NOT NULL
   , UNIQUE (jobname)
+  , CHECK (txn_isolation_level IN ('db-default', 'read-uncommitted', 'read-committed', 'repeatable-read', 'serializable'))
   , CHECK (status IN ('started', 'aborted', 'run-complete-awaiting-finalization', 'finalized'))
   , CHECK (completed_or_aborted_at IS NULL OR status <> 'started')
   , CHECK ((finalized_at IS NOT NULL) = (status = 'finalized'))
@@ -184,12 +187,13 @@ CREATE FUNCTION codd.background_job_begin(jobname text, cron_schedule text, plpg
 DECLARE
   temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
+  created_job codd._background_jobs;
 BEGIN
   NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd._assert_worker_is_setup();
   PERFORM codd.assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
-  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects'));
+  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects')) RETURNING * INTO created_job;
 
   -- Why two functions instead of just one? Because each function's effects are atomic, as if
   -- there was a savepoint around each function call, and that enables us to update codd._background_jobs
@@ -238,9 +242,15 @@ BEGIN
         $$ LANGUAGE plpgsql;
   $sqltext$, temp_bg_wrapper_func_name, temp_bg_success_func_name, quote_literal(jobname), quote_literal(jobname));
 
-  -- TODO: Control isolation level
   IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') THEN
-    PERFORM cron.schedule(jobname, cron_schedule, format('BEGIN; SELECT %s(); COMMIT;', temp_bg_wrapper_func_name));
+    PERFORM cron.schedule(jobname, cron_schedule, format('%s; SELECT %s(); COMMIT;',
+                                                      CASE WHEN created_job.txn_isolation_level = 'read-uncommitted' THEN 'BEGIN,ISOLATION LEVEL READ UNCOMMITTED'
+                                                           WHEN created_job.txn_isolation_level = 'read-committed' THEN 'BEGIN,ISOLATION LEVEL READ COMMITTED'
+                                                           WHEN created_job.txn_isolation_level = 'repeatable-read' THEN 'BEGIN,ISOLATION LEVEL REPEATABLE READ'
+                                                           WHEN created_job.txn_isolation_level = 'serializable' THEN 'BEGIN,ISOLATION LEVEL SERIALIZABLE'
+
+                                                           ELSE 'BEGIN' END
+                                                      , temp_bg_wrapper_func_name));
   END IF;
 END;
 $func$ LANGUAGE plpgsql;

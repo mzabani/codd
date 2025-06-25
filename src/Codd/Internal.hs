@@ -373,7 +373,15 @@ applyCollectedMigrations actionAfter CoddSettings {migsConnString = defaultConnI
               -- print
               --     $  "Connecting to (TODO: REDACT PASSWORD) "
               --     <> Text.pack (show cinfo)
-              conn <- connectWithTimeout cinfo connectTimeout
+              -- Add codd-internal special settings at connection-time so
+              -- they survive even `RESET ALL`
+              let txnIsolLvlOpt = case txnIsolationLvl of
+                    DbDefault -> "db-default"
+                    ReadUncommitted -> "read-uncommitted"
+                    ReadCommitted -> "read-committed"
+                    RepeatableRead -> "repeatable-read"
+                    Serializable -> "serializable"
+              conn <- connectWithTimeout cinfo {options = Just $ "-c codd.___txn_isolation_level=" <> txnIsolLvlOpt} connectTimeout
               modifyIORef' connsPerInfo $ const $ (cinfo, conn) : currentlyOpenConns
               pure conn
 
