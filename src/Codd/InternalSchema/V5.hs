@@ -133,7 +133,7 @@ CREATE FUNCTION codd.abort_background_job(job_name text) RETURNS VOID AS $$
 DECLARE
   jobstatus text;
 BEGIN
-  -- TODO: Test aborting an incomplete job
+  NOTIFY "codd.___require_codd_schema_channel";
   SELECT status INTO jobstatus FROM codd._background_jobs WHERE jobname=job_name;
   IF jobstatus IS NULL THEN
     RAISE EXCEPTION 'Codd background job named % does not exist', job_name;

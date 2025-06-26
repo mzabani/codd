@@ -18,7 +18,7 @@ import qualified Database.PostgreSQL.Simple as DB
 import DbUtils (aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import GHC.Generics (Generic)
 import LiftedExpectations (shouldThrow)
-import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldSatisfy)
+import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, shouldSatisfy)
 import Test.Hspec.Core.Spec (describe, it)
 import qualified Test.QuickCheck as QC
 import UnliftIO (liftIO)
@@ -98,6 +98,35 @@ spec = do
                         ReadUncommitted -> "BEGIN,ISOLATION LEVEL READ UNCOMMITTED"
                   -- The pg_cron command must have the right isolation level, too
                   liftIO $ scheduledCronCommand `shouldContain` expectedBegin
+
+      aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
+        it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
+          void @IO $
+            runCoddLogger $ do
+              applyMigrationsNoCheck
+                testDbInfo
+                (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner, createEmployeesTable, scheduleExperienceMigration])
+                testConnTimeout
+                (const $ pure ())
+              withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> liftIO $ do
+                abortedCoddJob <-
+                  if pgCronSetup
+                    then do
+                      abortedCoddJob <- unsafeQuery1 conn "SELECT pg_sleep(5); SELECT codd.abort_background_job('change-experience'); SELECT * FROM codd.jobs" ()
+                      unsafeQuery1 conn "SELECT COUNT(*) FROM cron.job" () `shouldReturn` DB.Only (0 :: Int)
+                      numJobsSucceeded abortedCoddJob + numJobsError abortedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
+                      lastRunAt abortedCoddJob `shouldNotBe` Nothing
+                      pure abortedCoddJob
+                    else do
+                      abortedCoddJob <- unsafeQuery1 conn "SELECT codd.abort_background_job('change-experience'); SELECT * FROM codd.jobs" ()
+                      -- No external runner
+                      numJobsSucceeded abortedCoddJob + numJobsError abortedCoddJob `shouldBe` 0
+                      lastRunAt abortedCoddJob `shouldBe` Nothing
+                      pure abortedCoddJob
+                status abortedCoddJob `shouldBe` "aborted"
+                jobname abortedCoddJob `shouldBe` "change-experience"
+                completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
+                finalizedAt abortedCoddJob `shouldBe` Nothing
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show pgCronSetup) $ \testDbInfo -> do
