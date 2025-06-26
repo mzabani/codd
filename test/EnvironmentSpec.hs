@@ -9,7 +9,7 @@ where
 import Codd.Environment (retryPolicyParser)
 import Codd.Parsing (CoddCommentParseResult (..), coddConnStringCommentParser, connStringParser)
 import Codd.Representations.Types (ObjName (..))
-import Codd.Types (ConnectionString (..), RetryBackoffPolicy (..), RetryPolicy (..))
+import Codd.Types (ConnectionString (..), RetryBackoffPolicy (..), RetryPolicy (..), libpqConnString)
 import Control.Monad (forM_, unless)
 import Data.Attoparsec.Text
   ( endOfInput,
@@ -22,6 +22,7 @@ import Data.List (sortOn)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Text.Encoding (decodeUtf8)
 import Data.Time (secondsToDiffTime)
 import Data.Word (Word16)
 import Database.PostgreSQL.Simple (ConnectInfo (..))
@@ -392,9 +393,11 @@ spec = do
             parseOnly (coddConnStringCommentParser <* endOfInput) ("-- codd-connection: " <> connString) `shouldBe` Right (CoddCommentSuccess expectedConnInfo)
 
       it "Randomized valid connection strings" $ do
-        property $ \(connGen :: ConnStringGen) ->
-          parseOnly (connStringParser <* endOfInput) (renderConnStringGen connGen)
-            `shouldBe` Right (connInfoFromConnStringGen connGen)
+        property $ \(connGen :: ConnStringGen) -> do
+          let expectedConn = connInfoFromConnStringGen connGen
+          parseOnly (connStringParser <* endOfInput) (renderConnStringGen connGen) `shouldBe` Right expectedConn
+          -- Round-tripping with `libpqConnString`
+          parseOnly (connStringParser <* endOfInput) (decodeUtf8 $ libpqConnString expectedConn) `shouldBe` Right expectedConn
     context "Retry policy parsing" $ do
       it "Invalid policy strings" $ do
         parseOnly
