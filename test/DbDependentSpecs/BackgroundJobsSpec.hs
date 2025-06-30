@@ -6,10 +6,10 @@ import Codd.Internal (withConnection)
 import Codd.Internal.MultiQueryStatement (SqlStatementException)
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing (AddedSqlMigration (..), SqlMigration (..))
-import Codd.Query (query, unsafeQuery1)
+import Codd.Query (InTxnT, query, unsafeQuery1, withTransaction)
 import Codd.Representations (readRepresentationsFromDbWithSettings)
 import Codd.Types (ConnectionString (..), TxnIsolationLvl (..))
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.List (isInfixOf, sortOn)
 import qualified Data.List as List
@@ -22,6 +22,7 @@ import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, sho
 import Test.Hspec.Core.Spec (describe, it)
 import qualified Test.QuickCheck as QC
 import UnliftIO (liftIO)
+import UnliftIO.Concurrent (threadDelay)
 
 spec :: Spec
 spec = do
@@ -29,6 +30,8 @@ spec = do
     describe "Background jobs" $ do
       aroundFreshDatabase $ do
         it "Settings in connection string" $ \dbSettings -> do
+          -- TODO: Test that connection opened by codd when applying migrations has the settings that we need instead
+          -- of this?
           let connStr = (migsConnString dbSettings) {options = Just "-c cron.test=yay"}
           withConnection connStr testConnTimeout $ \conn -> do
             [DB.Only (s1 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
@@ -70,7 +73,7 @@ spec = do
                 testConnTimeout
                 (const $ pure ())
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, Serializable, RepeatableRead, ReadCommitted, ReadUncommitted], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
+      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
         it ("Isolation level used correctly - " ++ show (txnIsolationLvl, pgCronSetup)) $ \testDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -91,11 +94,11 @@ spec = do
                 when pgCronSetup $ do
                   DB.Only (scheduledCronCommand :: String) <- unsafeQuery1 conn "SELECT command FROM cron.job" ()
                   let expectedBegin = case txnIsolationLvl of
-                        DbDefault -> "BEGIN;" :: String
-                        Serializable -> "BEGIN,ISOLATION LEVEL SERIALIZABLE"
-                        RepeatableRead -> "BEGIN,ISOLATION LEVEL REPEATABLE READ"
-                        ReadCommitted -> "BEGIN,ISOLATION LEVEL READ COMMITTED"
-                        ReadUncommitted -> "BEGIN,ISOLATION LEVEL READ UNCOMMITTED"
+                        DbDefault -> "BEGIN READ WRITE;" :: String
+                        Serializable -> "BEGIN READ WRITE,ISOLATION LEVEL SERIALIZABLE;"
+                        RepeatableRead -> "BEGIN READ WRITE,ISOLATION LEVEL REPEATABLE READ;"
+                        ReadCommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ COMMITTED;"
+                        ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED;"
                   -- The pg_cron command must have the right isolation level, too
                   liftIO $ scheduledCronCommand `shouldContain` expectedBegin
 
@@ -128,32 +131,35 @@ spec = do
                 completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
                 finalizedAt abortedCoddJob `shouldBe` Nothing
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
-        it ("Fully test gradual migration and its synchronous finalisation - " ++ show pgCronSetup) $ \testDbInfo -> do
+      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
+        it ("Fully test gradual migration and its synchronous finalisation - " ++ show (pgCronSetup, txnIsolationLvl)) $ \testDbInfo -> do
           void @IO $
             runCoddLogger $ do
               applyMigrationsNoCheck
-                testDbInfo
+                testDbInfo {txnIsolationLvl = txnIsolationLvl}
                 (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner, createEmployeesTable, scheduleExperienceMigration])
                 testConnTimeout
                 (const $ pure ())
               liftIO $ when pgCronSetup $ withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
                 -- Wait a few seconds and check that the job runs once a second
-                startedCoddJob <- unsafeQuery1 conn "SELECT pg_sleep(5); SELECT * FROM codd.jobs" ()
-                DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
-                -- The periodic job updates 1 employee per run, and it has 80% chance of failing (look at the random() expression).
-                -- Since there are 5 employees to migrate (some are inserted after the job and thus the trigger are created),
-                -- the chance that 5 seconds (at most 5 runs) have all succeeded is 0.2^5=0.032%, which I consider to be 0
-                -- for the purposes of this test.
-                numJobsSucceeded startedCoddJob + numJobsError startedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
-                status startedCoddJob `shouldBe` "started"
-                scheduledCronJob `shouldBe` "change-experience"
-                lastRunAt startedCoddJob `shouldNotBe` Nothing
-                completedOrAbortedAt startedCoddJob `shouldBe` Nothing
-                finalizedAt startedCoddJob `shouldBe` Nothing
+                threadDelay 5_000_000
+                withTransaction @(InTxnT IO) txnIsolationLvl conn $ do
+                  startedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
+                  DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
+                  -- The periodic job updates 1 employee per run, and it has 80% chance of failing (look at the random() expression).
+                  -- Since there are 5 employees to migrate (some are inserted after the job and thus the trigger are created),
+                  -- the chance that 5 seconds (at most 5 runs) have all succeeded is 0.2^5=0.032%, which I consider to be 0
+                  -- for the purposes of this test.
+                  liftIO $ do
+                    numJobsSucceeded startedCoddJob + numJobsError startedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
+                    status startedCoddJob `shouldBe` "started"
+                    scheduledCronJob `shouldBe` "change-experience"
+                    lastRunAt startedCoddJob `shouldNotBe` Nothing
+                    completedOrAbortedAt startedCoddJob `shouldBe` Nothing
+                    finalizedAt startedCoddJob `shouldBe` Nothing
               (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [String]) <-
                 applyMigrationsNoCheck
-                  testDbInfo
+                  testDbInfo {txnIsolationLvl = txnIsolationLvl}
                   (Just [finalizeExperienceMigration])
                   testConnTimeout
                   (\conn -> (,,) <$> query conn "SELECT name, experience::text FROM employee ORDER BY name" () <*> unsafeQuery1 conn "SELECT * FROM codd.jobs" () <*> if pgCronSetup then query conn "SELECT jobname FROM cron.job" () else pure [])
@@ -173,6 +179,53 @@ spec = do
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 scheduledCronJobs `shouldBe` []
 
+      forM_ [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable] $ \txnIsolationLvl -> aroundDatabaseWithMigsAndPgCron [] $
+        it ("Synchronous finalisation concurrent to job run does not deadlock - " ++ show txnIsolationLvl) $ \testDbInfo -> void @IO $ do
+          -- If you comment out the locking statements in codd's functions, this test should deadlock
+          runCoddLogger $ do
+            applyMigrationsNoCheck
+              testDbInfo {txnIsolationLvl = txnIsolationLvl}
+              (Just [setupWithPgCron, createEmployeesTable, scheduleExperienceMigrationSlowLocking])
+              testConnTimeout
+              (const $ pure ())
+            liftIO $ withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
+              -- Wait until right after the job runs for the first time but before it runs a second
+              -- time to acquire locks that will conflict with the next job run
+              waitUntilJobRuns conn "change-experience"
+              withTransaction @(InTxnT IO) txnIsolationLvl conn $ do
+                startedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
+                DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
+                liftIO $ do
+                  numJobsSucceeded startedCoddJob `shouldBe` 1
+                  status startedCoddJob `shouldBe` "started"
+                  scheduledCronJob `shouldBe` "change-experience"
+                  lastRunAt startedCoddJob `shouldNotBe` Nothing
+                  completedOrAbortedAt startedCoddJob `shouldBe` Nothing
+                  finalizedAt startedCoddJob `shouldBe` Nothing
+
+            -- Here it gets interesting: finalizing this migration synchronously ought to conflict with the job soon-to-run
+            -- itself, since the job's query runs an UPDATE+pg_sleep+UPDATE, keeping locks on updated rows long enough for
+            -- it to conflict with itself.
+            -- The call to applyMigrationsNoCheck below deadlocks unless codd's schema has carefully designed locks
+            -- in its functions.
+            (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [String]) <-
+              applyMigrationsNoCheck
+                testDbInfo {txnIsolationLvl = txnIsolationLvl}
+                (Just [finalizeExperienceMigration])
+                testConnTimeout
+                (\conn -> (,,) <$> query conn "SELECT name, experience::text FROM employee ORDER BY name" () <*> unsafeQuery1 conn "SELECT * FROM codd.jobs" () <*> query conn "SELECT jobname FROM cron.job" ())
+            liftIO $ do
+              allEmployees `shouldBe` sortOn fst [("John Doe", "senior"), ("Bob", "senior"), ("Alice", "senior"), ("Marcelo", "junior"), ("Goku", "senior"), ("Dracula", "senior"), ("Frankenstein", "senior"), ("Jimi", "junior")]
+              numJobsError finalizedCoddJob `shouldBe` 0
+              lastErrorAt finalizedCoddJob `shouldBe` Nothing
+              numJobsSucceeded finalizedCoddJob `shouldBe` 3 -- 2 rows updated per job, third job returns 0 count
+              jobname finalizedCoddJob `shouldBe` "change-experience"
+              status finalizedCoddJob `shouldBe` "finalized"
+              lastRunAt finalizedCoddJob `shouldNotBe` Nothing
+              completedOrAbortedAt finalizedCoddJob `shouldNotBe` Nothing
+              finalizedAt finalizedCoddJob `shouldNotBe` Nothing
+              scheduledCronJobs `shouldBe` []
+
 data JobInfo = JobInfo
   { jobname :: String,
     createdAt :: UTCTime,
@@ -188,6 +241,11 @@ data JobInfo = JobInfo
   }
   deriving stock (Generic, Show)
   deriving anyclass (DB.FromRow)
+
+waitUntilJobRuns :: DB.Connection -> String -> IO ()
+waitUntilJobRuns conn jobname = do
+  [DB.Only jobRan] <- DB.query conn "SELECT COUNT(*)>0 FROM codd.jobs WHERE jobname=? AND num_jobs_succeeded>0" (DB.Only jobname)
+  unless jobRan $ threadDelay 50_000 >> waitUntilJobRuns conn jobname
 
 setupWithPgCron :: (MonadThrow m) => AddedSqlMigration m
 setupWithPgCron =
@@ -249,7 +307,7 @@ createEmployeesTable =
       }
     (getIncreasingTimestamp 2)
 
--- | Begins and synchronously finishes a job to gradually transform 'master' employees into 'senior'.
+-- | Begins a job to gradually transform 'master' employees into 'senior'.
 -- Inserts some employees before finishing the job to test any triggers' code paths.
 -- The idea is to migrate columns of an "employee" table and a temporary "experience2" column for
 -- the new values, before it replaces the "experience" column. However, there's a lot of templating code,
@@ -266,7 +324,37 @@ scheduleExperienceMigration =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \SELECT codd.populate_column_gradually('change-experience', '1 seconds',\n\
             \$$\n\
+            \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! This should work!\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
+            \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
+            \$$\n\
+            \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \);\n\
+            \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
+        migrationInTxn = True,
+        migrationRequiresCoddSchema = True,
+        migrationCustomConnInfo = Nothing,
+        migrationEnvVars = mempty
+      }
+    (getIncreasingTimestamp 3)
+
+scheduleExperienceMigrationSlowLocking :: (MonadThrow m) => AddedSqlMigration m
+scheduleExperienceMigrationSlowLocking =
+  AddedSqlMigration
+    SqlMigration
+      { migrationName = "0003-experience-migration-slow-locking.sql",
+        migrationSql =
+          mkValidSql
+            "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
+            \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
+            \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
+            \SELECT codd.populate_column_gradually('change-experience', '2 seconds',\n\
+            \$$\n\
+            \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
+            \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
+            \-- Sleep 1 second to give the test time to run before the job runs a second time (i.e. between 3s and 4s) \n\
+            \PERFORM pg_sleep(1);\n\
+            \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
             \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
@@ -285,6 +373,7 @@ finalizeExperienceMigration =
     SqlMigration
       { migrationName = "0004-finalize-experience-migration.sql",
         migrationSql =
+          -- TODO: Use a jobname with special characters that require escaping!
           mkValidSql
             "SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds');\n\
             \ALTER TABLE \"empl  oyee\" RENAME TO employee;\n\

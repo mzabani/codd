@@ -23,11 +23,13 @@ import Codd.Query
   ( NotInTxn,
     execvoid_,
     query,
+    unsafeQuery1,
   )
 import Codd.Types (ConnectionString (..), SchemaAlgo (..), SchemaSelection (..), TxnIsolationLvl (..), singleTryPolicy)
 import Control.Monad
   ( forM_,
     void,
+    when,
   )
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.String (fromString)
@@ -42,6 +44,7 @@ import Data.Time.Clock
   )
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
+import qualified Database.PostgreSQL.Simple.Types as DB
 import qualified Streaming.Prelude as Streaming
 import Test.Hspec
 import UnliftIO
@@ -51,6 +54,7 @@ import UnliftIO
     finally,
     liftIO,
   )
+import UnliftIO.Concurrent (threadDelay)
 import UnliftIO.Environment (getEnv)
 
 testConnInfo :: (MonadIO m) => m ConnectionString
