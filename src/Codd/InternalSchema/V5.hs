@@ -110,8 +110,10 @@ BEGIN
   IF TG_OP='DELETE' OR NEW.status IN ('aborted', 'run-complete-awaiting-finalization', 'finalized') THEN
     FOREACH pg_cron_job_name IN ARRAY OLD.pg_cron_jobs
     LOOP
-      IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') AND EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
+      IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') THEN
+        IF EXISTS (SELECT FROM cron.job WHERE jobname = pg_cron_job_name) THEN
          PERFORM cron.unschedule(pg_cron_job_name);
+        END IF;
       END IF;
     END LOOP;
   END IF;
@@ -169,8 +171,10 @@ BEGIN
   IF EXISTS (SELECT FROM codd._background_jobs WHERE jobname=job_name) THEN
     RAISE EXCEPTION 'Codd background job named % already exists. Please choose another name or clean up the codd._background_jobs table by deleting successful jobs if that would help', job_name;
   END IF;
-  IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') AND EXISTS (SELECT FROM cron.job WHERE jobname=job_name) THEN
-    RAISE EXCEPTION 'There already exists a pg_cron job named %. Please choose another name or clean up the the list of pg_cron jobs', job_name;
+  IF EXISTS (SELECT FROM codd._background_worker_type WHERE worker_type='pg_cron') THEN
+    IF EXISTS (SELECT FROM cron.job WHERE jobname=job_name) THEN
+      RAISE EXCEPTION 'There already exists a pg_cron job named %. Please choose another name or clean up the the list of pg_cron jobs', job_name;
+    END IF;
   END IF;
 END;
 $func$ LANGUAGE plpgsql;
@@ -347,8 +351,6 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
   
   -- TODO: Scheduling before creating the triggers might make the schedule task run before the triggers are created and return 0? Seems unlikely but pg_cron does execute things in separate connections. Oh, in that case the column might not even exist!
   --       So yeah, schedule with pg_cron AFTER creating the triggers! 
-  -- TODO: Do BEFORE triggers override values explicitly defined in the VALUES list? We probably want them to?
-  -- TODO: Should we forbid changing values of the new column with a trigger? Or does the BEFORE trigger make such attempts futile?
   -- TODO: Add tests with various search_paths to check we're being diligent
   PERFORM codd.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and pg_cron jobs are no longer running. You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep it up-to-date', tablename, colname), NULL);
   UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd.obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd.obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;

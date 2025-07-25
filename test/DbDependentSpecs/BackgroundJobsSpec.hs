@@ -15,7 +15,7 @@ import Data.List (isInfixOf, sortOn)
 import qualified Data.List as List
 import Data.Time (UTCTime)
 import qualified Database.PostgreSQL.Simple as DB
-import DbUtils (aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundDatabaseWithMigs, aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import GHC.Generics (Generic)
 import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, shouldSatisfy)
@@ -89,6 +89,22 @@ spec = do
                         ReadUncommitted -> "BEGIN READ WRITE,ISOLATION LEVEL READ UNCOMMITTED;"
                   -- The pg_cron command must have the right isolation level, too
                   liftIO $ scheduledCronCommand `shouldContain` expectedBegin
+
+      aroundFreshDatabase $ it "Values supplied explicitly by users for migrated columns are ignored" $ \testDbInfo -> do
+        void @IO $
+          runCoddLogger $ do
+            applyMigrationsNoCheck
+              testDbInfo
+              (Just [setupWithExternalJobRunner, createEmployeesTable, scheduleExperienceMigration])
+              testConnTimeout
+              (const $ pure ())
+            withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> liftIO $ do
+              -- Hendrix should be inserted as a senior, not a junior, despite the explicit value here
+              -- The UPDATE too should have no effect
+              DB.Only (overwrittenExperience2 :: String) <- unsafeQuery1 conn "INSERT INTO \"empl  oyee\" (name, experience, \"expE Rience2\") VALUES ('Hendrix', 'master', 'junior') RETURNING \"expE Rience2\"::text" ()
+              DB.Only (overwrittenExperience2' :: String) <- unsafeQuery1 conn "UPDATE \"empl  oyee\" SET \"expE Rience2\"='junior' WHERE name='Hendrix' RETURNING \"expE Rience2\"::text" ()
+              overwrittenExperience2 `shouldBe` "senior"
+              overwrittenExperience2' `shouldBe` "senior"
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
