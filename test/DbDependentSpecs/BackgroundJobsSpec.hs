@@ -13,6 +13,7 @@ import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.List (isInfixOf, sortOn)
 import qualified Data.List as List
+import Data.String (fromString)
 import Data.Time (UTCTime)
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils (aroundDatabaseWithMigs, aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
@@ -106,23 +107,23 @@ spec = do
               overwrittenExperience2 `shouldBe` "senior"
               overwrittenExperience2' `shouldBe` "senior"
 
-      aroundDatabaseWithMigsAndPgCron [] $
-        it "Apply and wait until pg_cron background migration goes into run-complete-awaiting-finalization" $ \testDbInfo -> do
+      aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
+        it ("Apply and wait until pg_cron background migration goes into run-complete-awaiting-finalization - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $ do
             runCoddLogger $
               applyMigrationsNoCheck
                 testDbInfo
-                (Just [setupWithPgCron, createEmployeesTable, scheduleQuickerMigration])
+                (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner, createEmployeesTable, scheduleQuickerMigration])
                 testConnTimeout
                 (const $ pure ())
             withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
               -- There are 5 employees to migrate and the job updates 2 per run, so it'll take 3 runs to update them all,
               -- but only the fourth run will return a 0 UPDATE count
-              waitUntilJobRuns conn "change- expèRiénce$" 1
+              if pgCronSetup then waitUntilJobRuns conn "change- expèRiénce$" 1 else runJobN conn "change- expèRiénce$" 1
               coddJobAfterOneRun <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
-              waitUntilJobRuns conn "change- expèRiénce$" 3
+              if pgCronSetup then waitUntilJobRuns conn "change- expèRiénce$" 3 else runJobN conn "change- expèRiénce$" 2
               coddJobStillNotDone <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
-              waitUntilJobRuns conn "change- expèRiénce$" 4
+              if pgCronSetup then waitUntilJobRuns conn "change- expèRiénce$" 4 else runJobN conn "change- expèRiénce$" 1
               finalizedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
               DB.Only (someCronJobRunning :: Bool) <- unsafeQuery1 conn "SELECT COUNT(*)>0 FROM cron.job" ()
               allEmployees :: [(String, String)] <- query conn "SELECT name, \"expE Rience2\"::text FROM \"empl  oyee\" ORDER BY name" ()
@@ -298,6 +299,19 @@ waitUntilJobRuns ::
 waitUntilJobRuns conn jobname minRuns = do
   [DB.Only jobRan] <- DB.query conn "SELECT COUNT(*)>0 FROM codd.jobs WHERE jobname=? AND num_jobs_succeeded>=?" (jobname, minRuns)
   unless jobRan $ threadDelay 50_000 >> waitUntilJobRuns conn jobname minRuns
+
+-- | Emulates an external job runner and runs the stored function in codd's
+-- background jobs tables the supplied number of times.
+runJobN ::
+  DB.Connection ->
+  String ->
+  Int ->
+  IO ()
+runJobN conn jobname numRuns = do
+  [DB.Only (funcName :: String)] <- DB.query conn "SELECT job_function FROM codd._background_jobs WHERE jobname=?" (DB.Only jobname)
+  forM_ [1 .. numRuns] $ const $ do
+    _ :: [DB.Only ()] <- DB.query conn ("SELECT " <> fromString funcName <> "()") ()
+    pure ()
 
 setupWithPgCron :: (MonadThrow m) => AddedSqlMigration m
 setupWithPgCron =
