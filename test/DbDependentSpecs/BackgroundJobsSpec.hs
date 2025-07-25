@@ -28,18 +28,6 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Background jobs" $ do
-      aroundFreshDatabase $ do
-        it "Settings in connection string" $ \dbSettings -> do
-          -- TODO: Test that connection opened by codd when applying migrations has the settings that we need instead
-          -- of this?
-          let connStr = (migsConnString dbSettings) {options = Just "-c cron.test=yay"}
-          withConnection connStr testConnTimeout $ \conn -> do
-            [DB.Only (s1 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
-            void $ DB.execute conn "RESET cron.test; RESET ALL;" ()
-            [DB.Only (s2 :: String)] <- DB.query conn "SELECT current_setting('cron.test')" ()
-            s1 `shouldBe` "yay"
-            s2 `shouldBe` "yay"
-
       aroundTestDbInfo $ do
         it "Nice error message when setup has not been called" $ \emptyTestDbInfo -> do
           void @IO $
@@ -282,7 +270,9 @@ someBgMigration =
       { migrationName = "0002-some-bg-migration.sql",
         migrationSql =
           mkValidSql
-            "SELECT codd.populate_column_gradually('change-experience', '1 seconds', 'whatever', 'employee', 'somecolumn', 'whatever');",
+            "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
+            \RESET ALL;\n\
+            \SELECT codd.populate_column_gradually('change-experience', '1 seconds', 'whatever', 'employee', 'somecolumn', 'whatever');",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
@@ -322,6 +312,8 @@ scheduleExperienceMigration =
             "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
             \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
+            \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
+            \RESET ALL;\n\
             \SELECT codd.populate_column_gradually('change-experience', '1 seconds',\n\
             \$$\n\
             \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! This should work!\n\
@@ -348,6 +340,8 @@ scheduleExperienceMigrationSlowLocking =
             "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
             \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
+            \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
+            \RESET ALL;\n\
             \SELECT codd.populate_column_gradually('change-experience', '2 seconds',\n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
@@ -375,7 +369,9 @@ finalizeExperienceMigration =
         migrationSql =
           -- TODO: Use a jobname with special characters that require escaping!
           mkValidSql
-            "SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds');\n\
+            "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
+            \RESET ALL;\n\
+            \SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds');\n\
             \ALTER TABLE \"empl  oyee\" RENAME TO employee;\n\
             \ALTER TABLE employee DROP COLUMN experience;\n\
             \ALTER TABLE employee RENAME COLUMN \"expE Rience2\" TO experience;\n\
