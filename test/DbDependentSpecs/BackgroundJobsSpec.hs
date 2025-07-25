@@ -103,19 +103,19 @@ spec = do
                 abortedCoddJob <-
                   if pgCronSetup
                     then do
-                      abortedCoddJob <- unsafeQuery1 conn "SELECT pg_sleep(5); SELECT codd.abort_background_job('change-experience'); SELECT * FROM codd.jobs" ()
+                      abortedCoddJob <- unsafeQuery1 conn "SELECT pg_sleep(5); SELECT codd.abort_background_job('change- expèRiénce$'); SELECT * FROM codd.jobs" ()
                       unsafeQuery1 conn "SELECT COUNT(*) FROM cron.job" () `shouldReturn` DB.Only (0 :: Int)
                       numJobsSucceeded abortedCoddJob + numJobsError abortedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
                       lastRunAt abortedCoddJob `shouldNotBe` Nothing
                       pure abortedCoddJob
                     else do
-                      abortedCoddJob <- unsafeQuery1 conn "SELECT codd.abort_background_job('change-experience'); SELECT * FROM codd.jobs" ()
+                      abortedCoddJob <- unsafeQuery1 conn "SELECT codd.abort_background_job('change- expèRiénce$'); SELECT * FROM codd.jobs" ()
                       -- No external runner
                       numJobsSucceeded abortedCoddJob + numJobsError abortedCoddJob `shouldBe` 0
                       lastRunAt abortedCoddJob `shouldBe` Nothing
                       pure abortedCoddJob
                 status abortedCoddJob `shouldBe` "aborted"
-                jobname abortedCoddJob `shouldBe` "change-experience"
+                jobname abortedCoddJob `shouldBe` "change- expèRiénce$"
                 completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
                 finalizedAt abortedCoddJob `shouldBe` Nothing
 
@@ -141,7 +141,7 @@ spec = do
                   liftIO $ do
                     numJobsSucceeded startedCoddJob + numJobsError startedCoddJob `shouldSatisfy` (>= 4) -- >=5 would be pushing our luck
                     status startedCoddJob `shouldBe` "started"
-                    scheduledCronJob `shouldBe` "change-experience"
+                    scheduledCronJob `shouldBe` "change- expèRiénce$"
                     lastRunAt startedCoddJob `shouldNotBe` Nothing
                     completedOrAbortedAt startedCoddJob `shouldBe` Nothing
                     finalizedAt startedCoddJob `shouldBe` Nothing
@@ -159,7 +159,7 @@ spec = do
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 lastError finalizedCoddJob `shouldSatisfy` ("22P02" `List.isInfixOf`) . show -- This is invalid input value for the enum
                 numJobsSucceeded finalizedCoddJob `shouldBe` 6 -- 5 + 1 last job run that updates no rows
-                jobname finalizedCoddJob `shouldBe` "change-experience"
+                jobname finalizedCoddJob `shouldBe` "change- expèRiénce$"
                 status finalizedCoddJob `shouldBe` "finalized"
                 lastRunAt finalizedCoddJob `shouldNotBe` Nothing
                 completedOrAbortedAt finalizedCoddJob `shouldNotBe` Nothing
@@ -179,14 +179,14 @@ spec = do
             liftIO $ withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
               -- Wait until right after the job runs for the first time but before it runs a second
               -- time to acquire locks that will conflict with the next job run
-              waitUntilJobRuns conn "change-experience"
+              waitUntilJobRuns conn "change- expèRiénce$"
               withTransaction @(InTxnT IO) txnIsolationLvl conn $ do
                 startedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
                 DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
                 liftIO $ do
                   numJobsSucceeded startedCoddJob `shouldBe` 1
                   status startedCoddJob `shouldBe` "started"
-                  scheduledCronJob `shouldBe` "change-experience"
+                  scheduledCronJob `shouldBe` "change- expèRiénce$"
                   lastRunAt startedCoddJob `shouldNotBe` Nothing
                   completedOrAbortedAt startedCoddJob `shouldBe` Nothing
                   finalizedAt startedCoddJob `shouldBe` Nothing
@@ -207,7 +207,7 @@ spec = do
               numJobsError finalizedCoddJob `shouldBe` 0
               lastErrorAt finalizedCoddJob `shouldBe` Nothing
               numJobsSucceeded finalizedCoddJob `shouldBe` 3 -- 2 rows updated per job, third job returns 0 count
-              jobname finalizedCoddJob `shouldBe` "change-experience"
+              jobname finalizedCoddJob `shouldBe` "change- expèRiénce$"
               status finalizedCoddJob `shouldBe` "finalized"
               lastRunAt finalizedCoddJob `shouldNotBe` Nothing
               completedOrAbortedAt finalizedCoddJob `shouldNotBe` Nothing
@@ -272,7 +272,7 @@ someBgMigration =
           mkValidSql
             "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change-experience', '1 seconds', 'whatever', 'employee', 'somecolumn', 'whatever');",
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'whatever', 'employee', 'somecolumn', 'whatever');",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
@@ -301,7 +301,7 @@ createEmployeesTable =
 -- Inserts some employees before finishing the job to test any triggers' code paths.
 -- The idea is to migrate columns of an "employee" table and a temporary "experience2" column for
 -- the new values, before it replaces the "experience" column. However, there's a lot of templating code,
--- so we do test bizarre object names for both the table and the column.
+-- so we do test bizarre object names for the table, the column and the job name.
 scheduleExperienceMigration :: (MonadThrow m) => AddedSqlMigration m
 scheduleExperienceMigration =
   AddedSqlMigration
@@ -314,7 +314,7 @@ scheduleExperienceMigration =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change-experience', '1 seconds',\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
             \$$\n\
             \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! This should work!\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
@@ -342,7 +342,7 @@ scheduleExperienceMigrationSlowLocking =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change-experience', '2 seconds',\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '2 seconds',\n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
@@ -371,7 +371,7 @@ finalizeExperienceMigration =
           mkValidSql
             "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds');\n\
+            \SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '100 seconds');\n\
             \ALTER TABLE \"empl  oyee\" RENAME TO employee;\n\
             \ALTER TABLE employee DROP COLUMN experience;\n\
             \ALTER TABLE employee RENAME COLUMN \"expE Rience2\" TO experience;\n\

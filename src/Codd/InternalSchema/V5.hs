@@ -350,7 +350,6 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
   -- TODO: Do BEFORE triggers override values explicitly defined in the VALUES list? We probably want them to?
   -- TODO: Should we forbid changing values of the new column with a trigger? Or does the BEFORE trigger make such attempts futile?
   -- TODO: Add tests with various search_paths to check we're being diligent
-  -- TODO: Add tests with various weird object names
   PERFORM codd.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and pg_cron jobs are no longer running. You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep it up-to-date', tablename, colname), NULL);
   UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd.obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd.obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
   EXECUTE format($triggers$
