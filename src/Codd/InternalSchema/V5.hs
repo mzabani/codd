@@ -225,7 +225,6 @@ BEGIN
         BEGIN
             PERFORM * FROM codd._background_jobs WHERE jobname=%s FOR NO KEY UPDATE;
             SELECT %s() INTO new_codd_job_status;
-            -- TODO: Can unscheduling cancel the job and rollback the changes applied in the last run? Check. https://github.com/citusdata/pg_cron/issues/308 suggests it might be possible.
             UPDATE codd._background_jobs SET
                 num_jobs_succeeded=num_jobs_succeeded+1
               , last_run_at=CLOCK_TIMESTAMP()

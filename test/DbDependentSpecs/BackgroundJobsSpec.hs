@@ -106,6 +106,49 @@ spec = do
               overwrittenExperience2 `shouldBe` "senior"
               overwrittenExperience2' `shouldBe` "senior"
 
+      aroundDatabaseWithMigsAndPgCron [] $
+        it "Apply and wait until pg_cron background migration goes into run-complete-awaiting-finalization" $ \testDbInfo -> do
+          void @IO $ do
+            runCoddLogger $
+              applyMigrationsNoCheck
+                testDbInfo
+                (Just [setupWithPgCron, createEmployeesTable, scheduleQuickerMigration])
+                testConnTimeout
+                (const $ pure ())
+            withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
+              -- There are 5 employees to migrate and the job updates 2 per run, so it'll take 3 runs to update them all,
+              -- but only the fourth run will return a 0 UPDATE count
+              waitUntilJobRuns conn "change- expèRiénce$" 1
+              coddJobAfterOneRun <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
+              waitUntilJobRuns conn "change- expèRiénce$" 3
+              coddJobStillNotDone <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
+              waitUntilJobRuns conn "change- expèRiénce$" 4
+              finalizedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
+              DB.Only (someCronJobRunning :: Bool) <- unsafeQuery1 conn "SELECT COUNT(*)>0 FROM cron.job" ()
+              allEmployees :: [(String, String)] <- query conn "SELECT name, \"expE Rience2\"::text FROM \"empl  oyee\" ORDER BY name" ()
+              forM_ [(coddJobAfterOneRun, 1), (coddJobStillNotDone, 3)] $ \(coddJob, numRuns) -> do
+                status coddJob `shouldBe` "started"
+                numJobsSucceeded coddJob `shouldBe` numRuns
+                lastRunAt coddJob `shouldNotBe` Nothing
+                completedOrAbortedAt coddJob `shouldBe` Nothing
+                finalizedAt coddJob `shouldBe` Nothing
+              lastRunAt coddJobStillNotDone `shouldSatisfy` (> lastRunAt coddJobAfterOneRun)
+              -- Unlike in other tests, this doesn't have Goku because Goku is inserted in the synchronous finalisation
+              -- migration
+              allEmployees `shouldBe` sortOn fst [("John Doe", "senior"), ("Bob", "senior"), ("Alice", "senior"), ("Marcelo", "junior"), ("Dracula", "senior"), ("Frankenstein", "senior"), ("Jimi", "junior")]
+              numJobsError finalizedCoddJob `shouldBe` 0
+              lastErrorAt finalizedCoddJob `shouldBe` Nothing
+              lastError finalizedCoddJob `shouldBe` Nothing
+              numJobsSucceeded finalizedCoddJob `shouldBe` 4
+              jobname finalizedCoddJob `shouldBe` "change- expèRiénce$"
+              status finalizedCoddJob `shouldBe` "run-complete-awaiting-finalization"
+              lastRunAt finalizedCoddJob `shouldNotBe` Nothing
+              lastRunAt finalizedCoddJob `shouldSatisfy` (> lastRunAt coddJobStillNotDone)
+              completedOrAbortedAt finalizedCoddJob `shouldNotBe` Nothing
+              finalizedAt finalizedCoddJob `shouldBe` Nothing
+              lastErrorAt finalizedCoddJob `shouldBe` Nothing
+              someCronJobRunning `shouldBe` False
+
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $
@@ -195,7 +238,7 @@ spec = do
             liftIO $ withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
               -- Wait until right after the job runs for the first time but before it runs a second
               -- time to acquire locks that will conflict with the next job run
-              waitUntilJobRuns conn "change- expèRiénce$"
+              waitUntilJobRuns conn "change- expèRiénce$" 1
               withTransaction @(InTxnT IO) txnIsolationLvl conn $ do
                 startedCoddJob <- unsafeQuery1 conn "SELECT * FROM codd.jobs" ()
                 DB.Only (scheduledCronJob :: String) <- unsafeQuery1 conn "SELECT jobname FROM cron.job" ()
@@ -246,10 +289,15 @@ data JobInfo = JobInfo
   deriving stock (Generic, Show)
   deriving anyclass (DB.FromRow)
 
-waitUntilJobRuns :: DB.Connection -> String -> IO ()
-waitUntilJobRuns conn jobname = do
-  [DB.Only jobRan] <- DB.query conn "SELECT COUNT(*)>0 FROM codd.jobs WHERE jobname=? AND num_jobs_succeeded>0" (DB.Only jobname)
-  unless jobRan $ threadDelay 50_000 >> waitUntilJobRuns conn jobname
+waitUntilJobRuns ::
+  DB.Connection ->
+  String ->
+  -- | Minimum number of runs to wait for
+  Int ->
+  IO ()
+waitUntilJobRuns conn jobname minRuns = do
+  [DB.Only jobRan] <- DB.query conn "SELECT COUNT(*)>0 FROM codd.jobs WHERE jobname=? AND num_jobs_succeeded>=?" (jobname, minRuns)
+  unless jobRan $ threadDelay 50_000 >> waitUntilJobRuns conn jobname minRuns
 
 setupWithPgCron :: (MonadThrow m) => AddedSqlMigration m
 setupWithPgCron =
@@ -332,7 +380,7 @@ scheduleExperienceMigration =
             \RESET ALL;\n\
             \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
             \$$\n\
-            \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! This should work!\n\
+            \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! Document this limitation!\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
@@ -368,6 +416,31 @@ scheduleExperienceMigrationSlowLocking =
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
             \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \);\n\
+            \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
+        migrationInTxn = True,
+        migrationRequiresCoddSchema = True,
+        migrationCustomConnInfo = Nothing,
+        migrationEnvVars = mempty
+      }
+    (getIncreasingTimestamp 3)
+
+scheduleQuickerMigration :: (MonadThrow m) => AddedSqlMigration m
+scheduleQuickerMigration =
+  AddedSqlMigration
+    SqlMigration
+      { migrationName = "0003-experience-quicker-migration.sql",
+        migrationSql =
+          mkValidSql
+            "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
+            \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
+            \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
+            \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
+            \RESET ALL;\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
+            \$$\n\
+            \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
+            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2);$$, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
