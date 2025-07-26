@@ -108,7 +108,7 @@ spec = do
               overwrittenExperience2' `shouldBe` "senior"
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
-        it ("Apply and wait until pg_cron background migration goes into run-complete-awaiting-finalization - " ++ show pgCronSetup) $ \testDbInfo -> do
+        it ("Apply and wait until background migration goes into run-complete-awaiting-finalization - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $ do
             runCoddLogger $
               applyMigrationsNoCheck
@@ -133,6 +133,7 @@ spec = do
                 lastRunAt coddJob `shouldNotBe` Nothing
                 completedOrAbortedAt coddJob `shouldBe` Nothing
                 finalizedAt coddJob `shouldBe` Nothing
+                description coddJob `shouldContain` "Gradually populating values in the"
               lastRunAt coddJobStillNotDone `shouldSatisfy` (> lastRunAt coddJobAfterOneRun)
               -- Unlike in other tests, this doesn't have Goku because Goku is inserted in the synchronous finalisation
               -- migration
@@ -149,6 +150,7 @@ spec = do
               finalizedAt finalizedCoddJob `shouldBe` Nothing
               lastErrorAt finalizedCoddJob `shouldBe` Nothing
               someCronJobRunning `shouldBe` False
+              description finalizedCoddJob `shouldContain` "You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date"
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
@@ -178,6 +180,7 @@ spec = do
                 jobname abortedCoddJob `shouldBe` "change- expèRiénce$"
                 completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
                 finalizedAt abortedCoddJob `shouldBe` Nothing
+                description abortedCoddJob `shouldContain` "Given up populating values in the"
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show (pgCronSetup, txnIsolationLvl)) $ \testDbInfo -> do
@@ -226,6 +229,7 @@ spec = do
                 finalizedAt finalizedCoddJob `shouldNotBe` Nothing
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 scheduledCronJobs `shouldBe` []
+                description finalizedCoddJob `shouldContain` "Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects"
 
       forM_ [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable] $ \txnIsolationLvl -> aroundDatabaseWithMigsAndPgCron [] $
         it ("Synchronous finalisation concurrent to job run does not deadlock - " ++ show txnIsolationLvl) $ \testDbInfo -> void @IO $ do
