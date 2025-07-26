@@ -11,11 +11,10 @@
   - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
   - [Guides](#guides)
     - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
-  - [Safety considerations](#safety-considerations)
+    - [Add background migrations to update large datasets without downtime](#add-background-migrations-to-update-large-datasets-without-downtime)
+    - [Codd's limits and robustness](#codds-limits-and-robustness)
   - [Frequently Asked Questions](#frequently-asked-questions)
     - [Why does taking and restoring a database dump affect my expected codd schema?](#why-does-taking-and-restoring-a-database-dump-affect-my-expected-codd-schema)
-    - [Will codd run out of memory or system resources if my migration files are too large or too many?](#will-codd-run-out-of-memory-or-system-resources-if-my-migration-files-are-too-large-or-too-many)
-    - [Will codd handle SQL errors nicely?](#will-codd-handle-sql-errors-nicely)
 <!--toc:end-->
 
 Codd is a CLI tool that applies plain SQL migrations atomically (when PostgreSQL allows it) and includes schema equality checks that practically ensure your development database's schema matches the database schema in every other environment,
@@ -26,7 +25,7 @@ It's also meant to be really simple to use: codd reads SQL files from folders yo
 
 In day to day usage, you will typically run `codd add new-migration.sql` and/or `codd up`, and very likely no other commands.
 
-Compared to other DB tools, codd aims for simplicity and strong automatic schema equality checks, meaning it doesn't have all the features other tools do. It also only supports PostgreSQL.
+Compared to other DB tools, codd aims for simplicity, strong automatic schema equality checks, and robustness/reliability. This means it might not have all the features other tools do. It also only supports PostgreSQL.
 
 Here you can see its main features in more detail:
 
@@ -107,6 +106,27 @@ Automatic merge failed; fix conflicts and then commit the result.
 ````diff
 - "definition": "CHECK (value >= 0::numeric)",
 + "definition": "CHECK (value > 0::numeric)",
+````
+
+</td>
+</tr>
+
+<tr>
+<td>Background/gradual migrations for large datasets</td>
+<td>
+
+````sql
+ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
+SELECT codd.populate_column_gradually('make-employee_id-a-bigint', '10 seconds',
+-- Next is the job that will run every 10 seconds.
+$$
+UPDATE employee SET new_employee_id=employee_id::bigint
+WHERE employee_id IN (SELECT employee_id FROM employee WHERE new_employee_id IS NULL LIMIT 1000);
+$$
+, 'employee', 'new_employee_id',
+-- Next is the trigger expression which will be used for INSERTs and UPDATEs
+'NEW.employee_id::bigint'
+);
 ````
 
 </td>
@@ -209,22 +229,18 @@ If you're running codd in multiple environments where connection strings can dif
 
 Codd provides helper functions, and with the help of the [pg_cron](https://github.com/citusdata/pg_cron) extension (or a background job/SQL runner of your own implementation) it can be much simpler to apply such migration. [Read the guide](docs/BACKGROUND-MIGRATIONS.md).
 
-## Safety considerations
+### Codd's limits and robustness
 
-We recommend following these instructions closely to catch as many possible issues with your database setup/management as possible.
+- You can have arbitrarily large migrations. Even pg_dump files can be migrations. Codd parses migrations from disk in streaming fashion and keeps in memory only a constant number of SQL statements at a time. For `COPY` statements, codd uses a constant-size buffer to stream-read the contents and achieve bounded memory usage while staying fast; [nearly as fast as psql](https://mzabani.github.io/posts/2025-02-12-concurrently-forcing-haskell-streams.html). Codd's CI includes regression tests and benchmarks both for wall-clock performance and maximum memory usage.
+- You should be able to have thousands of migration files. Codd keeps only file names and other migration metadata in memory (but write a feature request if you'd like that to be improved!) and only opens one file at a time to to stay well below typical file handle limits imposed by the shell or operating system (MacOS shells have particularly low limits). Codd's CI includes an strace-based test to ensure this stays that way.
+- Codd will apply all pending migrations in the same transaction unless you add `-- codd: no-txn` to some of your migrations.
+- Codd has a default retry policy with a backoff mechanism. Check [CONFIGURATION.md](docs/CONFIGURATION.md) to configure it yourself if you prefer.
+- Codd cannot apply psql's meta commands (those starting with a backslash), but you should otherwise be able to write arbitrary SQL in your migrations. You can e.g. write your own `BEGIN; ... COMMIT;` sections in migrations with `-- codd: no-txn`, and codd will be smart enough to retry those migrations if they fail inside those transaction from the `BEGIN` statement (and as you'd expect, we test this in our CI pipeline). See the [retry examples](/docs/SQL-MIGRATIONS.md#examples) if you're interested.
+- Read about the kinds of schema equality that codd **cannot verify** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md). This will also give you another idea about how far codd is willing to go to ensure your schema is the same across environments.  
 
-- Never merge code that has been tested without `master` merged into it.
-  - There are non-conflicting changes which can break your App. One example is one developer removes a column and another developer writes a new query using that column. Only a test could catch this.  
-- Always run `codd up --strict-check` on CI because it's a good place to be strict.
-- Read about what codd **cannot do** in [DATABASE-EQUALITY.md](docs/DATABASE-EQUALITY.md). This will also give you another idea about how far codd is willing to go to ensure your schema is the same across environments.  
+The author's intention is that you should be able to write SQL fearlessly and count on codd to be reliable and to behave reasonably even in edge cases. Please file a report if you think it's not keeping that promise.
 
 ## Frequently Asked Questions
 
 1. ### Why does taking and restoring a database dump affect my expected codd schema?
-   `pg_dump` does not dump all of the schema state that codd checks. A few examples include role related state, the database's default transaction isolation level and deferredness, among other settings. So check that it isn't the case that you get different schemas when that happens. If you've checked with `psql` and everything looks to be the same please report a bug in codd.
-
-2. ### Will codd run out of memory or system resources if my migration files are too large or too many?
-    Most likely not. Codd reads migrations from disk in streaming fashion and keeps in memory only a constant number of SQL statements at a time. For `COPY` statements, codd uses a constant-size buffer to stream-read the contents and achieve bounded memory usage while staying fast. Also, codd does not open more than one migration file simultaneously to stay well below typical file handle limits imposed by the shell or operating system, and that is also assured through an automated test that runs in CI with `strace`. Codd does keep metadata about all pending migrations and the expected schema in memory, but those should be fairly small.
-
-3. ### Will codd handle SQL errors nicely?
-    Codd tries to do the "best possible thing" even in rather unusual situations. It will retry sets of consecutive in-txn migrations atomically so as not to leave your database in an intermediary state. Even for no-txn migrations, codd will retry only the failing statement instead of entire migrations, and _even_ if you write explicit `BEGIN..COMMIT` sections in no-txn migrations, codd will be smart enough to retry from the `BEGIN` if a statement inside that section fails. See the [retry examples](/docs/SQL-MIGRATIONS.md#examples) if you're interested. Basically, we hope you should be able to write your migrations however you want and rely comfortably on the fact that codd should do the reasonable thing when handling errors.
+   `pg_dump` does not dump all of the schema state that codd checks. A few examples include role related state, the database's default transaction isolation level and deferredness, among other settings. So check that it isn't the case that you get different schemas when that happens. PostgreSQL can also some times have its internal parsing+deparsing process not be an identity. If you've checked with `psql` and everything looks to be the same please report a bug in codd.

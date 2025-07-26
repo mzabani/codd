@@ -18,8 +18,5 @@ psql -1 -v ON_ERROR_STOP=on -f codd-background-schema.sql
 psql -1 -v ON_ERROR_STOP=on -f emulate-error-in-scheduled-job.sql
 psql -1 -v ON_ERROR_STOP=on -c "SELECT codd.synchronously_finalize_background_job('change-experience', '100 seconds')"
 
-########## Creating an index concurrently
-# psql -1 -v ON_ERROR_STOP=on -f create-index-concurrently.sql
-
 ########## Replacing two columns with a new one
 # psql -1 -v ON_ERROR_STOP=on -f replace-two-bools-with-one-new-column.sql

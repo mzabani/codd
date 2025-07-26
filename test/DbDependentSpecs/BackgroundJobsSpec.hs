@@ -22,7 +22,7 @@ import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, shouldSatisfy)
 import Test.Hspec.Core.Spec (describe, it)
 import qualified Test.QuickCheck as QC
-import UnliftIO (liftIO)
+import UnliftIO (SomeException, liftIO)
 import UnliftIO.Concurrent (threadDelay)
 
 spec :: Spec
@@ -156,7 +156,7 @@ spec = do
               finalizedAt finalizedCoddJob `shouldBe` Nothing
               lastErrorAt finalizedCoddJob `shouldBe` Nothing
               someCronJobRunning `shouldBe` False
-              description finalizedCoddJob `shouldContain` "You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date"
+              description finalizedCoddJob `shouldContain` "You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date"
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
@@ -187,6 +187,10 @@ spec = do
                 completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
                 finalizedAt abortedCoddJob `shouldBe` Nothing
                 description abortedCoddJob `shouldContain` "Given up populating values in the"
+                -- Test that we can DELETE from _background_jobs, like we promise, and that synchronous finalization
+                -- errors out
+                DB.execute conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" () `shouldThrow` (\(ex :: SomeException) -> "It is not possible to finalize the aborted job " `List.isInfixOf` show ex)
+                DB.execute conn "DELETE FROM codd._background_jobs WHERE jobname='change- expèRiénce$'" () `shouldReturn` 1
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show (pgCronSetup, txnIsolationLvl)) $ \testDbInfo -> do
@@ -220,7 +224,7 @@ spec = do
                   (Just [finalizeExperienceMigration])
                   testConnTimeout
                   (\conn -> (,,) <$> query conn "SELECT name, experience::text FROM employee ORDER BY name" () <*> unsafeQuery1 conn "SELECT * FROM codd.jobs" () <*> if pgCronSetup then query conn "SELECT jobname FROM cron.job" () else pure [])
-              liftIO $ do
+              liftIO $ withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
                 allEmployees `shouldBe` sortOn fst [("John Doe", "senior"), ("Bob", "senior"), ("Alice", "senior"), ("Marcelo", "junior"), ("Goku", "senior"), ("Dracula", "senior"), ("Frankenstein", "senior"), ("Jimi", "junior")]
                 -- The probability of no failures is 0.2^5=0.032% (see comment ~20 lines above), which
                 -- is as good as 0 for the purposes of this test.
@@ -236,6 +240,9 @@ spec = do
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 scheduledCronJobs `shouldBe` []
                 description finalizedCoddJob `shouldContain` "Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects"
+                -- Finalizing a job that's already finalized does nothing and does not throw
+                _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" ()
+                pure ()
 
       forM_ [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable] $ \txnIsolationLvl -> aroundDatabaseWithMigsAndPgCron [] $
         it ("Synchronous finalisation concurrent to job run does not deadlock - " ++ show txnIsolationLvl) $ \testDbInfo -> void @IO $ do

@@ -40,6 +40,7 @@ END;
 $$ LANGUAGE plpgsql;
 CREATE FUNCTION codd._assert_worker_is_setup() RETURNS VOID AS $$
 BEGIN
+  NOTIFY "codd.___require_codd_schema_channel";
   IF NOT EXISTS (SELECT FROM codd._background_worker_type) THEN
     RAISE EXCEPTION 'You must call the codd.setup_background_worker function before scheduling jobs. You can either add `SELECT codd.setup_background_worker(''pg_cron'')` or `SELECT codd.setup_background_worker(''external'')` to your migration depending on whether you would like the pg_cron extension to run periodic jobs or if you wish to implement a job runner yourself otherwise';
   END IF;
@@ -197,7 +198,6 @@ DECLARE
   temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);
   created_job codd._background_jobs;
 BEGIN
-  NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd._assert_worker_is_setup();
   PERFORM codd._assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
@@ -264,8 +264,7 @@ BEGIN
 END;
 $func$ LANGUAGE plpgsql;
 -- | Synchronously runs a job until it finalized or until the supplied timeout elapses, and raises an exception in case of the latter.
--- This does nothing if the job does not exist or is already finalized.
--- This doesn't run the job if it has been aborted.
+-- This does nothing if the job is already finalized.
 -- This drops database objects created by the job if it completes successfully or if the job was aborted.
 -- This does update codd._background_jobs table with the count of every successful and error run until either the timeout or successful completion.
 -- This will run the job in the isolation level of the caller's (yours) in a single transaction regardless of how many times the job needs to run.
@@ -279,7 +278,6 @@ DECLARE
   jobstatus text;
   obj_to_drop codd._obj_to_drop;
 BEGIN
-  NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd._assert_worker_is_setup();
   IF job_name IS NULL THEN
     RAISE EXCEPTION 'Please supply a job name';
@@ -289,7 +287,9 @@ BEGIN
   END IF;
 
   SELECT * INTO jobrow FROM codd._background_jobs WHERE jobname=job_name;
-  IF jobrow.jobname IS NULL OR jobrow.status='finalized' THEN
+  IF jobrow.jobname IS NULL THEN
+    RAISE EXCEPTION 'Could not find job %', job_name;
+  ELSIF jobrow.status='finalized' THEN
     RETURN;
   ELSIF jobrow.status = 'aborted' THEN
     RAISE EXCEPTION 'It is not possible to finalize the aborted job %. Please delete the aborted job row from codd.background_migrations and do any cleanup necessary', job_name;
@@ -330,7 +330,7 @@ BEGIN
   PERFORM codd._assert_worker_is_setup();
   IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN
     RAISE EXCEPTION $err$
-Did you forget to supply some arguments to populate_column_gradually? Here is an usage example that updates one row every second:
+Did you forget to supply some arguments to codd.populate_column_gradually? Here is an usage example that updates one row every second:
 
       ALTER TABLE animals ADD COLUMN new_number INT;
       SELECT codd.populate_column_gradually('new-column-with-old-column-plus1', '1 seconds',
@@ -372,7 +372,8 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
 END;
 $func$ LANGUAGE plpgsql; |]
 
--- The code below is for a future codd.create_index_concurrently function.
+-- The code below is for a future codd.create_index_concurrently function. Usage might be something like:
+-- SELECT codd.create_index_concurrently('concurrent-index', '10 seconds', 'CREATE INDEX CONCURRENTLY IF NOT EXISTS employee_experience_idx ON employee (experience)', 'employee', 'employee_experience_idx', '1 second');
 -- -- | I just want to check this is possible; we don't need it as much as e.g. populating columns and we'll need schema ignore rules before this works nicely with codd, too
 -- CREATE OR REPLACE FUNCTION codd.create_index_concurrently(job_name text, check_completion_cron_schedule text, create_index_concurrently_if_not_exists_statement text, tablename text, indexname text, try_create_cron_schedule text) RETURNS VOID AS $func$
 -- DECLARE

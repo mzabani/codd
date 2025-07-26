@@ -3,6 +3,11 @@
 <!--toc:start-->
 - [Background migrations](#background-migrations)
   - [Learning from example: migrating an INT column to BIGINT gradually](#learning-from-example-migrating-an-int-column-to-bigint-gradually)
+  - [Valid cron/periodicity expressions for background jobs](#valid-cronperiodicity-expressions-for-background-jobs)
+  - [Aborting background migrations](#aborting-background-migrations)
+  - [What if I can't use pg_cron?](#what-if-i-cant-use-pgcron)
+  - [Ignoring the 'cron' namespace](#ignoring-the-cron-namespace)
+  - [More complex background migrations](#more-complex-background-migrations)
 <!--toc:end-->
 
 When it is not feasible to `UPDATE/INSERT/DELETE` large numbers of rows in a migration because it would cause downtime when deployed, codd provides helper functions that allow those operations to run in the background, on a schedule.
@@ -80,17 +85,57 @@ ALTER TABLE employee DROP COLUMN employee_id;
 ALTER TABLE employee RENAME COLUMN new_employee_id TO employee_id;
 ```
 
-## Ignoring the 'cron' namespace
+## Valid cron/periodicity expressions for background jobs
 
-TODO
+In the examples above we use `'10 seconds'`, but any pg_cron expression is valid. As per the [official pg_cron docs](https://github.com/citusdata/pg_cron) this is either a `'[1-59] seconds'` string, or a string in the format:
+
+```
+ ┌───────────── min (0 - 59)
+ │ ┌────────────── hour (0 - 23)
+ │ │ ┌─────────────── day of month (1 - 31) or last day of the month ($)
+ │ │ │ ┌──────────────── month (1 - 12)
+ │ │ │ │ ┌───────────────── day of week (0 - 6) (0 to 6 are Sunday to
+ │ │ │ │ │                  Saturday, or use names; 7 is also Sunday)
+ │ │ │ │ │
+ │ │ │ │ │
+ * * * * *
+```
+
+Examples include:
+- Saturday at 3:30am (GMT) is `'30 3 * * 6'`
+- Every day at 10:00am (GMT) is `'0 10 * * *'`
+
+## Aborting background migrations
+
+You **can** abort codd's background jobs in live environments and that will not cause any schema modifications (i.e. no DDL will be applied), so this is designed to keep your applications working. The only consequence of aborting a background job is the scheduled jobs no longer run, so use this if the background job is interfering negatively with your application. Here's how to do it:
+
+````sql
+SELECT codd.abort_background_job('make-employee_id-a-bigint');
+````
+
+You can also query `codd.jobs` after this, and its description should now give you instructions, such as:
+
+```
+Given up populating values in the employee.new_employee_id column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now
+````
+
+Make sure you don't `codd.synchronously_finalize_background_job` aborted migrations, as it will fail. It's probably easier if you abort the same job in every environment, delete the row from `codd._background_jobs` in every environment and try again with a new migration.
 
 ## What if I can't use pg_cron?
 
 Then you will have to call `SELECT codd.setup_background_worker('external')` to set things up, and unless you implement a job runner (there is no documentation how to do that yet) there will be no background jobs running at all. You can still call all the background-job functions codd provides, but without a job runner this will only be useful in development, testing or environments with small databases. **If you are in this position, please file a request for codd to implement its own job runner**; it's already in the author's plans, but he has no sense of when people might need it.
 
-**If you are only in this position due to development and testing environments**, you probably don't need to worry. Our recommendation is that
-There are likely two motives for this: pg_cron only working with one database per instance or
-Sadly, pg_cron forces its users to choose a single database to work in.
-In development environments where you might have a development database and a database to run tests with, a conundrum naturally arises: how can I have my codd migrations work in both of these environments?
+**If you are only in this position due to development and testing environments**, you probably don't need to worry.
+Our recommendation is that you install and set up the `pg_cron` runner in environments where databases are large, like Production and other similar environments, and the `external` runner in local development and testing environments.
 
-The answer is that 
+You can do that by having distinct folders per environment for your migrations (like we do in [START-USING.md] with a `dev-only` folder), and calling `codd.setup_background_worker` differently in each migration according to their environment.
+
+## Ignoring the 'cron' namespace
+
+If you install pg_cron in a database, it creates a `cron` namespace. Codd will pick up that namespace for schema equality checks, and that can be undesirable unless you have pg_cron in every environment.
+
+Until we implement [customizable schema equality checks](https://github.com/mzabani/codd/issues/167), the best way we have to ignore the `cron` schema entirely is to include every relevant namespace in the `CODD_SCHEMAS` environment variable (which means not including `cron` there). That environment variable is a space separated list of namespaces you want to check.
+
+## More complex background migrations
+
+You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.populate_column_gradually` to view how `populate_column_gradually` uses it.

@@ -9,7 +9,7 @@
 -- this function will have to update all rows and might require a bit longer, hence why we
 -- use '10 seconds' below. You can, of course, apply this with different time limits in different
 -- environments, if you prefer.
-SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '0 seconds');
+SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '1 seconds');
 
 -- You still have to rename and drop columns yourself. The 'codd.populate_column_gradually' function
 -- does only that: populate the new column.
