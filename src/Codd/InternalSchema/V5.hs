@@ -371,3 +371,32 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
   $triggers$, triggfn_name, colname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, qualif_table_name, triggfn_name);
 END;
 $func$ LANGUAGE plpgsql; |]
+
+-- The code below is for a future codd.create_index_concurrently function.
+-- -- | I just want to check this is possible; we don't need it as much as e.g. populating columns and we'll need schema ignore rules before this works nicely with codd, too
+-- CREATE OR REPLACE FUNCTION codd.create_index_concurrently(job_name text, check_completion_cron_schedule text, create_index_concurrently_if_not_exists_statement text, tablename text, indexname text, try_create_cron_schedule text) RETURNS VOID AS $func$
+-- DECLARE
+--   qualif_table_name text;
+-- BEGIN
+--   -- TODO: Raise exception that disables this function completely until we have schema ignore rules in place to support it well
+--   -- TODO: Check that no pg_cron job with the "-try-create" ending exists
+--   -- TODO: If there is a schedule for trying (as opposed to just trying once), then we should be able to handle failure well, too.
+--   -- TODO: We need to make the DDL change run only once.. things like REINDEX CONCURRENTLY don't have an idempotent form available, and we don't want those to just keep on recreating indexes repeatedly. Maybe for now we ask users to `DROP INDEX` and `CREATE INDEX` again and just document this limitation.
+--   PERFORM codd.background_job_begin(job_name, check_completion_cron_schedule,
+--     format($$
+--       SELECT CASE WHEN COUNT(*)=1 THEN 'finalized' END INTO new_codd_job_status
+--       FROM pg_catalog.pg_index
+--       JOIN pg_catalog.pg_class index_class ON indexrelid=index_class.oid
+--       JOIN pg_catalog.pg_namespace ON relnamespace=pg_namespace.oid
+--       JOIN pg_catalog.pg_class index_table ON index_table.oid=indrelid
+--       WHERE nspname=%s AND index_class.relname=%s AND index_table.relname=%s AND indisready AND indislive AND indisvalid;$$, quote_literal(current_schema), quote_literal(indexname), quote_literal(tablename))
+--     , format('Periodically checking that the %I index on table %I was (concurrently) created successfully and is ready to be used', indexname, tablename), format('Given up on creating the %I index on table %I. You may DELETE this job from codd._background_jobs at any time without side effects', indexname, tablename), NULL, format('Index %I on table %I successfully created. This job may be DELETEd from codd._background_jobs', indexname, tablename), 'select-into-status-var');
+
+--   -- Add another cron job that does not run in a transaction to create the index
+--   UPDATE codd._background_jobs
+--     SET pg_cron_jobs = pg_cron_jobs || ARRAY[job_name || '-try-create']
+--     WHERE jobname=job_name;
+--   PERFORM cron.schedule(job_name || '-try-create', try_create_cron_schedule, create_index_concurrently_if_not_exists_statement);
+-- END;
+
+-- $func$ LANGUAGE plpgsql;
