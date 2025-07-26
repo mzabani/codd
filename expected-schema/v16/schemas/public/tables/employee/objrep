@@ -6,7 +6,8 @@
         "experience",
         "surname",
         "experience2",
-        "employee_id"
+        "employee_id",
+        "слон"
     ],
     "compositetype": null,
     "forcerowsecurity": false,
