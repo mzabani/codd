@@ -54,13 +54,19 @@ spec = do
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
         it ("Setup works - " ++ show pgCronSetup) $ \testDbInfo -> do
-          void @IO $
+          void @IO $ do
             runCoddLogger $ do
               applyMigrationsNoCheck
                 testDbInfo
                 (Just [if pgCronSetup then setupWithPgCron else setupWithExternalJobRunner])
                 testConnTimeout
                 (const $ pure ())
+            -- Switching to a different background worker is possible as long as there aren't active jobs
+            withConnection (migsConnString testDbInfo) testConnTimeout $ \conn -> do
+              _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.setup_background_worker('external')" ()
+              _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.setup_background_worker('pg_cron')" ()
+              _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.setup_background_worker('external')" ()
+              pure ()
 
       aroundDatabaseWithMigsAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
         it ("Isolation level used correctly - " ++ show (txnIsolationLvl, pgCronSetup)) $ \testDbInfo -> do

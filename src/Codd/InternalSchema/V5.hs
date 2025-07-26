@@ -29,6 +29,11 @@ BEGIN
     RAISE EXCEPTION 'Setting up codd background migrations with pg_cron requires the pg_cron extension to be installed first. Please check https://github.com/citusdata/pg_cron for installation instructions';
   END IF;
 
+  -- For now we don't let users switch the job runner if there are any active jobs
+  IF EXISTS (SELECT FROM codd._background_worker_type) AND (SELECT _background_worker_type.worker_type FROM codd._background_worker_type) <> worker_type AND EXISTS (SELECT FROM codd._background_jobs WHERE status NOT IN ('aborted', 'finalized')) THEN
+    RAISE EXCEPTION 'You cannot change your background worker with codd.setup_background_worker without finalizing or aborting all existing jobs. Check the codd.abort_background_job and codd.synchronously_finalize_background_job functions for how to do that and query the codd.jobs view to see active jobs';
+  END IF;
+
   INSERT INTO codd._background_worker_type (id, worker_type) VALUES (1, worker_type)
   ON CONFLICT (id) DO UPDATE SET worker_type=EXCLUDED.worker_type;
 END;
