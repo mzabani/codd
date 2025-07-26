@@ -25,7 +25,6 @@ BEGIN
     RAISE EXCEPTION 'Background workers supported by codd are either "pg_cron", which requires the extension, or "external", which requires you to set up an external job runner yourself to periodically run scheduled jobs.';
   END IF;
   IF worker_type = 'pg_cron' AND NOT EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname='pg_cron') THEN
-    -- TODO: Are there settings that need to be enabled for pg_cron to launch jobs?
     RAISE EXCEPTION 'Setting up codd background migrations with pg_cron requires the pg_cron extension to be installed first. Please check https://github.com/citusdata/pg_cron for installation instructions';
   END IF;
 
@@ -300,7 +299,6 @@ BEGIN
   jobstatus = jobrow.status;
   WHILE jobstatus NOT IN ('aborted', 'run-complete-awaiting-finalization', 'finalized') LOOP
     EXECUTE format('SELECT %s()', jobrow.job_function);
-    -- TODO: Make function above return new status to avoid this extra query?
     SELECT status INTO jobstatus FROM codd._background_jobs WHERE jobname=job_name;
     IF clock_timestamp() >= end_time AND jobstatus NOT IN ('run-complete-awaiting-finalization', 'finalized') THEN
       RAISE EXCEPTION 'Codd was unable to synchronously finalize the background job % in the supplied time limit. The job has not been aborted.', job_name;
@@ -353,7 +351,6 @@ Did you forget to supply some arguments to codd.populate_column_gradually? Here 
   triggfn_name := format('%I.%I', current_schema, '_codd_bgjob_' || job_name);
   qualif_table_name := format('%I.%I', current_schema, tablename);
   
-  -- TODO: Add tests with various search_paths to check we're being diligent
   PERFORM codd.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date', tablename, colname), NULL);
   UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd._obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd._obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
   EXECUTE format($triggers$

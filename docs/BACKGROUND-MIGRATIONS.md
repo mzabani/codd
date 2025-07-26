@@ -12,7 +12,9 @@
 
 When it is not feasible to `UPDATE/INSERT/DELETE` large numbers of rows in a migration because it would cause downtime when deployed, codd provides helper functions that allow those operations to run in the background, on a schedule.
 
-With the [pg_cron](https://github.com/citusdata/pg_cron) extension installed (this is optional and you can implement your own job runner if you prefer, more on that near the end of this guide), here is an example of migrating an INTEGER column to a BIGINT one with codd:
+With the [pg_cron](https://github.com/citusdata/pg_cron) extension installed (this is optional and you can implement your own job runner if you prefer, more on that near the end of this guide).
+
+This is a recent feature of codd, so please feel free to contribute with ideas through GitHub's issue tracker!
 
 ## Learning from example: migrating an INT column to BIGINT gradually
 
@@ -46,7 +48,7 @@ $$
 When you add the migration above you should see some instructions, too, but let's run `SELECT * FROM codd.jobs` to see what happens:
 ```psql
 
-jobname          |          created_at           |  status   |                                                   description                                                   | num_jobs_succeeded | num_jobs_error |          last_run_at          |    completed_or_aborted_at    |         finalized_at          |         last_error_at         |                            last_error
+jobname                    |          created_at           |  status   |                                                   description                                                   | num_jobs_succeeded | num_jobs_error |          last_run_at          |    completed_or_aborted_at    |         finalized_at          |         last_error_at         |                            last_error
 ---------------------------+-------------------------------+-----------+-----------------------------------------------------------------------------------------------------------------+--------------------+----------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------------------------------------------
  make-employee_id-a-bigint | 2025-07-26 17:19:19.641087+00 | started   | Gradually populating values in the employee.new_employee_id column                                              |                  0 |              0 |                               |                               |                               |                               |
 ```
@@ -57,9 +59,9 @@ After a while, this is what you will see in `codd.jobs`:
 
 ```sql
 > SELECT jobname, status, description FROM codd.jobs;
-          jobname          |               status               |                                                                                                                             description
-          ---------------------------+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-           make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee now has the new_employee_id column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date
+jobname                   |               status               |                                                                                                                             description
+--------------------------+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee now has the new_employee_id column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date
 ```
 
 The status will be `run-complete-awaiting-finalization`, and the description will lay it out more clearly what that means. Supposing every environment is showing us this same status, let's follow that description and create our second migration:

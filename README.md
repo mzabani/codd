@@ -216,7 +216,7 @@ Before we finish this tutorial, some things you might want to do:
 - psql into your database and manually create a table there, without a migration. Then run `codd verify-schema`.
 - Run `dropdb codd_experiments` and then `codd up` to get a fresh database from the start.
 - Read all the knobs you can configure codd with in [CONFIGURATION.md](docs/CONFIGURATION.md).
-- Read [safety considerations](#safety-considerations).
+- Read the guides below.
 
 ## Guides
 

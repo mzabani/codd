@@ -411,7 +411,6 @@ scheduleExperienceMigration =
             \RESET ALL;\n\
             \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
             \$$\n\
-            \-- TODO: Replace PERFORM with SELECT and we get an error due to nowhere to put results! Document this limitation!\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
@@ -487,7 +486,6 @@ finalizeExperienceMigration =
     SqlMigration
       { migrationName = "0004-finalize-experience-migration.sql",
         migrationSql =
-          -- TODO: Use a jobname with special characters that require escaping!
           mkValidSql
             "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
