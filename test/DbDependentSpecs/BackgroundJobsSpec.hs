@@ -397,6 +397,7 @@ createEmployeesTable =
 -- The idea is to migrate columns of an "employee" table and a temporary "experience2" column for
 -- the new values, before it replaces the "experience" column. However, there's a lot of templating code,
 -- so we do test bizarre object names for the table, the column and the job name.
+-- This also changes the search_path of the user to make sure templated names are fully-qualified.
 scheduleExperienceMigration :: (MonadThrow m) => AddedSqlMigration m
 scheduleExperienceMigration =
   AddedSqlMigration
@@ -416,7 +417,10 @@ scheduleExperienceMigration =
             \$$\n\
             \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
-            \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
+            \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');\n\
+            \CREATE SCHEMA some_other_schema;\n\
+            \ALTER ROLE \"codd-test-user\" SET search_path = 'some_other_schema';\n\
+            \SET search_path TO 'some_other_schema';",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,

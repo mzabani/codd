@@ -3,6 +3,7 @@
 <!--toc:start-->
 - [Background migrations](#background-migrations)
   - [Learning from example: migrating an INT column to BIGINT gradually](#learning-from-example-migrating-an-int-column-to-bigint-gradually)
+  - [Installing pg_cron](#installing-pgcron)
   - [Valid cron/periodicity expressions for background jobs](#valid-cronperiodicity-expressions-for-background-jobs)
   - [Aborting background migrations](#aborting-background-migrations)
   - [What if I can't use pg_cron?](#what-if-i-cant-use-pgcron)
@@ -18,7 +19,7 @@ This is a recent feature of codd, so please feel free to contribute with ideas t
 
 ## Learning from example: migrating an INT column to BIGINT gradually
 
-Here's what your first migration could look like:
+Here's what your first migration could look like (read [Installing pg_cron](#installing-pgcron) first if you wish to try this!):
 ```sql
 -- You must call 'codd.setup_background_worker' only once for your entire database,
 -- and you must choose between 'pg_cron' and 'external'. 'pg_cron' requires the
@@ -85,6 +86,14 @@ ALTER TABLE employee ALTER COLUMN new_employee_id SET DEFAULT nextval('employee_
 ALTER SEQUENCE employee_employee_id_seq OWNED BY employee.new_employee_id;
 ALTER TABLE employee DROP COLUMN employee_id;
 ALTER TABLE employee RENAME COLUMN new_employee_id TO employee_id;
+```
+
+## Installing pg_cron
+
+After/if you install the pg_cron extension (this can be done as per your cloud provider's docs or other installation methods depending on how you manage your postgres instances), you also must grant usage to the user that runs your codd migrations, the one in your `CODD_CONNECTION` environment variable, e.g.:
+
+```sql
+GRANT USAGE ON SCHEMA cron TO your_user_here;
 ```
 
 ## Valid cron/periodicity expressions for background jobs
