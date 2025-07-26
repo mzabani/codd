@@ -89,13 +89,14 @@ import UnliftIO.Exception
   )
 import UnliftIO.Resource (MonadResource, runResourceT)
 
+-- | Returns the file path of the timestamped and added migration, already in the SQL migrations folder.
 addMigration ::
   forall m.
   (MonadUnliftIO m, CoddLogger m, MonadThrow m, Codd.Parsing.EnvVars m, NotInTxn m) =>
   CoddSettings ->
   Maybe FilePath ->
   SqlFilePath ->
-  m ()
+  m FilePath
 addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnInfo, sqlMigrations, txnIsolationLvl} destFolder sqlFp@(SqlFilePath fp) =
   do
     finalDir <- case (destFolder, sqlMigrations) of
@@ -137,11 +138,9 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
       liftIO $ exitWith $ ExitFailure 97
 
     isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
-    liftIO $ putStrLn "1"
     runResourceT $ do
       migStream <- delayedOpenStreamFile fp
       parsedSqlMigE <- Codd.Parsing.parseSqlMigration (takeFileName fp) migStream
-      liftIO $ putStrLn "2"
       case parsedSqlMigE of
         Left err -> do
           logError $ "Could not add migration: " <> Text.pack err
@@ -168,16 +167,13 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
               -- as a poor replacement of that.
               -- We copy the migration to a temporary directory so interrupting `codd add` doesn't leave
               -- a non-applied migration in a folder in CODD_MIGRATION_DIRS
-              liftIO $ putStrLn "3"
               closeFileStream migStream
               tempDir <- getEmptyTempDir
               (tempDirMigFile, _) <- getTimestampedAbsoluteDestMigrationPath sqlFp tempDir
               copyFile fp tempDirMigFile
-              liftIO $ putStrLn "4"
 
               let connTimeout = secondsToDiffTime 10
               ePendingMigsBeforeAdd <- try @_ @SomeException $ runWithoutLogging $ collectPendingMigrations defaultConnInfo (Left sqlMigrations) txnIsolationLvl connTimeout
-              liftIO $ putStrLn "5"
               case List.null . pendingMigs <$> ePendingMigsBeforeAdd of
                 Right False -> do
                   logInfoAlways "Applying pending migrations before the one you are adding.."
@@ -186,10 +182,7 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                     Nothing
                     connTimeout
                     (const $ pure ())
-                Left ex -> liftIO $ print ex -- TODO: Remove debug printing from here!
-                _ -> pure ()
-
-              liftIO $ putStrLn "6"
+                _ -> pure () -- Here we assume no connectivity, but we want to proceed to print a better error message
               addE <- try $ do
                 -- Any codd.* functions invoked by the added migration will call NOTIFY and
                 -- we'll know if the codd schema is then required.
@@ -246,9 +239,10 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                       "Could not remove "
                         <> Text.pack (show sqlFp)
                         <> ", but it has been added successfully so you can remove it yourself if you wish."
+                pure finalMigFile
               void $ try @_ @SomeException $ removeDirectory tempDir -- Disk cleanup
               case addE of
-                Right _ -> pure ()
+                Right finalMigFile -> pure finalMigFile
                 Left (e :: SomeException) -> do
                   logError $ "Could not add migration: " <> Text.pack (show e)
 
