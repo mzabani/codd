@@ -7,7 +7,7 @@
     "identity": "",
     "inhcount": 0,
     "local": true,
-    "notnull": true,
+    "notnull": false,
     "privileges": null,
-    "type": "integer"
+    "type": "bigint"
 }

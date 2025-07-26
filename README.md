@@ -9,7 +9,8 @@
     - [2. Nix](#2-nix)
     - [3. Docker](#3-docker)
   - [Get codd up and running in 15 minutes](#get-codd-up-and-running-in-15-minutes)
-  - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
+  - [Guides](#guides)
+    - [Start using codd with an existing database](#start-using-codd-with-an-existing-database)
   - [Safety considerations](#safety-considerations)
   - [Frequently Asked Questions](#frequently-asked-questions)
     - [Why does taking and restoring a database dump affect my expected codd schema?](#why-does-taking-and-restoring-a-database-dump-affect-my-expected-codd-schema)
@@ -197,10 +198,16 @@ Before we finish this tutorial, some things you might want to do:
 - Read all the knobs you can configure codd with in [CONFIGURATION.md](docs/CONFIGURATION.md).
 - Read [safety considerations](#safety-considerations).
 
-## Start using codd with an existing database
+## Guides
+
+### Start using codd with an existing database
 
 If you already have a database and want to start using codd without losing it, read [START-USING.md](docs/START-USING.md).
 If you're running codd in multiple environments where connection strings can differ between them, [environment variable templating](docs/SQL-MIGRATIONS.md#templating-environment-variables-into-migrations) might be of assistance.
+
+### Add background migrations to update large datasets without downtime
+
+Codd provides helper functions, and with the help of the [pg_cron](https://github.com/citusdata/pg_cron) extension (or a background job/SQL runner of your own implementation) it can be much simpler to apply such migration. [Read the guide](docs/BACKGROUND-MIGRATIONS.md).
 
 ## Safety considerations
 

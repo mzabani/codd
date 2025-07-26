@@ -10,7 +10,7 @@
     "max": 2147483647,
     "min": 1,
     "owner": "codd_admin",
-    "owner_col_order": 1,
+    "owner_col_order": 5,
     "owner_table": "employee",
     "partition": false,
     "persistence": "p",

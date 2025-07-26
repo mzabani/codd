@@ -2,11 +2,11 @@
     "accessmethod": "heap",
     "amoptions": null,
     "columns_in_order": [
-        "employee_id",
         "employee_name",
         "experience",
         "surname",
-        "experience2"
+        "experience2",
+        "employee_id"
     ],
     "compositetype": null,
     "forcerowsecurity": false,
