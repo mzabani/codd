@@ -42,10 +42,14 @@ import Data.Time.Clock
     addUTCTime,
     secondsToDiffTime,
   )
+import Data.UUID (UUID)
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUIDv4
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import qualified Database.PostgreSQL.Simple.Types as DB
 import qualified Streaming.Prelude as Streaming
+import System.FilePath ((</>))
 import Test.Hspec
 import UnliftIO
   ( MonadIO (..),
@@ -55,6 +59,7 @@ import UnliftIO
     liftIO,
   )
 import UnliftIO.Concurrent (threadDelay)
+import UnliftIO.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import UnliftIO.Environment (getEnv)
 
 testConnInfo :: (MonadIO m) => m ConnectionString
@@ -348,3 +353,11 @@ shouldBeStrictlySortedOn xs f =
 parseSqlMigrationIO ::
   String -> PureStream IO -> IO (Either String (SqlMigration IO))
 parseSqlMigrationIO = parseSqlMigration
+
+getEmptyTempDir :: (MonadIO m) => m FilePath
+getEmptyTempDir = do
+  tmp <- getTemporaryDirectory
+  complement :: UUID <- liftIO UUIDv4.nextRandom
+  let emptyDir = tmp </> UUID.toString complement
+  createDirectoryIfMissing True emptyDir
+  pure emptyDir

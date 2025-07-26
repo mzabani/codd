@@ -982,8 +982,8 @@ createCoddSchema targetVersion txnIsolationLvl conn =
             -- `succ` is a partial function, but it should never throw in this context
             go (succ currentSchemaVersion)
 
--- | Collects pending migrations and separates them according to being bootstrap
---   or not.
+-- | Collects pending migrations and assumes not being able to connect means
+-- no migrations have ever been applied.
 collectPendingMigrations ::
   forall m.
   ( MonadUnliftIO m,

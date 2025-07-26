@@ -72,7 +72,6 @@ import UnliftIO
     MonadIO,
     MonadUnliftIO,
     liftIO,
-    stderr,
     withFile,
   )
 import UnliftIO.Directory
@@ -134,20 +133,21 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
       logError $
         "Could not find directory for expected DB schema representation \""
           <> Text.pack onDiskRepsDir
-          <> "\""
+          <> "\". You should create it for codd to write schema representations to"
       liftIO $ exitWith $ ExitFailure 97
 
     isFirstMigration <- null <$> listMigrationsFromDisk sqlMigrations []
+    liftIO $ putStrLn "1"
     runResourceT $ do
       migStream <- delayedOpenStreamFile fp
       parsedSqlMigE <- Codd.Parsing.parseSqlMigration (takeFileName fp) migStream
+      liftIO $ putStrLn "2"
       case parsedSqlMigE of
         Left err -> do
           logError $ "Could not add migration: " <> Text.pack err
-          liftIO $
-            when
-              isFirstMigration
-              (printSuggestedFirstMigration defaultConnInfo)
+          when
+            isFirstMigration
+            (printSuggestedFirstMigration defaultConnInfo)
           liftIO $ exitWith $ ExitFailure 96
         Right sqlMig -> do
           let newMigrationConnInfo = fromMaybe defaultConnInfo $ migrationCustomConnInfo sqlMig
@@ -159,31 +159,37 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
           case migError of
             Just err -> do
               logError $ "Could not add migration: " <> err
-              liftIO $
-                when
-                  isFirstMigration
-                  (printSuggestedFirstMigration defaultConnInfo)
+              when
+                isFirstMigration
+                (printSuggestedFirstMigration defaultConnInfo)
               liftIO $ exitWith $ ExitFailure 95
             Nothing -> do
               -- File stream derived bindings should be consumed linearly. We shadow previous bindings
               -- as a poor replacement of that.
               -- We copy the migration to a temporary directory so interrupting `codd add` doesn't leave
               -- a non-applied migration in a folder in CODD_MIGRATION_DIRS
+              liftIO $ putStrLn "3"
               closeFileStream migStream
               tempDir <- getEmptyTempDir
               (tempDirMigFile, _) <- getTimestampedAbsoluteDestMigrationPath sqlFp tempDir
               copyFile fp tempDirMigFile
+              liftIO $ putStrLn "4"
 
               let connTimeout = secondsToDiffTime 10
-              pendingMigsBeforeAdd <- runWithoutLogging $ collectPendingMigrations defaultConnInfo (Left sqlMigrations) txnIsolationLvl connTimeout
-              unless (List.null $ pendingMigs pendingMigsBeforeAdd) $ do
-                logInfoAlways "Applying pending migrations before the one you are adding.."
-                Codd.applyMigrationsNoCheck
-                  dbInfo
-                  Nothing
-                  connTimeout
-                  (const $ pure ())
+              ePendingMigsBeforeAdd <- try @_ @SomeException $ runWithoutLogging $ collectPendingMigrations defaultConnInfo (Left sqlMigrations) txnIsolationLvl connTimeout
+              liftIO $ putStrLn "5"
+              case List.null . pendingMigs <$> ePendingMigsBeforeAdd of
+                Right False -> do
+                  logInfoAlways "Applying pending migrations before the one you are adding.."
+                  Codd.applyMigrationsNoCheck
+                    dbInfo
+                    Nothing
+                    connTimeout
+                    (const $ pure ())
+                Left ex -> liftIO $ print ex -- TODO: Remove debug printing from here!
+                _ -> pure ()
 
+              liftIO $ putStrLn "6"
               addE <- try $ do
                 -- Any codd.* functions invoked by the added migration will call NOTIFY and
                 -- we'll know if the codd schema is then required.
@@ -243,14 +249,14 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
               void $ try @_ @SomeException $ removeDirectory tempDir -- Disk cleanup
               case addE of
                 Right _ -> pure ()
-                Left (e :: SomeException) -> liftIO $ do
-                  Text.hPutStrLn stderr $ Text.pack $ show e
+                Left (e :: SomeException) -> do
+                  logError $ "Could not add migration: " <> Text.pack (show e)
 
                   when
                     isFirstMigration
-                    (printSuggestedFirstMigration defaultConnInfo)
+                    (printSuggestedFirstMigration defaultConnInfo >> liftIO (exitWith (ExitFailure 113)))
 
-                  exitWith $ ExitFailure 1
+                  liftIO $ exitWith $ ExitFailure 1
 
 -- | Writes to the provided file path prepending the special "-- codd: requires-codd-schema"
 -- top-level comment if necessary, copying the remainder of the migration next.
@@ -263,24 +269,25 @@ writeFinalMigrationFile originalMigFile finalMigFile addedMigRequiresCoddSchema 
   Streaming.mapsM_ (\(chunk :> x) -> liftIO $ Text.hPutStr handle chunk >> pure x) fileStream
   closeFileStream migStream
 
-printSuggestedFirstMigration :: ConnectionString -> IO ()
-printSuggestedFirstMigration ConnectionString {database, user} =
-  putStrLn $
-    "\nTip: It looks like this is your first migration. Make sure either the target database of your default connection string already exists, or add a migration that creates your database with a custom connection string. Example:\n\
-    \\n\
+printSuggestedFirstMigration :: (CoddLogger m, Monad m) => ConnectionString -> m ()
+printSuggestedFirstMigration ConnectionString {database, user} = do
+  logInfoAlways "---------------------------------------------"
+  logInfoAlways $
+    "\n<GREEN>Tip:</GREEN> It looks like this is your first migration. Make sure either the target database of your default connection string already exists, or add a migration that creates your database with a custom connection string. Example:\n\
+    \\n<MAGENTA>\
     \    -- codd: no-txn\n\
     \    -- codd-connection: dbname=postgres user=postgres host=localhost\n\
     \    -- Make sure the connection string above works, or change it to one that works.\n\
     \    CREATE DATABASE \""
-      ++ database
-      ++ "\" OWNER \""
-      ++ user
-        <> "\";\n\
-           \    -- Also make sure the DB above doesn't exist yet, and that the DB owner does.\n\
-           \\n\
-           \- The migration above looks scary, but it's one of the rare few that will require anything other than plain SQL.\n\
-           \- If this is what you need, feel free to copy the migration above into a .sql file, modify it accordingly and add that as your first migration.\n\
-           \- If the above doesn't work, you want a more complete example or want to know more, make sure to read https://github.com/mzabani/codd/blob/master/docs/BOOTSTRAPPING.md for more on bootstrapping your database with codd.\n"
+      <> Text.pack database
+      <> "\" OWNER \""
+      <> Text.pack user
+      <> "\";\n\
+         \    -- Also make sure the DB above doesn't exist yet, and that the DB owner does.\n\
+         \</MAGENTA>\n\
+         \- The migration above looks scary, but it's one of the rare few that will require anything other than plain SQL.\n\
+         \- If this is what you need, feel free to copy the migration above into a .sql file, modify it accordingly and add that as your first migration.\n\
+         \- If the above doesn't work, you want a more complete example or want to know more, make sure to read https://github.com/mzabani/codd/blob/master/docs/BOOTSTRAPPING.md for more on bootstrapping your database with codd.\n"
 
 -- | Returns the absolute path a .sql file will be added to, including its timestamp,
 -- e.g. /home/someuser/someproject/sql-migrations/2025-05-10-18-11-43-some-migration.sql
