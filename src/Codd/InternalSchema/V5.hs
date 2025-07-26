@@ -40,7 +40,7 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql;
-CREATE TYPE codd.obj_to_drop AS (
+CREATE TYPE codd._obj_to_drop AS (
     kind text,
     objname text,
     on_ text
@@ -64,7 +64,7 @@ CREATE TABLE codd._background_jobs (
   description_awaiting_finalization TEXT,
   description_finalized TEXT NOT NULL DEFAULT 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects',
   job_function TEXT NOT NULL,
-  objects_to_drop_in_order codd.obj_to_drop[] NOT NULL,
+  objects_to_drop_in_order codd._obj_to_drop[] NOT NULL,
   pg_cron_jobs TEXT[] NOT NULL
   , UNIQUE (jobname)
   , CHECK (txn_isolation_level IN ('db-default', 'read-uncommitted', 'read-committed', 'repeatable-read', 'serializable'))
@@ -89,7 +89,7 @@ CREATE VIEW codd.jobs AS
           , last_error
         FROM codd._background_jobs;
 
-CREATE FUNCTION codd.react_to_job_status_change() RETURNS TRIGGER AS $$
+CREATE FUNCTION codd._react_to_job_status_change() RETURNS TRIGGER AS $$
 DECLARE
   pg_cron_job_name text;
 BEGIN
@@ -150,12 +150,12 @@ CREATE TRIGGER react_to_status_change
     ON codd._background_jobs
     FOR EACH ROW
     WHEN (OLD.status <> NEW.status)
-    EXECUTE FUNCTION codd.react_to_job_status_change();
+    EXECUTE FUNCTION codd._react_to_job_status_change();
 CREATE TRIGGER react_to_job_deletion
     BEFORE DELETE
     ON codd._background_jobs
     FOR EACH ROW
-    EXECUTE FUNCTION codd.react_to_job_status_change();
+    EXECUTE FUNCTION codd._react_to_job_status_change();
 
 CREATE FUNCTION codd._assert_job_can_be_created(job_name text, cron_schedule text, plpgsql_to_run_periodically text) RETURNS VOID AS $func$
 BEGIN
@@ -196,7 +196,7 @@ BEGIN
   PERFORM codd._assert_worker_is_setup();
   PERFORM codd._assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);
 
-  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd.obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd.obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects')) RETURNING * INTO created_job;
+  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd._obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd._obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects')) RETURNING * INTO created_job;
 
   -- Why two functions instead of just one? Because each function's effects are atomic, as if
   -- there was a savepoint around each function call, and that enables us to update codd._background_jobs
@@ -272,7 +272,7 @@ DECLARE
   end_time timestamptz := clock_timestamp() + timeout;
   jobrow codd._background_jobs;
   jobstatus text;
-  obj_to_drop codd.obj_to_drop;
+  obj_to_drop codd._obj_to_drop;
 BEGIN
   NOTIFY "codd.___require_codd_schema_channel";
   PERFORM codd._assert_worker_is_setup();
@@ -350,7 +350,7 @@ Did you forget to supply some arguments to populate_column_gradually? Here is an
   
   -- TODO: Add tests with various search_paths to check we're being diligent
   PERFORM codd.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and pg_cron jobs are no longer running. You can now call synchronously_finalize_background_job to remove the triggers and accessory functions created to keep it up-to-date', tablename, colname), NULL);
-  UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd.obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd.obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
+  UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd._obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd._obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;
   EXECUTE format($triggers$
   CREATE FUNCTION %s() RETURNS TRIGGER AS $$
   BEGIN
