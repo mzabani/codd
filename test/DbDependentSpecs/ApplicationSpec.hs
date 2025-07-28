@@ -48,7 +48,7 @@ import Data.Time
 import qualified Database.PostgreSQL.Simple as DB
 import DbDependentSpecs.RetrySpec (runMVarLogger)
 import DbUtils
-  ( aroundFreshDatabase,
+  ( aroundCoddTestDb,
     cleanupAfterTest,
     createTestUserMig,
     createTestUserMigPol,
@@ -433,7 +433,7 @@ spec = do
       describe "codd_schema version migrations" $
         forM_ [CoddSchemaDoesNotExist .. maxBound] $
           \vIntermediary ->
-            aroundFreshDatabase
+            aroundCoddTestDb
               $ it
                 ( "codd_schema version migration succeeds from "
                     ++ show CoddSchemaDoesNotExist
@@ -448,7 +448,7 @@ spec = do
                     (migsConnString emptyTestDbInfo)
                     testConnTimeout
                   $ \conn -> do
-                    -- Downgrade the schema created by `aroundFreshDatabase`. We want migrations applied with different versions to exist.
+                    -- Downgrade the schema created by `aroundCoddTestDb`. We want migrations applied with different versions to exist.
                     downgradeCoddSchema conn vIntermediary
                     detectCoddSchema conn
                       `shouldReturn` vIntermediary
@@ -475,7 +475,7 @@ spec = do
                         (const $ pure ())
 
       describe "With the default database available" $
-        aroundFreshDatabase $
+        aroundCoddTestDb $
           do
             it
               "SQL containing characters typical to placeholders does not throw"
@@ -886,7 +886,7 @@ spec = do
                     totalRows `shouldBe` 10
 
       describe "Custom connection-string migrations" $ do
-        aroundFreshDatabase $
+        aroundCoddTestDb $
           forM_ [True, False] $
             \addDefaultConnMig ->
               it
@@ -1010,7 +1010,7 @@ spec = do
                                                alwaysFailingMig
                                            )
                                        ]
-        aroundFreshDatabase $
+        aroundCoddTestDb $
           forM_ [True, False] $
             \addDefaultConnMig ->
               it

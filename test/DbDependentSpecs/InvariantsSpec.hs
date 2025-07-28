@@ -17,7 +17,7 @@ import Data.Time.Clock (UTCTime (..))
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import DbUtils
-  ( aroundDatabaseWithMigs,
+  ( aroundCoddTestDbAnd,
     getIncreasingTimestamp,
     mkValidSql,
     shouldBeStrictlySortedOn,
@@ -63,7 +63,7 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Invariants tests" $ do
-      aroundDatabaseWithMigs [timestampsMig]
+      aroundCoddTestDbAnd [timestampsMig]
         $ it
           "Our Haskell's timestamping functions and the Database's timestamps behave the same wrt ordering and round-trips"
         $

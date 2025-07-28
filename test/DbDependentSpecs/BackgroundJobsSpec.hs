@@ -16,7 +16,7 @@ import qualified Data.List as List
 import Data.String (fromString)
 import Data.Time (UTCTime)
 import qualified Database.PostgreSQL.Simple as DB
-import DbUtils (aroundDatabaseWithMigs, aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundCoddTestDbAnd, aroundCoddTestDbAndAndPgCron, aroundCoddTestDb, aroundNoDatabases, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import GHC.Generics (Generic)
 import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, shouldSatisfy)
@@ -29,7 +29,7 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Background jobs" $ do
-      aroundTestDbInfo $ do
+      aroundNoDatabases $ do
         it "Nice error message when setup has not been called" $ \emptyTestDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -41,7 +41,7 @@ spec = do
                 (const $ pure ())
                 `shouldThrow` (\(e :: SqlStatementException) -> "You must call the codd.setup_background_worker function before scheduling jobs" `isInfixOf` show e)
 
-      aroundFreshDatabase $ do
+      aroundCoddTestDb $ do
         it "Nice error message when pg_cron is not installed during setup" $ \emptyTestDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -52,7 +52,7 @@ spec = do
                 (const $ pure ())
                 `shouldThrow` (\(e :: SqlStatementException) -> "Setting up codd background migrations with pg_cron requires the pg_cron extension to be installed" `isInfixOf` show e)
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
+      aroundCoddTestDbAndAndPgCron [] $ forM_ [True, False] $ \pgCronSetup ->
         it ("Setup works - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $ do
             runCoddLogger $ do
@@ -68,7 +68,7 @@ spec = do
               _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.setup_background_worker('external')" ()
               pure ()
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
+      aroundCoddTestDbAndAndPgCron [] $ forM_ [(i, pgCronSetup) | i <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable], pgCronSetup <- [False, True]] $ \(txnIsolationLvl, pgCronSetup) ->
         it ("Isolation level used correctly - " ++ show (txnIsolationLvl, pgCronSetup)) $ \testDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -97,7 +97,7 @@ spec = do
                   -- The pg_cron command must have the right isolation level, too
                   liftIO $ scheduledCronCommand `shouldContain` expectedBegin
 
-      aroundFreshDatabase $ it "Values supplied explicitly by users for migrated columns are ignored" $ \testDbInfo -> do
+      aroundCoddTestDb $ it "Values supplied explicitly by users for migrated columns are ignored" $ \testDbInfo -> do
         void @IO $
           runCoddLogger $ do
             applyMigrationsNoCheck
@@ -113,7 +113,7 @@ spec = do
               overwrittenExperience2 `shouldBe` "senior"
               overwrittenExperience2' `shouldBe` "senior"
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
+      aroundCoddTestDbAndAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Apply and wait until background migration goes into run-complete-awaiting-finalization - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $ do
             runCoddLogger $
@@ -158,7 +158,7 @@ spec = do
               someCronJobRunning `shouldBe` False
               description finalizedCoddJob `shouldContain` "You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date"
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
+      aroundCoddTestDbAndAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -192,7 +192,7 @@ spec = do
                 DB.execute conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" () `shouldThrow` (\(ex :: SomeException) -> "It is not possible to finalize the aborted job " `List.isInfixOf` show ex)
                 DB.execute conn "DELETE FROM codd._background_jobs WHERE jobname='change- expèRiénce$'" () `shouldReturn` 1
 
-      aroundDatabaseWithMigsAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
+      aroundCoddTestDbAndAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show (pgCronSetup, txnIsolationLvl)) $ \testDbInfo -> do
           void @IO $
             runCoddLogger $ do
@@ -244,7 +244,7 @@ spec = do
                 _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" ()
                 pure ()
 
-      forM_ [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable] $ \txnIsolationLvl -> aroundDatabaseWithMigsAndPgCron [] $
+      forM_ [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable] $ \txnIsolationLvl -> aroundCoddTestDbAndAndPgCron [] $
         it ("Synchronous finalisation concurrent to job run does not deadlock - " ++ show txnIsolationLvl) $ \testDbInfo -> void @IO $ do
           -- If you comment out the locking statements in codd's functions, this test should deadlock
           runCoddLogger $ do

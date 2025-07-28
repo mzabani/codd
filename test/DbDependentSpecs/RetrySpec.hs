@@ -31,8 +31,8 @@ import qualified Data.Text.IO as Text
 import Data.Time (UTCTime)
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils
-  ( aroundFreshDatabase,
-    aroundTestDbInfo,
+  ( aroundCoddTestDb,
+    aroundNoDatabases,
     getIncreasingTimestamp,
     mkValidSql,
     testConnTimeout,
@@ -55,7 +55,7 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "Retry tests" $ do
-      aroundFreshDatabase
+      aroundCoddTestDb
         $ it
           "In-txn migrations with failure in COPY statement are handled nicely"
         $ \dbInfo0 -> do
@@ -106,7 +106,7 @@ spec = do
           length (filter ("COMMIT" `Text.isInfixOf`) logs)
             `shouldBe` 0
 
-      aroundFreshDatabase
+      aroundCoddTestDb
         $ it
           "In-txn migrations with failure in COMMIT are handled nicely"
         $ \dbInfo0 -> do
@@ -161,7 +161,7 @@ spec = do
           length (filter ("BEGIN" `Text.isInfixOf`) logs)
             `shouldBe` 3
 
-      aroundFreshDatabase
+      aroundCoddTestDb
         $ it
           "No-txn migration with failure in statement not in explicit transaction block retries from the right place"
         $ \dbInfo0 -> do
@@ -231,7 +231,7 @@ spec = do
             )
             `shouldBe` 3
 
-      aroundFreshDatabase
+      aroundCoddTestDb
         $ it
           "No-txn migration with failure in statement inside BEGIN..COMMIT retries from the right place"
         $ \dbInfo0 -> do
@@ -301,7 +301,7 @@ spec = do
             )
             `shouldBe` 3
 
-      aroundFreshDatabase
+      aroundCoddTestDb
         $ it
           "No-txn migration with failure in COMMIT statement retries from the right place, and so does a new `codd up`"
         $ \dbInfo0 -> do
@@ -484,7 +484,7 @@ spec = do
             )
             `shouldBe` 1
 
-      aroundTestDbInfo
+      aroundNoDatabases
         $ it
           "Bootstrapping no-txn migration still gets registered if it makes default connection string accessible before failing"
         $ \emptyTestDbInfo -> do
@@ -542,7 +542,7 @@ spec = do
               apfailedat
                 `shouldNotBe` (Nothing :: Maybe UTCTime)
 
-      describe "Side-effect-less migrations" $ aroundFreshDatabase $ do
+      describe "Side-effect-less migrations" $ aroundCoddTestDb $ do
         let testRetries inTxn emptyTestDbInfo = do
               logsmv <- newMVar []
               runMVarLogger

@@ -14,7 +14,7 @@ import Control.Monad (forM_, unless, void, when)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import DbDependentSpecs.RetrySpec (runMVarLogger)
-import DbUtils (aroundDatabaseWithMigs, aroundDatabaseWithMigsAndPgCron, aroundFreshDatabase, aroundTestDbInfo, createTestUserMig, getEmptyTempDir, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundCoddTestDbAnd, aroundCoddTestDbAndAndPgCron, aroundCoddTestDb, aroundNoDatabases, createTestUserMig, getEmptyTempDir, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import LiftedExpectations (shouldThrow)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -32,12 +32,12 @@ spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
     describe "codd add" $ do
-      aroundTestDbInfo $ do
+      aroundNoDatabases $ do
         it "No directory for expected schema representation" tellsUserToCreateExpectedSchemaDir
         it "Very first migration but connection inaccessible has nice error message" tellsUserAboutBootstrapMigrationToCreateDatabase
         it "Adding first migration with 'CREATE DATABASE' statement works" bootstrapMigrationThatCreatesDBCanBeAdded
 
-      aroundFreshDatabase $ do
+      aroundCoddTestDb $ do
         it "Background migration prints tip and adds special top-level comment" backgroundMigrationPrintsTipAndAddsSpecialToplevelComment
 
 tellsUserToCreateExpectedSchemaDir :: CoddSettings -> IO ()

@@ -55,7 +55,7 @@ import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (ConnectInfo (..))
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils
-  ( aroundFreshDatabase,
+  ( aroundCoddTestDb,
     finallyDrop,
     getIncreasingTimestamp,
     mkValidSql,
@@ -1278,7 +1278,7 @@ newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbRep)]
 spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "User search_path does not affect representations" $
         \emptyTestDbInfo -> do
           createStuffMig <-
@@ -1334,7 +1334,7 @@ spec = do
           reps2 `shouldBe` reps3
           reps3 `shouldBe` reps4
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "Strict and Lax collation representations differ" $
         \emptyTestDbInfo -> do
           -- It'd be nice to test that different libc/libicu versions make hashes
@@ -1377,7 +1377,7 @@ spec = do
                 )
           laxCollHashes `shouldNotBe` strictCollHashes
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "Strict range constructor ownership" $
         \emptyTestDbInfo -> do
           let strictRangeDbInfo =
@@ -1450,7 +1450,7 @@ spec = do
                     else []
               )
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "ignore-column-order setting" $
         \emptyTestDbInfo -> do
           createMig <-
@@ -1520,7 +1520,7 @@ spec = do
                 )
               ]
 
-    aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
+    aroundCoddTestDb $ it "Schema selection" $ \emptyTestDbInfo -> do
       let nonInternalSchemasDbInfo =
             emptyTestDbInfo
               { namespacesToCheck = AllNonInternalSchemas
@@ -1563,7 +1563,7 @@ spec = do
       pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
       pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
-    aroundFreshDatabase
+    aroundCoddTestDb
       $ it
         "Restoring a pg_dump yields the same schema as applying original migrations"
       $ \emptyDbInfo -> do
@@ -1618,7 +1618,7 @@ spec = do
 
     describe "Schema verification tests" $ do
       modifyMaxSuccess (const 3) $ -- This is a bit heavy on CI but this test is too important
-        aroundFreshDatabase $
+        aroundCoddTestDb $
           it "Accurate and reversible representation changes" $
             \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
               let emptyDbInfo =

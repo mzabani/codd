@@ -207,19 +207,24 @@ testCoddSettings = do
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
 -- This does cleanup if you create any databases or tables in the `postgres` DB, though.
-aroundTestDbInfo :: SpecWith CoddSettings -> Spec
-aroundTestDbInfo = around $ \act -> do
+aroundNoDatabases :: SpecWith CoddSettings -> Spec
+aroundNoDatabases = around $ \act -> do
   coddSettings <- testCoddSettings
   act coddSettings `finally` cleanupAfterTest
 
-aroundFreshDatabase :: SpecWith CoddSettings -> Spec
-aroundFreshDatabase = aroundDatabaseWithMigs []
+-- | Applies a migration that creates the "codd-test-db" database and the
+-- "codd-test-user" user for the test.
+aroundCoddTestDb :: SpecWith CoddSettings -> Spec
+aroundCoddTestDb = aroundCoddTestDbAnd []
 
-aroundDatabaseWithMigs ::
+-- | Applies a migration that creates the "codd-test-db" database and the
+-- "codd-test-user" user, and also applies any other migrations supplied
+-- by the caller.
+aroundCoddTestDbAnd ::
   (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
   SpecWith CoddSettings ->
   Spec
-aroundDatabaseWithMigs startingMigs = around $ \act -> do
+aroundCoddTestDbAnd startingMigs = around $ \act -> do
   coddSettings <- testCoddSettings
 
   runCoddLogger
@@ -234,11 +239,11 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     )
     `finally` cleanupAfterTest
 
-aroundDatabaseWithMigsAndPgCron ::
+aroundCoddTestDbAndAndPgCron ::
   (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
   SpecWith CoddSettings ->
   Spec
-aroundDatabaseWithMigsAndPgCron startingMigs = around $ \act -> do
+aroundCoddTestDbAndAndPgCron startingMigs = around $ \act -> do
   coddSettings <- testCoddSettings
   cinfo <- testConnInfo
   let superUserConnInfo = cinfo {user = "postgres"}

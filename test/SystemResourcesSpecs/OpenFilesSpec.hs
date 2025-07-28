@@ -25,7 +25,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import DbUtils
-  ( aroundFreshDatabase,
+  ( aroundCoddTestDb,
     testConnTimeout,
   )
 import Test.Hspec
@@ -37,7 +37,7 @@ import UnliftIO
 spec :: Spec
 spec = do
   describe "SystemResourcesSpecs" $ do
-    aroundFreshDatabase
+    aroundCoddTestDb
       $ it
         "RUNNING - At most one .sql migration file and one on-disk representation file open at a time"
       $ \emptyTestDbInfo -> do
