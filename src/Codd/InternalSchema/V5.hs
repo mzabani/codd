@@ -46,6 +46,42 @@ migrateInternalSchemaV4ToV5 conn = do
     \    objname text,\n\
     \    on_ text\n\
     \);\n\
+    \CREATE TYPE codd._qualified_column AS (\n\
+    \    _schemaname name,\n\
+    \    _tablename name,\n\
+    \    _columnname name\n\
+    \);\n\
+    \-- Takes an expression that can be 'table.col' or 'schema.table.col' and always returns\n\
+    \-- an object with the schema name, the table and the column, but only if they exist in the\n\
+    \-- search_path (when no schema is explicitly defined in the expression), or if they exist anywhere\n\
+    \-- if a schema is explicitly defined. If nothing is found, returns NULL.\n\
+    \CREATE OR REPLACE FUNCTION codd._qualify_existing_column(colexpr text) RETURNS codd._qualified_column AS $func$\n\
+    \DECLARE\n\
+    \  names name[] := parse_ident(colexpr)::name[];\n\
+    \  result codd._qualified_column;\n\
+    \BEGIN\n\
+    \IF names IS NULL OR ARRAY_LENGTH(names, 1) NOT IN (2, 3) THEN\n\
+    \  RAISE EXCEPTION 'Expression % is not a valid [schema.]table.column identifier', colexpr;\n\
+    \END IF;\n\
+    \-- Standardize name array to [schema (nullable), table, column]\n\
+    \IF ARRAY_LENGTH(names, 1) = 2 THEN\n\
+    \  names = ARRAY[NULL, names[1], names[2]];\n\
+    \END IF;\n\
+    \SELECT nspname, relname, attname INTO result\n\
+    \       FROM pg_catalog.pg_attribute\n\
+    \       JOIN pg_catalog.pg_class ON attrelid=pg_class.oid\n\
+    \       JOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid\n\
+    \       WHERE attname=names[3] AND relname=names[2] AND (names[1] IS NOT NULL OR nspname=ANY(pg_catalog.current_schemas(false)))\n\
+    \         AND (names[1] IS NULL OR nspname=names[1])\n\
+    \         AND attnum >= 1\n\
+    \         ORDER BY array_position(pg_catalog.current_schemas(false), nspname) NULLS LAST\n\
+    \         LIMIT 1;\n\
+    \IF (result)._tablename IS NULL THEN\n\
+    \  RETURN NULL;\n\
+    \END IF;\n\
+    \RETURN result;\n\
+    \END;\n\
+    \$func$ STABLE LANGUAGE plpgsql;\n\
     \CREATE TABLE codd._background_jobs (\n\
     \  jobid SERIAL PRIMARY KEY,\n\
     \  jobname TEXT NOT NULL,\n\
@@ -182,10 +218,10 @@ migrateInternalSchemaV4ToV5 conn = do
     \$$ IMMUTABLE STRICT PARALLEL SAFE LANGUAGE plpgsql;\n\
     \CREATE TYPE codd.succeeded_signal_kind AS ENUM ('when-modifies-0-rows', 'select-into-status-var');\n\
     \\n\
-    \CREATE FUNCTION codd.background_job_begin(jobname text, cron_schedule text, plpgsql_to_run_periodically text, description_started text, description_aborted text, description_awaiting_finalization text, description_finalized text, succeeded_signal codd.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$\n\
+    \CREATE FUNCTION codd.background_job_begin(jobname text, cron_schedule text, schema_for_new_objs name, plpgsql_to_run_periodically text, description_started text, description_aborted text, description_awaiting_finalization text, description_finalized text, succeeded_signal codd.succeeded_signal_kind = 'when-modifies-0-rows') RETURNS VOID AS $func$\n\
     \DECLARE\n\
-    \  temp_bg_success_func_name text := format('%I.%I', current_schema, '_codd_job_' || jobname);\n\
-    \  temp_bg_wrapper_func_name text := format('%I.%I', current_schema, '_codd_job_wrapper_' || jobname);\n\
+    \  temp_bg_success_func_name text := format('%I.%I', schema_for_new_objs, '_codd_job_' || jobname);\n\
+    \  temp_bg_wrapper_func_name text := format('%I.%I', schema_for_new_objs, '_codd_job_wrapper_' || jobname);\n\
     \  created_job codd._background_jobs;\n\
     \BEGIN\n\
     \  PERFORM codd._assert_worker_is_setup();\n\
@@ -297,39 +333,38 @@ migrateInternalSchemaV4ToV5 conn = do
     \END;\n\
     \$func$ LANGUAGE plpgsql;\n\
     \\n\
-    \CREATE FUNCTION codd.populate_column_gradually(job_name text, cron_schedule text, plpgsql_to_run_periodically text, tablename text, colname text, new_col_trigger_expr text) RETURNS VOID AS $func$\n\
+    \CREATE FUNCTION codd.populate_column_gradually(job_name text, cron_schedule text, column_to_populate text, plpgsql_to_run_periodically text, new_col_trigger_expr text) RETURNS VOID AS $func$\n\
     \DECLARE\n\
     \  trigger_name text;\n\
     \  triggfn_name text;\n\
+    \  qualif_col codd._qualified_column;\n\
     \  qualif_table_name text;\n\
     \BEGIN\n\
     \  PERFORM codd._assert_worker_is_setup();\n\
-    \  IF tablename IS NULL OR colname IS NULL OR new_col_trigger_expr IS NULL THEN\n\
+    \  IF column_to_populate IS NULL OR new_col_trigger_expr IS NULL THEN\n\
     \    RAISE EXCEPTION $err$\n\
     \Did you forget to supply some arguments to codd.populate_column_gradually? Here is an usage example that updates one row every second:\n\
     \\n\
     \      ALTER TABLE animals ADD COLUMN new_number INT;\n\
-    \      SELECT codd.populate_column_gradually('new-column-with-old-column-plus1', '1 seconds',\n\
+    \      SELECT codd.populate_column_gradually('new-column-with-old-column-plus1', '1 seconds', 'animals.new_number', \n\
     \        $$\n\
     \        UPDATE animals SET new_number=old_number+1 WHERE animal_id=(SELECT animal_id FROM animals WHERE new_number IS NULL LIMIT 1);\n\
     \        $$\n\
-    \      , 'animals', 'new_number', 'NEW.old_number+1'\n\
+    \      , 'NEW.old_number+1'\n\
     \      );\n\
     \    $err$;\n\
     \  END IF;\n\
-    \  IF NOT EXISTS (SELECT FROM pg_catalog.pg_attribute\n\
-    \                        JOIN pg_catalog.pg_class ON attrelid=pg_class.oid\n\
-    \                        JOIN pg_catalog.pg_namespace ON pg_class.relnamespace=pg_namespace.oid\n\
-    \                        WHERE attname=colname AND relname=tablename AND nspname=current_schema) THEN\n\
-    \      RAISE EXCEPTION 'Column % of relation % does not exist in your preferred schema. Please create the column yourself before calling populate_column_gradually, and possibly check your search_paths setting', colname, tablename; \n\
+    \  qualif_col = codd._qualify_existing_column(column_to_populate);\n\
+    \  IF qualif_col IS NULL THEN\n\
+    \      RAISE EXCEPTION 'Column % could not be found. Please create the column yourself before calling populate_column_gradually, and possibly check your search_path setting', column_to_populate; \n\
     \  END IF;\n\
     \  PERFORM codd._assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);\n\
     \\n\
     \  trigger_name := format('%I', '_codd_bgjob_trig' || job_name);\n\
-    \  triggfn_name := format('%I.%I', current_schema, '_codd_bgjob_' || job_name);\n\
-    \  qualif_table_name := format('%I.%I', current_schema, tablename);\n\
+    \  triggfn_name := format('%I.%I', (qualif_col)._schemaname, '_codd_bgjob_' || job_name);\n\
+    \  qualif_table_name := format('%I.%I', (qualif_col)._schemaname, (qualif_col)._tablename);\n\
     \  \n\
-    \  PERFORM codd.background_job_begin(job_name, cron_schedule, plpgsql_to_run_periodically, format('Gradually populating values in the %I.%I column', tablename, colname), format('Given up populating values in the %I.%I column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', tablename, colname), format('Every row in table %I now has the %I column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date', tablename, colname), NULL);\n\
+    \  PERFORM codd.background_job_begin(job_name, cron_schedule, (qualif_col)._schemaname, plpgsql_to_run_periodically, format('Gradually populating values in the %s column', column_to_populate), format('Given up populating values in the %s column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', column_to_populate), format('Every row in table %I now has the %I column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date', (qualif_col)._tablename, (qualif_col)._columnname), NULL);\n\
     \  UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd._obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd._obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;\n\
     \  EXECUTE format($triggers$\n\
     \  CREATE FUNCTION %s() RETURNS TRIGGER AS $$\n\
@@ -343,7 +378,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \      ON %s\n\
     \      FOR EACH ROW\n\
     \      EXECUTE FUNCTION %s();\n\
-    \  $triggers$, triggfn_name, colname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, qualif_table_name, triggfn_name);\n\
+    \  $triggers$, triggfn_name, (qualif_col)._columnname, codd._append_semi_colon(new_col_trigger_expr), trigger_name, qualif_table_name, triggfn_name);\n\
     \END;\n\
     \$func$ LANGUAGE plpgsql;"
 

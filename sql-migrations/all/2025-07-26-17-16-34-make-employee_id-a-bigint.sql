@@ -14,10 +14,10 @@ SELECT codd.setup_background_worker('pg_cron');
 -- more rows to update, and will will be able to follow the progress through the
 -- 'codd.jobs' view.
 ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
-SELECT codd.populate_column_gradually('make-employee_id-a-bigint', '10 seconds',
+SELECT codd.populate_column_gradually('make-employee_id-a-bigint', '10 seconds', 'employee.new_employee_id',
 $$
 UPDATE employee SET new_employee_id=employee_id::bigint
 WHERE employee_id IN (SELECT employee_id FROM employee WHERE new_employee_id IS NULL LIMIT 1000);
 $$
-, 'employee', 'new_employee_id', 'NEW.employee_id::bigint'
+, 'NEW.employee_id::bigint'
 );

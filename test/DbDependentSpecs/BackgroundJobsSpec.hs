@@ -367,7 +367,7 @@ someBgMigration =
           mkValidSql
             "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'whatever', 'employee', 'somecolumn', 'whatever');",
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'employee.new_experience', 'something', 'whatever');",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
@@ -408,15 +408,16 @@ scheduleExperienceMigration =
             "CREATE TYPE experience2 AS ENUM ('intern', 'junior', 'senior');\n\
             \ALTER TABLE employee RENAME TO \"empl  oyee\";\n\
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
-            \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
-            \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
+            \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level. Different search_path checks that a fully qualified column still works.\n\
+            \RESET ALL; SET search_path TO 'no, valid, schema';\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'public.\"empl  oyee\".\"expE Rience2\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
-            \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
+            \RESET search_path;\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');\n\
             \CREATE SCHEMA some_other_schema;\n\
             \ALTER ROLE \"codd-test-user\" SET search_path = 'some_other_schema';\n\
@@ -440,7 +441,7 @@ scheduleExperienceMigrationSlowLocking =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '2 seconds',\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '2 seconds','\"empl  oyee\".\"expE Rience2\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
@@ -449,7 +450,7 @@ scheduleExperienceMigrationSlowLocking =
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
-            \, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
@@ -471,10 +472,10 @@ scheduleQuickerMigration =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds',\n\
+            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', '\"empl  oyee\".\"expE Rience2\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
-            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2);$$, 'empl  oyee', 'expE Rience2', $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2);$$, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
