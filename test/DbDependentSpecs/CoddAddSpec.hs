@@ -35,7 +35,10 @@ spec = do
       aroundTestDbInfo $ do
         it "No directory for expected schema representation" tellsUserToCreateExpectedSchemaDir
         it "Very first migration but connection inaccessible has nice error message" tellsUserAboutBootstrapMigrationToCreateDatabase
-      aroundFreshDatabase $ it "Background migration prints tip and adds special top-level comment" backgroundMigrationPrintsTipAndAddsSpecialToplevelComment
+        it "Adding first migration with 'CREATE DATABASE' statement works" bootstrapMigrationThatCreatesDBCanBeAdded
+
+      aroundFreshDatabase $ do
+        it "Background migration prints tip and adds special top-level comment" backgroundMigrationPrintsTipAndAddsSpecialToplevelComment
 
 tellsUserToCreateExpectedSchemaDir :: CoddSettings -> IO ()
 tellsUserToCreateExpectedSchemaDir dbInfo = do
@@ -63,6 +66,17 @@ tellsUserAboutBootstrapMigrationToCreateDatabase dbInfo = do
           dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left expectedSchemaDir}
           Nothing
           (SqlFilePath "test/migrations/codd-add-tests/very-first-migration-but-connection-not-accessible.sql")
+
+bootstrapMigrationThatCreatesDBCanBeAdded :: CoddSettings -> IO ()
+bootstrapMigrationThatCreatesDBCanBeAdded dbInfo = do
+  emptyMigsFolder <- getEmptyTempDir
+  expectedSchemaDir <- getEmptyTempDir
+  runCoddLogger $
+    void $
+      addMigration
+        dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left expectedSchemaDir}
+        Nothing
+        (SqlFilePath "test/migrations/codd-add-tests/migration-that-creates-database-correctly.sql")
 
 backgroundMigrationPrintsTipAndAddsSpecialToplevelComment :: CoddSettings -> IO ()
 backgroundMigrationPrintsTipAndAddsSpecialToplevelComment dbInfo = do
