@@ -16,7 +16,7 @@ import qualified Data.List as List
 import Data.String (fromString)
 import Data.Time (UTCTime)
 import qualified Database.PostgreSQL.Simple as DB
-import DbUtils (aroundCoddTestDbAnd, aroundCoddTestDbAndAndPgCron, aroundCoddTestDb, aroundNoDatabases, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
+import DbUtils (aroundCoddTestDb, aroundCoddTestDbAnd, aroundCoddTestDbAndAndPgCron, aroundNoDatabases, createTestUserMig, getIncreasingTimestamp, mkValidSql, testConnTimeout)
 import GHC.Generics (Generic)
 import LiftedExpectations (shouldThrow)
 import Test.Hspec (Spec, shouldBe, shouldContain, shouldNotBe, shouldReturn, shouldSatisfy)
@@ -448,7 +448,7 @@ scheduleExperienceMigrationSlowLocking =
             \-- Sleep 1 second to give the test time to run before the job runs a second time (i.e. between 3s and 4s) \n\
             \PERFORM pg_sleep(1);\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
-            \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
+            \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1)\n\
             \$$\n\
             \, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
@@ -475,7 +475,7 @@ scheduleQuickerMigration =
             \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', '\"empl  oyee\".\"expE Rience2\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
-            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2);$$, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2)$$, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
