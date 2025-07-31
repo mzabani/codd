@@ -117,14 +117,14 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ````sql
 ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
-SELECT codd.populate_column_gradually('make-employee_id-a-bigint', '10 seconds', 'employee.new_employee_id',
+SELECT codd.populate_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
 -- Next is the job that will run every 10 seconds.
 $$
 UPDATE employee SET new_employee_id=employee_id::bigint
 WHERE employee_id IN (SELECT employee_id FROM employee WHERE new_employee_id IS NULL LIMIT 1000);
 $$
 -- Next is the trigger expression which will be used for INSERTs and UPDATEs
-'NEW.employee_id::bigint'
+'NEW.new_employee_id=NEW.employee_id::bigint'
 );
 ````
 

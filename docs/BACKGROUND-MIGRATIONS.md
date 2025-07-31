@@ -29,19 +29,19 @@ SELECT codd.setup_background_worker('pg_cron');
 
 -- Now we add the column that will gradually populate the new 'new_employee_id'
 -- column, and for the sake of an example, we update 1000 rows every 10 seconds.
--- The 'codd.populate_column_gradually' function will create a background job
+-- The 'codd.populate_table_gradually' function will create a background job
 -- and triggers to keep the values in 'employee.new_employee_id' in sync.
 -- The job will automatically stop running when the `UPDATE` statement has no
 -- more rows to update.
 ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
-SELECT codd.populate_column_gradually('make-employee_id-a-bigint', '10 seconds', 'employee.new_employee_id',
+SELECT codd.populate_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
 -- Next is the job that will run every 10 seconds. Note that row-returning statements do not work here.
 $$
 UPDATE employee SET new_employee_id=employee_id::bigint
 WHERE employee_id IN (SELECT employee_id FROM employee WHERE new_employee_id IS NULL LIMIT 1000);
 $$,
 -- Next is the trigger expression which will be used for INSERTs and UPDATEs
-'NEW.employee_id::bigint'
+'NEW.new_employee_id=NEW.employee_id::bigint'
 );
 ```
 
@@ -50,7 +50,7 @@ When you add the migration above you should see some instructions, too, but let'
 
 jobname                    |          created_at           |  status   |                                                   description                                                   | num_jobs_succeeded | num_jobs_error |          last_run_at          |    completed_or_aborted_at    |         finalized_at          |         last_error_at         |                            last_error
 ---------------------------+-------------------------------+-----------+-----------------------------------------------------------------------------------------------------------------+--------------------+----------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------------------------------------------
- make-employee_id-a-bigint | 2025-07-26 17:19:19.641087+00 | started   | Gradually populating values in the employee.new_employee_id column                                              |                  0 |              0 |                               |                               |                               |                               |
+ make-employee_id-a-bigint | 2025-07-26 17:19:19.641087+00 | started   | Gradually populating values in the employee table                                          |                  0 |                  0 |                |                               |                               |                               |
 ```
 
 You will be able to run this in any environments you deploy to, and after waiting long enough every row in the `employee` table will have its `new_employee_id` column synced to `employee_id`. Even newly inserted or updated rows will be that way due to the added triggers.
@@ -61,7 +61,7 @@ After a while, this is what you will see in `codd.jobs`:
 > SELECT jobname, status, description FROM codd.jobs;
 jobname                   |               status               |                                                                                                                             description
 --------------------------+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee now has the new_employee_id column populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date
+make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee has now been populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date
 ```
 
 The status will be `run-complete-awaiting-finalization`, and the description will lay it out more clearly what that means. Supposing every environment is showing us this same status, let's follow that description and create our second migration:
@@ -79,7 +79,7 @@ The status will be `run-complete-awaiting-finalization`, and the description wil
 -- environments, if you prefer.
 SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '10 seconds');
 
--- You still have to rename and drop columns yourself. The 'codd.populate_column_gradually' function
+-- You still have to rename and drop columns yourself. The 'codd.populate_table_gradually' function
 -- does only that: populate the new column.
 ALTER TABLE employee ALTER COLUMN new_employee_id SET DEFAULT nextval('employee_employee_id_seq');
 ALTER SEQUENCE employee_employee_id_seq OWNED BY employee.new_employee_id;
@@ -148,4 +148,4 @@ Until we implement [customizable schema equality checks](https://github.com/mzab
 
 ## More complex background migrations
 
-You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.populate_column_gradually` to view how `populate_column_gradually` uses it.
+You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.populate_table_gradually` to view how `populate_table_gradually` uses it.

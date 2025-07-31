@@ -11,7 +11,7 @@
 -- environments, if you prefer.
 SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '1 seconds');
 
--- You still have to rename and drop columns yourself. The 'codd.populate_column_gradually' function
+-- You still have to rename and drop columns yourself. The 'codd.populate_table_gradually' function
 -- does only that: populate the new column.
 ALTER TABLE employee ALTER COLUMN new_employee_id SET DEFAULT nextval('employee_employee_id_seq');
 ALTER SEQUENCE employee_employee_id_seq OWNED BY employee.new_employee_id;

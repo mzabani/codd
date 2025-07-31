@@ -156,7 +156,7 @@ spec = do
               finalizedAt finalizedCoddJob `shouldBe` Nothing
               lastErrorAt finalizedCoddJob `shouldBe` Nothing
               someCronJobRunning `shouldBe` False
-              description finalizedCoddJob `shouldContain` "You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the new column up-to-date"
+              description finalizedCoddJob `shouldContain` "You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date"
 
       aroundCoddTestDbAndAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
@@ -367,7 +367,7 @@ someBgMigration =
           mkValidSql
             "-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'employee.new_experience', 'something', 'whatever');",
+            \SELECT codd.populate_table_gradually('change- expèRiénce$', '1 seconds', 'employee', 'something', 'whatever');",
         migrationInTxn = True,
         migrationRequiresCoddSchema = True,
         migrationCustomConnInfo = Nothing,
@@ -410,12 +410,16 @@ scheduleExperienceMigration =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level. Different search_path checks that a fully qualified column still works.\n\
             \RESET ALL; SET search_path TO 'no, valid, schema';\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', 'public.\"empl  oyee\".\"expE Rience2\"', \n\
+            \SELECT codd.populate_table_gradually('change- expèRiénce$', '1 seconds', 'public.\"empl  oyee\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN ((RANDOM() * 100)::int % 5) <= 3 THEN (experience::text || '-invalid')::experience2 WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
             \$$\n\
-            \, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \, $$\n\
+            \-- Two lines that do the same just to test longer triggers\n\
+            \NEW.\"expE Rience2\" = CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END;\n\
+            \NEW.\"expE Rience2\" = CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END\n\
+            \$$\n\
             \);\n\
             \RESET search_path;\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');\n\
@@ -441,7 +445,7 @@ scheduleExperienceMigrationSlowLocking =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '2 seconds','\"empl  oyee\".\"expE Rience2\"', \n\
+            \SELECT codd.populate_table_gradually('change- expèRiénce$', '2 seconds','\"empl  oyee\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1);\n\
@@ -450,7 +454,7 @@ scheduleExperienceMigrationSlowLocking =
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
             \WHERE employee_id=(SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 1)\n\
             \$$\n\
-            \, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \, $$NEW.\"expE Rience2\" = CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END;$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
@@ -472,10 +476,10 @@ scheduleQuickerMigration =
             \ALTER TABLE \"empl  oyee\" ADD COLUMN \"expE Rience2\" experience2;\n\
             \-- RESET ALL checks that we're not relying on session-defined (instead of connection-defined) for things like the isolation level\n\
             \RESET ALL;\n\
-            \SELECT codd.populate_column_gradually('change- expèRiénce$', '1 seconds', '\"empl  oyee\".\"expE Rience2\"', \n\
+            \SELECT codd.populate_table_gradually('change- expèRiénce$', '1 seconds', '\"empl  oyee\"', \n\
             \$$\n\
             \UPDATE \"empl  oyee\" SET \"expE Rience2\"=CASE WHEN experience='master' THEN 'senior' ELSE experience::text::experience2 END\n\
-            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2)$$, $$CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END$$\n\
+            \WHERE employee_id IN (SELECT employee_id FROM \"empl  oyee\" WHERE (experience IS NULL) <> (\"expE Rience2\" IS NULL) LIMIT 2)$$, $$NEW.\"expE Rience2\" = CASE WHEN NEW.experience='master' THEN 'senior' ELSE NEW.experience::text::experience2 END\n;$$\n\
             \);\n\
             \INSERT INTO \"empl  oyee\" (name, experience) VALUES ('Dracula', 'master'), ('Frankenstein', 'senior');",
         migrationInTxn = True,
