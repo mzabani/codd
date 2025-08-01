@@ -1,3 +1,6 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use fewer imports" #-}
 module DbDependentSpecs.SchemaVerificationSpec where
 
 import Codd (applyMigrationsNoCheck)
@@ -28,7 +31,7 @@ import Codd.Representations.Database
   ( readRepsFromDbWithNewTxn,
   )
 import Codd.Representations.Types (ObjName (..))
-import Codd.Types (PgMajorVersion (..), SchemaAlgo (..), SchemaSelection (..))
+import Codd.Types (ConnectionString (..), PgMajorVersion (..), SchemaAlgo (..), SchemaSelection (..))
 import Control.Monad
   ( foldM,
     forM,
@@ -52,7 +55,7 @@ import qualified Data.Text as Text
 import Database.PostgreSQL.Simple (ConnectInfo (..))
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils
-  ( aroundFreshDatabase,
+  ( aroundCoddTestDb,
     finallyDrop,
     getIncreasingTimestamp,
     mkValidSql,
@@ -1275,7 +1278,7 @@ newtype AccumChanges m = AccumChanges [((AddedSqlMigration m, DbChange), DbRep)]
 spec :: Spec
 spec = do
   describe "DbDependentSpecs" $ do
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "User search_path does not affect representations" $
         \emptyTestDbInfo -> do
           createStuffMig <-
@@ -1331,7 +1334,7 @@ spec = do
           reps2 `shouldBe` reps3
           reps3 `shouldBe` reps4
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "Strict and Lax collation representations differ" $
         \emptyTestDbInfo -> do
           -- It'd be nice to test that different libc/libicu versions make hashes
@@ -1374,7 +1377,7 @@ spec = do
                 )
           laxCollHashes `shouldNotBe` strictCollHashes
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "Strict range constructor ownership" $
         \emptyTestDbInfo -> do
           let strictRangeDbInfo =
@@ -1447,7 +1450,7 @@ spec = do
                     else []
               )
 
-    aroundFreshDatabase $
+    aroundCoddTestDb $
       it "ignore-column-order setting" $
         \emptyTestDbInfo -> do
           createMig <-
@@ -1517,7 +1520,7 @@ spec = do
                 )
               ]
 
-    aroundFreshDatabase $ it "Schema selection" $ \emptyTestDbInfo -> do
+    aroundCoddTestDb $ it "Schema selection" $ \emptyTestDbInfo -> do
       let nonInternalSchemasDbInfo =
             emptyTestDbInfo
               { namespacesToCheck = AllNonInternalSchemas
@@ -1560,7 +1563,7 @@ spec = do
       pgCatSchemas <- getSchemaHashes nonExistingAndCatalogSchemasDbInfo
       pgCatSchemas `shouldBe` [ObjName "pg_catalog"]
 
-    aroundFreshDatabase
+    aroundCoddTestDb
       $ it
         "Restoring a pg_dump yields the same schema as applying original migrations"
       $ \emptyDbInfo -> do
@@ -1591,12 +1594,12 @@ spec = do
 
         -- Take the pg_dump and drop the database
         pg_dump_output <-
-          finallyDrop (Text.pack $ connectDatabase connInfo) $ do
+          finallyDrop (Text.pack $ database connInfo) $ do
             (pg_dump_exitCode, pg_dump_output) <-
               readProcessStdout $
                 shell $
                   "pg_dump --create -d \""
-                    ++ connectDatabase connInfo
+                    ++ database connInfo
                     ++ "\""
             pg_dump_exitCode `shouldBe` ExitSuccess
             pure pg_dump_output
@@ -1615,7 +1618,7 @@ spec = do
 
     describe "Schema verification tests" $ do
       modifyMaxSuccess (const 3) $ -- This is a bit heavy on CI but this test is too important
-        aroundFreshDatabase $
+        aroundCoddTestDb $
           it "Accurate and reversible representation changes" $
             \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
               let emptyDbInfo =
@@ -1715,7 +1718,7 @@ spec = do
                   ( \conn ->
                       DB.execute
                         conn
-                        "WITH reversedMigs (name) AS (SELECT name FROM codd_schema.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd_schema.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
+                        "WITH reversedMigs (name) AS (SELECT name FROM codd.sql_migrations ORDER BY migration_timestamp DESC LIMIT ?) DELETE FROM codd.sql_migrations USING reversedMigs WHERE reversedMigs.name=sql_migrations.name"
                         (DB.Only num)
                   )
 

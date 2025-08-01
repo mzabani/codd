@@ -47,6 +47,7 @@ module Codd.Parsing
     toMigrationTimestamp,
     -- Exported for tests
     ParserState (..),
+    SectionOption (..),
     coddConnStringCommentParser,
     copyFromStdinAfterStatementParser,
     manyStreaming,
@@ -54,6 +55,7 @@ module Codd.Parsing
   )
 where
 
+import Codd.Types (ConnectionString (..))
 import Control.Applicative
   ( optional,
     (<|>),
@@ -94,6 +96,7 @@ import qualified Data.Attoparsec.Text as Parsec
 import Data.Bifunctor (first)
 import qualified Data.Char as Char
 import qualified Data.DList as DList
+import Data.Either (partitionEithers)
 import Data.Int (Int64)
 import Data.Kind (Type)
 import Data.List
@@ -115,7 +118,6 @@ import Data.Time
     secondsToDiffTime,
   )
 import Data.Time.Clock (UTCTime (..))
-import Database.PostgreSQL.Simple (ConnectInfo (..))
 import qualified Database.PostgreSQL.Simple.FromRow as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
 import Network.URI
@@ -131,6 +133,7 @@ import Streaming
 import qualified Streaming.Internal as S
 import Streaming.Prelude (Stream)
 import qualified Streaming.Prelude as Streaming
+import System.FilePath (takeFileName)
 import UnliftIO
   ( IORef,
     MonadIO,
@@ -157,7 +160,8 @@ data SqlMigration m = SqlMigration
   { migrationName :: FilePath,
     migrationSql :: ParsedSql m,
     migrationInTxn :: Bool,
-    migrationCustomConnInfo :: Maybe ConnectInfo,
+    migrationRequiresCoddSchema :: Bool,
+    migrationCustomConnInfo :: Maybe ConnectionString,
     migrationEnvVars :: Map Text Text
   }
 
@@ -240,8 +244,8 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) =
     hoistParsedSql (UnparsedSql t) = UnparsedSql t
     hoistParsedSql (WellParsedSql stream) = WellParsedSql $ hoist f stream
 
-data SectionOption = OptInTxn Bool | OptNoParse Bool
-  deriving stock (Eq, Show)
+data SectionOption = OptInTxn | OptNoTxn | OptNoParse | OptRequiresCoddSchema
+  deriving stock (Eq, Ord, Show)
 
 data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
@@ -771,8 +775,8 @@ eitherToMay (Right v) = Just v
 
 -- | Parses a URI with scheme 'postgres' or 'postgresql', as per https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
 -- The difference here is that URIs with a query string or with a fragment are not allowed.
-uriConnParser :: Text -> Either String ConnectInfo
-uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
+uriConnParser :: Text -> Either String ConnectionString
+uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectionString $ do
   case parseURI (Text.unpack line) of
     Nothing -> throwE "Connection string is not a URI"
     Just URI {..} -> do
@@ -785,11 +789,11 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
           throwE
             "Connection string must contain at least user and host"
         Just URIAuth {..} -> do
-          let connectDatabase =
+          let database =
                 unEscapeString $ trimFirst '/' uriPath
               hasQueryString = not $ null uriQuery
               hasFragment = not $ null uriFragment
-          when (null connectDatabase) $
+          when (null database) $
             throwE
               "Connection string must contain a database name"
           when (hasQueryString || hasFragment) $
@@ -806,18 +810,19 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
               ) of
             Nothing ->
               throwE "Invalid port in connection string"
-            Just connectPort -> do
-              let (unEscapeString . trimLast '@' -> connectUser, unEscapeString . trimLast '@' . trimFirst ':' -> connectPassword) =
+            Just parsedPort -> do
+              let (unEscapeString . trimLast '@' -> user, unEscapeString . trimLast '@' . trimFirst ':' -> password) =
                     break (== ':') uriUserInfo
               pure
-                ConnectInfo
-                  { connectHost =
+                ConnectionString
+                  { hostname =
                       unEscapeString $
                         unescapeIPv6 uriRegName,
-                    connectPort,
-                    connectUser,
-                    connectPassword,
-                    connectDatabase
+                    port = parsedPort,
+                    user,
+                    password,
+                    database,
+                    options = Nothing
                   }
   where
     unescapeIPv6 :: String -> String
@@ -832,7 +837,7 @@ uriConnParser line = runIdentity $ runExceptT @String @_ @ConnectInfo $ do
       Nothing -> s
       Just (t, lastChar) -> if lastChar == c then Text.unpack t else s
 
-keywordValueConnParser :: Text -> Either String ConnectInfo
+keywordValueConnParser :: Text -> Either String ConnectionString
 keywordValueConnParser line = runIdentity $ runExceptT $ do
   kvs <-
     sortOn fst
@@ -840,12 +845,13 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
         (singleKeyVal `Parsec.sepBy` takeWhile1 Char.isSpace)
         (Text.strip line)
         "Invalid connection string"
-  ConnectInfo
+  ConnectionString
     <$> getVal "host" Nothing txtToString kvs
     <*> getVal "port" (Just 5432) Parsec.decimal kvs
     <*> getVal "user" Nothing txtToString kvs
     <*> getVal "password" (Just "") txtToString kvs
     <*> getVal "dbname" Nothing txtToString kvs
+    <*> pure Nothing
   where
     getVal key def parser pairs =
       case (map snd $ filter ((== key) . fst) pairs, def) of
@@ -893,7 +899,7 @@ keywordValueConnParser line = runIdentity $ runExceptT $ do
 -- | Parses a string in one of libpq allowed formats. See https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING.
 -- The difference here is that only a subset of all connection parameters are allowed.
 -- I wish this function existed in postgresql-simple or some form of it in postgresql-libpq, but if it does I couldn't find it.
-connStringParser :: Parser ConnectInfo
+connStringParser :: Parser ConnectionString
 connStringParser = do
   connStr <-
     Parsec.takeWhile1 (const True)
@@ -920,14 +926,17 @@ optionParser = do
     inTxn
       <|> noTxn
       <|> noParse
+      <|> requiresCoddSchema
       <|> fail
-        "Valid options after '-- codd:' are 'in-txn', 'no-txn' or 'no-parse' (the last implies in-txn)"
+        "Valid options after '-- codd:' are 'in-txn', 'no-txn', 'requires-codd-schema' or 'no-parse' (the last implies in-txn)"
   skipJustSpace
   return x
   where
-    inTxn = string "in-txn" >> pure (OptInTxn True)
-    noTxn = string "no-txn" >> pure (OptInTxn False)
-    noParse = string "no-parse" >> pure (OptNoParse True)
+    -- TODO: Parser for "require-codd-schema"
+    requiresCoddSchema = string "requires-codd-schema" >> pure OptRequiresCoddSchema
+    inTxn = string "in-txn" >> pure OptInTxn
+    noTxn = string "no-txn" >> pure OptNoTxn
+    noParse = string "no-parse" >> pure OptNoParse
 
 -- | Parser that consumes only the space character, not other kinds of white space.
 skipJustSpace :: Parser ()
@@ -960,7 +969,7 @@ coddCommentParser = do
       pure $ CoddCommentSuccess opts
 
 -- | Parses a "-- codd-connection: some-connection-string(newline|EOF)" line.
-coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectInfo)
+coddConnStringCommentParser :: Parser (CoddCommentParseResult ConnectionString)
 coddConnStringCommentParser = do
   void $ string "--"
   skipJustSpace
@@ -1046,7 +1055,7 @@ parseAndClassifyMigration ::
         String
         ( Map Text Text,
           [SectionOption],
-          Maybe ConnectInfo,
+          Maybe ConnectionString,
           ParsedSql m
         )
     )
@@ -1112,39 +1121,46 @@ parseAndClassifyMigration sqlStream = do
           headMay (x : _) = Just x
 
       -- Urgh.. is there no better way of pattern matching the stuff below?
-      eExtr <- case (allOptSections, customConnString) of
-        (_ : _ : _, _) ->
-          pure $
-            Left
-              "There must be at most one '-- codd:' comment in the first lines of a migration"
-        (_, _ : _ : _) ->
-          pure $
-            Left
-              "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
-        _ -> case (headMay allOptSections, headMay customConnString) of
-          (Just (CoddCommentWithGibberish badOptions), _) ->
-            pure $
+      let (badOptSections, mconcat -> goodOptSections) =
+            partitionEithers $
+              map
+                ( \case
+                    CoddCommentWithGibberish badOpts -> Left badOpts
+                    CoddCommentSuccess goodOpts -> Right goodOpts
+                )
+                allOptSections
+          (badCustomConnStrings, goodCustomConnStrings) =
+            partitionEithers $
+              map
+                ( \case
+                    CoddCommentWithGibberish badConn -> Left badConn
+                    CoddCommentSuccess goodConn -> Right goodConn
+                )
+                customConnString
+          eExtr = case (badOptSections, badCustomConnStrings) of
+            (badOptions : _, _) ->
               Left $
                 "The options '"
                   <> Text.unpack badOptions
-                  <> "' are invalid. Valid options are either 'in-txn' or 'no-txn'"
-          (_, Just (CoddCommentWithGibberish _badConn)) ->
-            pure $
+                  <> "' are invalid. Valid options after '-- codd:' are 'in-txn', 'no-txn', 'requires-codd-schema' or 'no-parse' (the last implies in-txn)"
+            (_, _badConn : _) ->
               Left
                 "Connection string is not a valid libpq connection string. A valid libpq connection string is either in the format 'postgres://username[:password]@host:port/database_name', with URI-encoded (percent-encoded) components except for the host and bracket-surround IPv6 addresses, or in the keyword value pairs format, e.g. 'dbname=database_name host=localhost user=postgres' with escaping for spaces, quotes or empty values. More info at https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING"
-          (Just (CoddCommentSuccess opts), Just (CoddCommentSuccess conn)) ->
-            pure $ Right (opts, Just conn)
-          (Just (CoddCommentSuccess opts), Nothing) ->
-            pure $ Right (opts, Nothing)
-          (Nothing, Just (CoddCommentSuccess conn)) ->
-            pure $ Right ([], Just conn)
-          (Nothing, Nothing) -> pure $ Right ([], Nothing)
+            ([], []) ->
+              if length goodCustomConnStrings > 1
+                then
+                  Left
+                    "There must be at most one '-- codd-connection:' comment in the first lines of a migration"
+                else
+                  if OptNoParse `elem` goodOptSections && OptNoTxn `elem` goodOptSections
+                    then Left "It is not possible to set both 'no-txn' and 'no-parse', because the latter implies the entire migration will be applied as a single SQL statement and thus in its own implicit transaction"
+                    else Right (goodOptSections, headMay goodCustomConnStrings)
 
       case eExtr of
         Left err -> pure $ Left err
         Right (opts, customConnStr)
           | -- Detect "-- codd: no-parse"
-            OptNoParse True `elem` opts -> do
+            OptNoParse `elem` opts -> do
               -- Remember: the original Stream (Of Text) has already been advanced
               -- beyond its first SQL statement, but **only** if this is an IO-based
               -- Stream. If this is a pure Stream it will start from the beginning when
@@ -1189,28 +1205,29 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
     checkOpts opts
       | inTxn opts && noTxn opts =
           Just
-            "Choose either in-txn, no-txn or leave blank for the default of in-txn"
+            "Choose either 'in-txn' or 'no-txn', but not both. If you don't specify anything the default is 'in-txn'"
       | dupOpts opts =
           Just "Some options are duplicated"
       | otherwise =
           Nothing
-    inTxn opts = OptInTxn False `notElem` opts || OptInTxn True `elem` opts
-    noTxn opts = OptInTxn False `elem` opts
+    inTxn opts = OptNoTxn `notElem` opts || OptInTxn `elem` opts
+    noTxn opts = OptNoTxn `elem` opts
 
     mkMig ::
-      (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->
+      (Map Text Text, [SectionOption], Maybe ConnectionString, ParsedSql m) ->
       SqlMigration m
     mkMig (migrationEnvVars, opts, customConnString, sql) =
       SqlMigration
         { migrationName = name,
           migrationSql = sql,
           migrationInTxn = inTxn opts,
+          migrationRequiresCoddSchema = OptRequiresCoddSchema `elem` opts,
           migrationCustomConnInfo = customConnString,
           migrationEnvVars
         }
 
     toMig ::
-      (Map Text Text, [SectionOption], Maybe ConnectInfo, ParsedSql m) ->
+      (Map Text Text, [SectionOption], Maybe ConnectionString, ParsedSql m) ->
       Either String (SqlMigration m)
     toMig x@(_, ops, _, _) = case checkOpts ops of
       Just err -> Left err
@@ -1218,10 +1235,11 @@ parseSqlMigration name s = (toMig =<<) <$> parseAndClassifyMigration s
 
 parseAddedSqlMigration ::
   (Monad m, MigrationStream m s, EnvVars m) =>
+  -- | Can be a pure file name or absolute path to file name of an already timestamp migration file
   String ->
   s ->
   m (Either String (AddedSqlMigration m))
-parseAddedSqlMigration name s = do
+parseAddedSqlMigration (takeFileName -> name) s = do
   sqlMig <- parseSqlMigration name s
   pure $ AddedSqlMigration <$> sqlMig <*> parseMigrationTimestamp name
 

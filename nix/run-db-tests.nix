@@ -5,7 +5,7 @@ in
      name = "codd-test-with-db-results";
      src = fs.toSource {
       root = ../.;
-      fileset = fs.unions [ ../conf ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
+      fileset = fs.unions [ ../conf/test-db ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
      };
      nativeBuildInputs = [ postgres pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
      installPhase = ''
@@ -18,7 +18,7 @@ in
       export PGPORT="5434"
       export PGHOST="/tmp"
       export PGUSER="postgres"
-      scripts/init-pg-cluster.sh ./conf
+      scripts/init-pg-cluster.sh ./conf/test-db
       trap "pg_ctl stop || true" EXIT ERR
       pg_ctl -l "$out/pg_ctl_init.log" start
       scripts/wait-for-pg-ready.sh

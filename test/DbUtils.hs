@@ -23,16 +23,13 @@ import Codd.Query
   ( NotInTxn,
     execvoid_,
     query,
+    unsafeQuery1,
   )
-import Codd.Types
-  ( SchemaAlgo (..),
-    SchemaSelection (..),
-    TxnIsolationLvl (..),
-    singleTryPolicy,
-  )
+import Codd.Types (ConnectionString (..), SchemaAlgo (..), SchemaSelection (..), TxnIsolationLvl (..), singleTryPolicy)
 import Control.Monad
   ( forM_,
     void,
+    when,
   )
 import Control.Monad.Trans.Resource (MonadThrow)
 import Data.String (fromString)
@@ -45,13 +42,14 @@ import Data.Time.Clock
     addUTCTime,
     secondsToDiffTime,
   )
-import Database.PostgreSQL.Simple
-  ( ConnectInfo (..),
-    defaultConnectInfo,
-  )
+import Data.UUID (UUID)
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUIDv4
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Time as DB
+import qualified Database.PostgreSQL.Simple.Types as DB
 import qualified Streaming.Prelude as Streaming
+import System.FilePath ((</>))
 import Test.Hspec
 import UnliftIO
   ( MonadIO (..),
@@ -60,19 +58,23 @@ import UnliftIO
     finally,
     liftIO,
   )
+import UnliftIO.Concurrent (threadDelay)
+import UnliftIO.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import UnliftIO.Environment (getEnv)
 
-testConnInfo :: (MonadIO m) => m ConnectInfo
+testConnInfo :: (MonadIO m) => m ConnectionString
 testConnInfo =
   getEnv "PGPORT" >>= \portStr ->
     return
-      defaultConnectInfo
+      ConnectionString
         { -- It is strange, but IPv6 support in Github Actions seems not to be there yet.
           -- https://github.com/actions/virtual-environments/issues/668
-          connectHost = "/tmp",
-          connectUser = "postgres",
-          connectDatabase = "codd-test-db",
-          connectPort = read portStr
+          hostname = "/tmp",
+          user = "postgres",
+          database = "codd-test-db",
+          password = "",
+          port = read portStr,
+          options = Nothing
         }
 
 -- | A default connection timeout of 5 seconds.
@@ -80,7 +82,7 @@ testConnInfo =
 testConnTimeout :: DiffTime
 testConnTimeout = secondsToDiffTime 5
 
-aroundConnInfo :: SpecWith ConnectInfo -> Spec
+aroundConnInfo :: SpecWith ConnectionString -> Spec
 aroundConnInfo = around $ \act -> do
   cinfo <- testConnInfo
   act cinfo
@@ -93,7 +95,7 @@ mkValidSql = WellParsedSql . parseSqlPiecesStreaming . Streaming.yield
 withCoddDbAndDrop ::
   (MonadUnliftIO m, CoddLogger m, MonadThrow m, EnvVars m, NotInTxn m) =>
   [AddedSqlMigration m] ->
-  (ConnectInfo -> m a) ->
+  (ConnectionString -> m a) ->
   m a
 withCoddDbAndDrop migs f = do
   coddSettings@CoddSettings {migsConnString} <- testCoddSettings
@@ -112,8 +114,8 @@ withCoddDbAndDrop migs f = do
     dropDb migsConnString _ = do
       withConnection
         migsConnString
-          { connectDatabase = "postgres",
-            connectUser = "postgres"
+          { database = "postgres",
+            user = "postgres"
           }
         testConnTimeout
         $ \conn ->
@@ -122,7 +124,8 @@ withCoddDbAndDrop migs f = do
               DB.execute_ conn $
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier
-                    (Text.pack $ connectDatabase migsConnString)
+                    (Text.pack $ database migsConnString)
+                  <> "(FORCE)"
 
 -- | Runs an action and drops a database afterwards in a finally block.
 finallyDrop :: (MonadIO m, MonadUnliftIO m) => Text -> m a -> m a
@@ -132,8 +135,8 @@ finallyDrop dbName f = f `finally` dropDb
       connInfo <- testConnInfo
       withConnection
         connInfo
-          { connectDatabase = "postgres",
-            connectUser = "postgres"
+          { database = "postgres",
+            user = "postgres"
           }
         testConnTimeout
         $ \conn ->
@@ -142,6 +145,7 @@ finallyDrop dbName f = f `finally` dropDb
               DB.execute_ conn $
                 "DROP DATABASE IF EXISTS "
                   <> dbIdentifier dbName
+                  <> "(FORCE)"
 
 createTestUserMig ::
   forall m. (MonadIO m, MonadThrow m) => m (AddedSqlMigration m)
@@ -174,12 +178,13 @@ createTestUserMigPol = do
         { migrationName = "bootstrap-test-db-and-user.sql",
           migrationSql = psql,
           migrationInTxn = False,
+          migrationRequiresCoddSchema = False,
           -- A custom connection string is necessary because the DB doesn't yet exist
           migrationCustomConnInfo =
             Just
               cinfo
-                { connectUser = "postgres",
-                  connectDatabase = "postgres"
+                { user = "postgres",
+                  database = "postgres"
                 },
           migrationEnvVars = mempty
         }
@@ -202,19 +207,24 @@ testCoddSettings = do
 
 -- | Doesn't create a Database, doesn't create anything. Just supplies the Test CoddSettings from Env Vars to your test.
 -- This does cleanup if you create any databases or tables in the `postgres` DB, though.
-aroundTestDbInfo :: SpecWith CoddSettings -> Spec
-aroundTestDbInfo = around $ \act -> do
+aroundNoDatabases :: SpecWith CoddSettings -> Spec
+aroundNoDatabases = around $ \act -> do
   coddSettings <- testCoddSettings
   act coddSettings `finally` cleanupAfterTest
 
-aroundFreshDatabase :: SpecWith CoddSettings -> Spec
-aroundFreshDatabase = aroundDatabaseWithMigs []
+-- | Applies a migration that creates the "codd-test-db" database and the
+-- "codd-test-user" user for the test.
+aroundCoddTestDb :: SpecWith CoddSettings -> Spec
+aroundCoddTestDb = aroundCoddTestDbAnd []
 
-aroundDatabaseWithMigs ::
+-- | Applies a migration that creates the "codd-test-db" database and the
+-- "codd-test-user" user, and also applies any other migrations supplied
+-- by the caller.
+aroundCoddTestDbAnd ::
   (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
   SpecWith CoddSettings ->
   Spec
-aroundDatabaseWithMigs startingMigs = around $ \act -> do
+aroundCoddTestDbAnd startingMigs = around $ \act -> do
   coddSettings <- testCoddSettings
 
   runCoddLogger
@@ -229,20 +239,53 @@ aroundDatabaseWithMigs startingMigs = around $ \act -> do
     )
     `finally` cleanupAfterTest
 
+aroundCoddTestDbAndAndPgCron ::
+  (forall m. (MonadThrow m) => [AddedSqlMigration m]) ->
+  SpecWith CoddSettings ->
+  Spec
+aroundCoddTestDbAndAndPgCron startingMigs = around $ \act -> do
+  coddSettings <- testCoddSettings
+  cinfo <- testConnInfo
+  let superUserConnInfo = cinfo {user = "postgres"}
+      createPgCronExtMig =
+        AddedSqlMigration
+          SqlMigration
+            { migrationName = "0000-create-ext-pg_cron.sql",
+              migrationSql =
+                mkValidSql
+                  "CREATE EXTENSION pg_cron",
+              migrationInTxn = True,
+              migrationRequiresCoddSchema = False,
+              migrationCustomConnInfo = Just superUserConnInfo,
+              migrationEnvVars = mempty
+            }
+          (getIncreasingTimestamp 0)
+  runCoddLogger
+    ( do
+        bootstrapMig <- createTestUserMig
+        applyMigrationsNoCheck
+          coddSettings
+          (Just $ bootstrapMig : createPgCronExtMig : startingMigs)
+          testConnTimeout
+          (const $ pure ())
+        liftIO (act coddSettings)
+    )
+    `finally` cleanupAfterTest
+
 cleanupAfterTest :: IO ()
 cleanupAfterTest = do
   CoddSettings {migsConnString} <- testCoddSettings
   withConnection
     migsConnString
-      { connectUser = "postgres",
-        connectDatabase = "postgres"
+      { user = "postgres",
+        database = "postgres"
       }
     testConnTimeout
     -- Some things aren't associated to a Schema and not even to a Database; they belong under the entire DB/postgres instance.
     -- So we reset these things here, with the goal of getting the DB in the same state as it would be before even "createUserTestMig"
     -- from "testCoddSettings" runs, so that each test is guaranteed the same starting DB environment.
     ( \conn -> do
-        execvoid_ conn "ALTER ROLE postgres RESET ALL;"
+        execvoid_ conn "ALTER ROLE postgres RESET ALL; SET client_min_messages='warning'; DROP EXTENSION IF EXISTS pg_cron; RESET client_min_messages;"
         dbs :: [String] <-
           map DB.fromOnly
             <$> query
@@ -250,7 +293,7 @@ cleanupAfterTest = do
               "SELECT datname FROM pg_catalog.pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1')"
               ()
         forM_ dbs $ \db ->
-          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\""
+          execvoid_ conn $ "DROP DATABASE \"" <> fromString db <> "\" (FORCE)"
 
         allRoles :: [String] <-
           map DB.fromOnly
@@ -315,3 +358,11 @@ shouldBeStrictlySortedOn xs f =
 parseSqlMigrationIO ::
   String -> PureStream IO -> IO (Either String (SqlMigration IO))
 parseSqlMigrationIO = parseSqlMigration
+
+getEmptyTempDir :: (MonadIO m) => m FilePath
+getEmptyTempDir = do
+  tmp <- getTemporaryDirectory
+  complement :: UUID <- liftIO UUIDv4.nextRandom
+  let emptyDir = tmp </> UUID.toString complement
+  createDirectoryIfMissing True emptyDir
+  pure emptyDir

@@ -2,10 +2,12 @@
     "accessmethod": "heap",
     "amoptions": null,
     "columns_in_order": [
-        "employee_id",
         "employee_name",
         "experience",
-        "surname"
+        "surname",
+        "experience2",
+        "employee_id",
+        "слон"
     ],
     "compositetype": null,
     "forcerowsecurity": false,
@@ -16,24 +18,14 @@
     "privileges": {
         "codd-user": [
             [
-                "daxr*tDw",
+                "daxrtDw",
                 "codd_admin"
             ]
         ],
         "codd_admin": [
             [
-                "r",
-                "codd-user"
-            ],
-            [
                 "daxrtDw",
                 "codd_admin"
-            ]
-        ],
-        "public": [
-            [
-                "r",
-                "codd-user"
             ]
         ]
     },

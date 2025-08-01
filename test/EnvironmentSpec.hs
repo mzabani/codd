@@ -1,5 +1,7 @@
 module EnvironmentSpec
   ( ConnStringGen (..),
+    renderConnStringGen,
+    connInfoFromConnStringGen,
     spec,
   )
 where
@@ -7,10 +9,7 @@ where
 import Codd.Environment (retryPolicyParser)
 import Codd.Parsing (CoddCommentParseResult (..), coddConnStringCommentParser, connStringParser)
 import Codd.Representations.Types (ObjName (..))
-import Codd.Types
-  ( RetryBackoffPolicy (..),
-    RetryPolicy (..),
-  )
+import Codd.Types (ConnectionString (..), RetryBackoffPolicy (..), RetryPolicy (..), libpqConnString)
 import Control.Monad (forM_, unless)
 import Data.Attoparsec.Text
   ( endOfInput,
@@ -23,6 +22,7 @@ import Data.List (sortOn)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Text.Encoding (decodeUtf8)
 import Data.Time (secondsToDiffTime)
 import Data.Word (Word16)
 import Database.PostgreSQL.Simple (ConnectInfo (..))
@@ -108,11 +108,12 @@ data KwvpConnGen = KwvpConnGen
     -- The Int represents extra spaces around this kwvp. These will be added one by one
     -- left-to-right everywhere they are acceptable until a limit of 4 (therefore ignoring > 4 spaces).
     user :: (ObjName, Bool, Int),
-    password :: Maybe (String, Bool, Int),
+    kwvp_password :: Maybe (String, Bool, Int),
     host :: (HostString, Bool, Int),
-    port :: Maybe (Word16, Bool, Int),
+    kwvp_port :: Maybe (Word16, Bool, Int),
     dbname :: (ObjName, Bool, Int)
   }
+  deriving stock (Show)
 
 getKeywordValuePairConnString :: KwvpConnGen -> Text
 getKeywordValuePairConnString KwvpConnGen {..} =
@@ -130,9 +131,9 @@ getKeywordValuePairConnString KwvpConnGen {..} =
             Just $
               addExtraSpaces dbname ("dbname", quoteIfNeeded unObjName dbname),
             (\p -> addExtraSpaces p ("password", quoteIfNeeded Text.pack p))
-              <$> password,
+              <$> kwvp_password,
             (\p -> addExtraSpaces p ("port", quoteIfNeeded (Text.pack . show) p))
-              <$> port
+              <$> kwvp_port
           ]
     addExtraSpaces (_, _, spaces) (k, v)
       | spaces <= 0 = (k, v)
@@ -152,8 +153,7 @@ getKeywordValuePairConnString KwvpConnGen {..} =
         `Text.isInfixOf` v
         || "\\"
           `Text.isInfixOf` v
-        || " "
-          `Text.isInfixOf` v
+        || Text.any Char.isSpace v
         || v
           == ""
 
@@ -163,8 +163,47 @@ escapeHost (Hostname host) =
   if ":" `Text.isInfixOf` host then "[" <> host <> "]" else host
 escapeHost (HostUnixSocket socketpath) = Text.pack $ encodeURIComponent $ Text.unpack socketpath
 
-data ConnStringGen = ConnStringGen Text ConnectInfo
-  deriving stock (Show)
+newtype ConnStringGen = ConnStringGen (Either KwvpConnGen (String, ObjName, String, HostString, Word16, ObjName))
+
+instance Show ConnStringGen where
+  show (ConnStringGen kwvpOrUriScheme) = Text.unpack $
+    case kwvpOrUriScheme of
+      Left kwvpConnGen -> getKeywordValuePairConnString kwvpConnGen
+      Right (uriScheme, usr, pwd, host, port, dbName) ->
+        getURIConnString uriScheme usr pwd host port dbName
+
+renderConnStringGen :: ConnStringGen -> Text
+renderConnStringGen (ConnStringGen kwvpOrUriScheme) =
+  case kwvpOrUriScheme of
+    Left kwvpConnGen -> getKeywordValuePairConnString kwvpConnGen
+    Right (uriScheme, usr, pwd, host, port, dbName) ->
+      getURIConnString uriScheme usr pwd host port dbName
+
+connInfoFromConnStringGen :: ConnStringGen -> ConnectionString
+connInfoFromConnStringGen (ConnStringGen kwvpOrUriScheme) =
+  case kwvpOrUriScheme of
+    Left KwvpConnGen {user = (user, _, _), host = (host, _, _), dbname = (dbname, _, _), kwvp_password, kwvp_port} ->
+      ConnectionString
+        { hostname = Text.unpack $ originalHost host,
+          port = case kwvp_port of
+            Nothing -> 5432
+            Just (p, _, _) -> p,
+          user = Text.unpack $ unObjName user,
+          password = case kwvp_password of
+            Nothing -> ""
+            Just (p, _, _) -> p,
+          database = Text.unpack $ unObjName dbname,
+          options = Nothing
+        }
+    Right (uriScheme, user, password, host, port, dbname) ->
+      ConnectionString
+        { hostname = Text.unpack $ originalHost host,
+          port = port,
+          user = Text.unpack $ unObjName user,
+          password = password,
+          database = Text.unpack $ unObjName dbname,
+          options = Nothing
+        }
 
 instance Arbitrary ConnStringGen where
   arbitrary = do
@@ -181,12 +220,13 @@ instance Arbitrary ConnStringGen where
     dbName <- genObjName
 
     let connInfo =
-          ConnectInfo
-            { connectHost = Text.unpack $ originalHost host,
-              connectPort = port,
-              connectUser = Text.unpack $ unObjName usr,
-              connectPassword = pwd,
-              connectDatabase = Text.unpack $ unObjName dbName
+          ConnectionString
+            { hostname = Text.unpack $ originalHost host,
+              port,
+              user = Text.unpack $ unObjName usr,
+              password = pwd,
+              database = Text.unpack $ unObjName dbName,
+              options = Nothing
             }
     connStringType <- arbitrary @ConnStringType
     case connStringType of
@@ -194,38 +234,61 @@ instance Arbitrary ConnStringGen where
         (shuffleIdx, b1, s1, b2, s2, b3, s3) <- arbitrary
         (b4, s4, b5, s5) <- arbitrary
         withPwd <-
-          if connectPassword connInfo == ""
+          if (password :: ConnectionString -> String) connInfo == ""
             then arbitrary @Bool
             else pure True
         withPort <-
-          if connectPort connInfo == 5432
+          if port == 5432
             then arbitrary @Bool
             else pure True
         pure $
-          ConnStringGen
-            ( getKeywordValuePairConnString
-                KwvpConnGen
-                  { shuffleIdx,
-                    user = (usr, b1, s1),
-                    password =
-                      if withPwd
-                        then Just (pwd, b2, s2)
-                        else Nothing,
-                    host = (host, b3, s3),
-                    port =
-                      if withPort
-                        then Just (port, b4, s4)
-                        else Nothing,
-                    dbname = (dbName, b5, s5)
-                  }
-            )
-            connInfo
+          ConnStringGen $
+            Left $
+              KwvpConnGen
+                { shuffleIdx,
+                  user = (usr, b1, s1),
+                  kwvp_password =
+                    if withPwd
+                      then Just (pwd, b2, s2)
+                      else Nothing,
+                  host = (host, b3, s3),
+                  kwvp_port =
+                    if withPort
+                      then Just (port, b4, s4)
+                      else Nothing,
+                  dbname = (dbName, b5, s5)
+                }
       URIpostgres -> do
         uriScheme <- elements ["postgres:", "postgresql:"]
         pure $
+          ConnStringGen $
+            Right (uriScheme, usr, pwd, host, port, dbName)
+  shrink (ConnStringGen genInfo) =
+    case genInfo of
+      Left kwvpGen@KwvpConnGen {user = (user, _, _), host = (host, _, _), dbname = (dbname, _, _)} ->
+        [ ConnStringGen
+            ( Left $
+                KwvpConnGen
+                  { shuffleIdx = 0,
+                    user = (user, False, 0),
+                    kwvp_password = Nothing, -- Remove password
+                    host = (host, False, 0),
+                    kwvp_port = Nothing, -- Remove port
+                    dbname = (ObjName "simpledb", False, 0)
+                  }
+            ),
           ConnStringGen
-            (getURIConnString uriScheme usr pwd host port dbName)
-            connInfo
+            ( Left $
+                KwvpConnGen
+                  { shuffleIdx = 0,
+                    user = (ObjName "", False, 0), -- Remove user
+                    kwvp_password = Nothing, -- Remove password
+                    host = (host, False, 0),
+                    kwvp_port = Nothing, -- Remove port
+                    dbname = (ObjName "simpledb", False, 0)
+                  }
+            )
+        ]
 
 spec :: Spec
 spec = do
@@ -235,68 +298,86 @@ spec = do
         -- These are hard coded connection strings that I've tested with psql at some point
         let stringsAndExpectedConnInfos =
               [ ( "postgresql://postgres@localhost/some%20thing%20%2F%3F%3A%40",
-                  ConnectInfo
-                    { connectHost = "localhost",
-                      connectPort = 5432,
-                      connectUser = "postgres",
-                      connectPassword = "",
-                      connectDatabase = "some thing /?:@"
+                  ConnectionString
+                    { hostname = "localhost",
+                      port = 5432,
+                      user = "postgres",
+                      password = "",
+                      database = "some thing /?:@",
+                      options = Nothing
                     }
                 ),
                 ( "postgresql://some%20thing%20%2F%3F%3A%40:passwdsome%20thing%20%2F%3F%3A%40@localhost:1/some%20thing%20%2F%3F%3A%40",
-                  ConnectInfo
-                    { connectHost = "localhost",
-                      connectPort = 1,
-                      connectUser = "some thing /?:@",
-                      connectPassword = "passwdsome thing /?:@",
-                      connectDatabase = "some thing /?:@"
+                  ConnectionString
+                    { hostname = "localhost",
+                      port = 1,
+                      user = "some thing /?:@",
+                      password = "passwdsome thing /?:@",
+                      database = "some thing /?:@",
+                      options = Nothing
                     }
                 ),
                 -- Only mandatory arguments
                 ( "postgresql://postgres@[::1]/somedb",
-                  ConnectInfo
-                    { connectHost = "::1",
-                      connectPort = 5432,
-                      connectUser = "postgres",
-                      connectPassword = "",
-                      connectDatabase = "somedb"
+                  ConnectionString
+                    { hostname = "::1",
+                      port = 5432,
+                      user = "postgres",
+                      password = "",
+                      database = "somedb",
+                      options = Nothing
                     }
                 ),
                 ( "dbname='some thing /?:@' user='some thing /?:@'   host = localhost   ",
-                  ConnectInfo
-                    { connectHost = "localhost",
-                      connectPort = 5432,
-                      connectUser = "some thing /?:@",
-                      connectPassword = "",
-                      connectDatabase = "some thing /?:@"
+                  ConnectionString
+                    { hostname = "localhost",
+                      port = 5432,
+                      user = "some thing /?:@",
+                      password = "",
+                      database = "some thing /?:@",
+                      options = Nothing
                     }
                 ),
                 ( "dbname='some thing /?:@'\nuser='some thing /?:@' password='passwdsome thing /?:@' port=1 host = localhost\n",
-                  ConnectInfo
-                    { connectHost = "localhost",
-                      connectPort = 1,
-                      connectUser = "some thing /?:@",
-                      connectPassword = "passwdsome thing /?:@",
-                      connectDatabase = "some thing /?:@"
+                  ConnectionString
+                    { hostname = "localhost",
+                      port = 1,
+                      user = "some thing /?:@",
+                      password = "passwdsome thing /?:@",
+                      database = "some thing /?:@",
+                      options = Nothing
                     }
                 ),
                 ( "\ndbname=codd-experiments   \t\n    user=postgres port=5433 host=::1\n",
-                  ConnectInfo
-                    { connectHost = "::1",
-                      connectPort = 5433,
-                      connectUser = "postgres",
-                      connectPassword = "",
-                      connectDatabase = "codd-experiments"
+                  ConnectionString
+                    { hostname = "::1",
+                      port = 5433,
+                      user = "postgres",
+                      password = "",
+                      database = "codd-experiments",
+                      options = Nothing
                     }
                 ),
                 -- Only mandatory arguments
                 ( "dbname=codd-experiments\tuser=postgres\rhost=127.0.0.1",
-                  ConnectInfo
-                    { connectHost = "127.0.0.1",
-                      connectPort = 5432,
-                      connectUser = "postgres",
-                      connectPassword = "",
-                      connectDatabase = "codd-experiments"
+                  ConnectionString
+                    { hostname = "127.0.0.1",
+                      port = 5432,
+                      user = "postgres",
+                      password = "",
+                      database = "codd-experiments",
+                      options = Nothing
+                    }
+                ),
+                -- I didn't really test this with psql, but IIUC = signs should be accepted as parts of values
+                ( "dbname=codd-experiments\t  user=  post=gres password='abc = def'  host=127.0.0.1",
+                  ConnectionString
+                    { hostname = "127.0.0.1",
+                      port = 5432,
+                      user = "post=gres",
+                      password = "abc = def",
+                      database = "codd-experiments",
+                      options = Nothing
                     }
                 )
               ]
@@ -312,9 +393,11 @@ spec = do
             parseOnly (coddConnStringCommentParser <* endOfInput) ("-- codd-connection: " <> connString) `shouldBe` Right (CoddCommentSuccess expectedConnInfo)
 
       it "Randomized valid connection strings" $ do
-        property $ \(ConnStringGen connStr connInfo) ->
-          parseOnly (connStringParser <* endOfInput) connStr
-            `shouldBe` Right connInfo
+        property $ \(connGen :: ConnStringGen) -> do
+          let expectedConn = connInfoFromConnStringGen connGen
+          parseOnly (connStringParser <* endOfInput) (renderConnStringGen connGen) `shouldBe` Right expectedConn
+          -- Round-tripping with `libpqConnString`
+          parseOnly (connStringParser <* endOfInput) (decodeUtf8 $ libpqConnString expectedConn) `shouldBe` Right expectedConn
     context "Retry policy parsing" $ do
       it "Invalid policy strings" $ do
         parseOnly

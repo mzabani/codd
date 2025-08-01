@@ -1,7 +1,7 @@
 {
     "deferrable": false,
     "deferred": false,
-    "definition": "PRIMARY KEY (employee_id)",
+    "definition": "PRIMARY KEY (runid)",
     "fk_deltype": " ",
     "fk_matchtype": " ",
     "fk_ref_table": null,
@@ -10,7 +10,7 @@
     "local": true,
     "noinherit": true,
     "parent_constraint": null,
-    "supporting_index": "employee_pkey",
+    "supporting_index": "job_run_details_pkey",
     "type": "p",
     "validated": true
 }

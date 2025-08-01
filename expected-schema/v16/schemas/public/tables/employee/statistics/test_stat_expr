@@ -1,9 +1,0 @@
-{
-    "definition": "employee_id, lower(employee_name)",
-    "kind": [
-        "e",
-        "f",
-        "m"
-    ],
-    "owner": "codd_admin"
-}

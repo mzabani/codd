@@ -13,29 +13,13 @@ import Codd.Internal.MultiQueryStatement
     skipCountableRunnableStatements,
   )
 import Codd.Logging (runCoddLogger)
-import Codd.Parsing
-  ( AddedSqlMigration (..),
-    EnvVars (..),
-    ParsedSql (..),
-    PureStream (..),
-    SqlMigration (..),
-    SqlPiece (..),
-    copyFromStdinAfterStatementParser,
-    isCommentPiece,
-    isWhiteSpacePiece,
-    manyStreaming,
-    parseAndClassifyMigration,
-    parseSqlMigration,
-    parseSqlPiecesStreaming,
-    parseSqlPiecesStreaming',
-    parsedSqlText,
-    piecesToText,
-    sqlPieceText,
-  )
+import Codd.Parsing (AddedSqlMigration (..), EnvVars (..), ParsedSql (..), PureStream (..), SectionOption (..), SqlMigration (..), SqlPiece (..), copyFromStdinAfterStatementParser, isCommentPiece, isWhiteSpacePiece, manyStreaming, parseAndClassifyMigration, parseSqlMigration, parseSqlPiecesStreaming, parseSqlPiecesStreaming', parsedSqlText, piecesToText, sqlPieceText)
+import Codd.Types (ConnectionString (..))
 import Control.Monad
   ( forM,
     forM_,
     forever,
+    guard,
     unless,
     void,
     when,
@@ -47,13 +31,15 @@ import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe, mapMaybe)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import qualified Database.PostgreSQL.Simple as DB
 import DbUtils (parseSqlMigrationIO)
-import EnvironmentSpec (ConnStringGen (..))
+import EnvironmentSpec (ConnStringGen (..), connInfoFromConnStringGen, renderConnStringGen)
 import GHC.Num (Natural)
 import Streaming (Of (..), Stream)
 import qualified Streaming.Internal as S
@@ -67,6 +53,7 @@ import System.Random
 import Test.Hspec
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Test.QuickCheck
+import qualified Test.QuickCheck as QC
 import UnliftIO
   ( IORef,
     MonadIO,
@@ -149,6 +136,10 @@ validSqlStatements =
       OtherSqlPiece "select U&'\\0441\\043B\\043E\\043D';",
       OtherSqlPiece "select U&'d!0061t!+000061' UESCAPE '!';",
       OtherSqlPiece "select U&'d\\0061t\\+000061' UESCAPE '\\';",
+      OtherSqlPiece "select U&\"d\\0061t\\+000061\";",
+      OtherSqlPiece "select U&\"\\0441\\043B\\043E\\043D\";",
+      OtherSqlPiece "select U&\"d!0061t!+000061\" UESCAPE '!';",
+      OtherSqlPiece "select U&\"d\\0061t\\+000061\" UESCAPE '\\';",
       OtherSqlPiece "select X'1FF';",
       OtherSqlPiece "select B'1001';",
       OtherSqlPiece "SELECT 'some''quoted ''string';",
@@ -637,15 +628,15 @@ spec = do
 
       it "Sql Migration connection and custom options" $
         property $
-          \(ConnStringGen connStr connInfo, randomSeed) -> do
+          \(connGen :: ConnStringGen, randomSeed) -> do
             let sql1 =
                   "\n-- codd: no-txn\n"
                     <> "\n\n-- codd-connection: "
-                    <> connStr
+                    <> renderConnStringGen connGen
                     <> "\n\nSOME SQL"
                 sql2 =
                   "\n\n-- codd-connection: "
-                    <> connStr
+                    <> renderConnStringGen connGen
                     <> "\n-- codd: in-txn\n"
                     <> "SOME SQL"
             parsedMig1 <-
@@ -657,7 +648,7 @@ spec = do
             parsedMig1 `shouldHaveWellParsedSql` sql1
             migrationInTxn parsedMig1 `shouldBe` False
             migrationCustomConnInfo parsedMig1
-              `shouldBe` Just connInfo
+              `shouldBe` Just (connInfoFromConnStringGen connGen)
 
             parsedMig2 <-
               either (error "Oh nooo") id
@@ -668,14 +659,14 @@ spec = do
             parsedMig2 `shouldHaveWellParsedSql` sql2
             migrationInTxn parsedMig2 `shouldBe` True
             migrationCustomConnInfo parsedMig2
-              `shouldBe` Just connInfo
+              `shouldBe` Just (connInfoFromConnStringGen connGen)
 
       it "Sql Migration connection option alone" $
         property $
-          \(ConnStringGen connStr connInfo, randomSeed) -> do
+          \(connGen :: ConnStringGen, randomSeed) -> do
             let sql =
                   "-- random comment\n-- codd-connection: "
-                    <> connStr
+                    <> renderConnStringGen connGen
                     <> "\nSOME SQL"
             mig <-
               either (error "Oh no") id
@@ -685,7 +676,7 @@ spec = do
             migrationName mig `shouldBe` "any-name.sql"
             mig `shouldHaveWellParsedSql` sql
             migrationInTxn mig `shouldBe` True
-            migrationCustomConnInfo mig `shouldBe` Just connInfo
+            migrationCustomConnInfo mig `shouldBe` Just (connInfoFromConnStringGen connGen)
 
       it "Sql Migration parsed from disk with full contents" $
         runResourceT @IO $
@@ -751,12 +742,13 @@ spec = do
             migrationInTxn mig `shouldBe` True
             migrationCustomConnInfo mig
               `shouldBe` Just
-                DB.ConnectInfo
-                  { DB.connectUser = "codd_admin",
-                    DB.connectHost = "127.0.0.1",
-                    DB.connectPort = 5433,
-                    DB.connectPassword = "",
-                    DB.connectDatabase = "codd-experiments"
+                ConnectionString
+                  { user = "codd_admin",
+                    hostname = "127.0.0.1",
+                    port = 5433,
+                    password = "",
+                    database = "codd-experiments",
+                    options = Nothing
                   }
 
       it "-- codd-env-vars templating" $ do
@@ -824,6 +816,47 @@ spec = do
               parseSqlMigrationIO "any-name.sql" $
                 mkRandStream randomSeed sql
 
+      modifyMaxSuccess (* 100) $
+        it "All valid combinations of codd top-level comment markers, with empty lines and user-added comments in between, are all parsed successfully" $
+          property $
+            \(randomSeed, linesObj@(TopLevelCoddCommentLinesAndUserComments lines)) -> do
+              let sql = renderCoddCommentLines linesObj <> "-- Some SQL here\nSELECT 1;\n -- codd: this-will-be-ignored"
+              eMig <-
+                parseSqlMigrationIO
+                  "any-name.sql"
+                  $ mkRandStream
+                    randomSeed
+                    sql
+              case eMig of
+                Left e -> error $ "Got Left: " ++ show e
+                Right mig -> do
+                  let expectedOpts =
+                        List.foldl' Set.union mempty $
+                          map
+                            ( \case
+                                Just (Right opts) -> opts
+                                _ -> mempty
+                            )
+                            lines
+                      expectedCustomConnInfo =
+                        listToMaybe $
+                          mapMaybe
+                            ( \case
+                                Just (Left connGen) -> Just $ connInfoFromConnStringGen connGen
+                                _ -> Nothing
+                            )
+                            lines
+                  migrationRequiresCoddSchema mig `shouldBe` (OptRequiresCoddSchema `Set.member` expectedOpts)
+                  migrationInTxn mig `shouldBe` (OptInTxn `Set.member` expectedOpts || not (OptNoTxn `Set.member` expectedOpts))
+                  migrationCustomConnInfo mig `shouldBe` expectedCustomConnInfo
+                  -- TODO: Failing!
+                  -- --match "/Parsing/Parsing tests/Invalid SQL Migrations/All valid combinations of codd top-level comment markers, with empty lines and user-added comments in between, are all parsed successfully/" --seed 261994346
+                  if OptNoParse `Set.member` expectedOpts
+                    then
+                      shouldHaveUnparsedSql mig sql
+                    else
+                      shouldHaveWellParsedSql mig sql
+
       it "Gibberish after -- codd:" $ property $ \randomSeed -> do
         let sql = "-- codd: complete gibberish\n" <> "ANY SQL HERE"
         mig <-
@@ -887,10 +920,15 @@ spec = do
           \randomSeed -> do
             let sql =
                   "-- codd: no-parse\n-- codd: no-txn\nSome statement"
-            shouldReturnLeft $
+            mig <-
               parseSqlMigrationIO "no-parse-migration.sql" $
                 mkRandStream randomSeed sql
-
+            case mig of
+              Left err ->
+                err
+                  `shouldSatisfy` ( "It is not possible to set both 'no-txn' and 'no-parse'" `List.isInfixOf`
+                                  )
+              Right _ -> expectationFailure "Got Right"
       it
         "SAVEPOINTs need to be released or rolled back inside SQL migrations"
         $ pendingWith
@@ -1016,3 +1054,81 @@ spec = do
                 )
                 parsed
                 `shouldReturn` True
+
+-- | Represents empty lines, user-added comments, comments such as "-- codd: in-txn"
+-- and "-- codd-connection" comments, all interleaved in various ways, and always valid.
+newtype TopLevelCoddCommentLinesAndUserComments = TopLevelCoddCommentLinesAndUserComments
+  { -- | Empty lines are represented by an empty Set, user-added comments by a `Nothing`.
+    linesOfCommentsBlanksOptsOrConnString :: [Maybe (Either ConnStringGen (Set SectionOption))]
+  }
+  deriving stock (Show)
+
+renderCoddCommentLines :: TopLevelCoddCommentLinesAndUserComments -> Text
+renderCoddCommentLines
+  TopLevelCoddCommentLinesAndUserComments
+    { linesOfCommentsBlanksOptsOrConnString
+    } =
+    Text.concat $
+      map
+        lineText
+        linesOfCommentsBlanksOptsOrConnString
+    where
+      lineText :: Maybe (Either ConnStringGen (Set SectionOption)) -> Text
+      lineText = \case
+        Nothing -> "-- User-added comment\n"
+        Just (Left connGen) -> "-- codd-connection: " <> renderConnStringGen connGen <> "\n"
+        Just (Right opts)
+          | null opts -> "\n"
+          | otherwise -> "-- codd: " <> Text.intercalate "," (map sectionText $ Set.toList opts) <> "\n"
+      sectionText = \case
+        OptInTxn -> "in-txn"
+        OptNoTxn -> "no-txn"
+        OptNoParse -> "no-parse"
+        OptRequiresCoddSchema -> "requires-codd-schema"
+
+instance Arbitrary TopLevelCoddCommentLinesAndUserComments where
+  arbitrary = do
+    compatibleOpts <- arbOpts
+    TopLevelCoddCommentLinesAndUserComments <$> QC.sized (lineWithSomething compatibleOpts False)
+    where
+      lineWithSomething :: Set SectionOption -> Bool -> Int -> Gen [Maybe (Either ConnStringGen (Set SectionOption))]
+      lineWithSomething remainingOpts connStringAlreadyAdded size
+        | size <= 0 = pure []
+        | otherwise = do
+            nextLine <- commentOrLineGen $ do
+              let lineWithOptsGen = Set.fromList <$> QC.sublistOf (Set.toList remainingOpts)
+              if connStringAlreadyAdded
+                then Right <$> lineWithOptsGen
+                else eitherGen (arbitrary @ConnStringGen) lineWithOptsGen
+            let remainingOptsNew =
+                  remainingOpts `Set.difference` case nextLine of
+                    Just (Right s) -> s
+                    _ -> mempty
+                connStringAddedNew =
+                  connStringAlreadyAdded || case nextLine of
+                    Just (Left _) -> True
+                    _ -> False
+            (nextLine :) <$> lineWithSomething remainingOptsNew connStringAddedNew (size - 1)
+
+      eitherGen :: Gen a -> Gen b -> Gen (Either a b)
+      eitherGen l r =
+        commentOrLineGen r >>= \case
+          Just v -> pure $ Right v
+          Nothing -> Left <$> l
+      commentOrLineGen :: Gen a -> Gen (Maybe a)
+      commentOrLineGen lineGen = do
+        coin <- QC.frequency [(1, pure False), (20, pure True)]
+        if coin then Just <$> lineGen else pure Nothing
+      arbOpts = (Set.fromList <$> QC.listOf (QC.elements [OptInTxn, OptNoTxn, OptNoParse, OptRequiresCoddSchema])) `QC.suchThat` isValid
+      isValid opts =
+        not
+          ( OptNoTxn `Set.member` opts
+              && OptNoParse `Set.member` opts
+          )
+          && not
+            (OptInTxn `Set.member` opts && OptNoTxn `Set.member` opts)
+  shrink (TopLevelCoddCommentLinesAndUserComments lines) =
+    [ TopLevelCoddCommentLinesAndUserComments [lineWithSimplerConnGen] | line <- lines, lineWithSimplerConnGen <- case line of
+                                                                                          Just (Left connGen) -> map (Just . Left) $ shrink connGen
+                                                                                          _ -> [line]
+    ]

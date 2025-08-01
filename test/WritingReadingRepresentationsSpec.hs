@@ -11,6 +11,7 @@ import qualified Data.Map as Map
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
+import DbUtils (getEmptyTempDir)
 import System.FilePath
   ( (</>),
   )
@@ -20,14 +21,6 @@ import Test.QuickCheck
 import TypesGen (DbRepsGen (..))
 import UnliftIO (MonadIO (..))
 import UnliftIO.Directory (createDirectoryIfMissing, createDirectoryLink, doesDirectoryExist, emptyPermissions, getSymbolicLinkTarget, getTemporaryDirectory, pathIsSymbolicLink, setOwnerExecutable, setOwnerReadable, setPermissions)
-
-getEmptyTempDir :: (MonadIO m) => m FilePath
-getEmptyTempDir = do
-  tmp <- getTemporaryDirectory
-  complement :: UUID <- liftIO UUIDv4.nextRandom
-  let emptyDir = tmp </> UUID.toString complement
-  createDirectoryIfMissing True emptyDir
-  pure emptyDir
 
 spec :: Spec
 spec = do
