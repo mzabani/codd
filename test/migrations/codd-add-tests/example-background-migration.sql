@@ -4,4 +4,4 @@
 -- not in a folder writable by the user.
 SELECT codd.setup_background_worker('external');
 CREATE TABLE employee (somecolumn int);
-SELECT codd.populate_table_gradually('user-job-name', '1 seconds', 'employee', 'UPDATE employee SET somecolumn=1', 'NEW.somecolumn=17');
+SELECT codd.update_table_gradually('user-job-name', '1 seconds', 'employee', 'UPDATE employee SET somecolumn=1', 'NEW.somecolumn=17');

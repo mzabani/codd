@@ -330,7 +330,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \END;\n\
     \$func$ LANGUAGE plpgsql;\n\
     \\n\
-    \CREATE FUNCTION codd.populate_table_gradually(job_name text, cron_schedule text, table_to_populate text, plpgsql_to_run_periodically text, new_trigger_expr text) RETURNS VOID AS $func$\n\
+    \CREATE FUNCTION codd.update_table_gradually(job_name text, cron_schedule text, table_to_populate text, plpgsql_to_run_periodically text, new_trigger_expr text) RETURNS VOID AS $func$\n\
     \DECLARE\n\
     \  trigger_name text;\n\
     \  triggfn_name text;\n\
@@ -340,10 +340,10 @@ migrateInternalSchemaV4ToV5 conn = do
     \  PERFORM codd._assert_worker_is_setup();\n\
     \  IF table_to_populate IS NULL OR new_trigger_expr IS NULL THEN\n\
     \    RAISE EXCEPTION $err$\n\
-    \Did you forget to supply some arguments to codd.populate_table_gradually? Here is an usage example that updates one row every second:\n\
+    \Did you forget to supply some arguments to codd.update_table_gradually? Here is an usage example that updates one row every second:\n\
     \\n\
     \      ALTER TABLE animals ADD COLUMN new_number INT;\n\
-    \      SELECT codd.populate_table_gradually('new-column-with-old-column-plus1', '1 seconds', 'animals', \n\
+    \      SELECT codd.update_table_gradually('new-column-with-old-column-plus1', '1 seconds', 'animals', \n\
     \        $$\n\
     \        UPDATE animals SET new_number=old_number+1 WHERE animal_id=(SELECT animal_id FROM animals WHERE new_number IS NULL LIMIT 1);\n\
     \        $$\n\
@@ -353,7 +353,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \  END IF;\n\
     \  qualif_table = codd._qualify_existing_table(table_to_populate);\n\
     \  IF qualif_table IS NULL THEN\n\
-    \      RAISE EXCEPTION 'Column % could not be found. Please create the column yourself before calling populate_table_gradually, and possibly check your search_path setting', table_to_populate; \n\
+    \      RAISE EXCEPTION 'Column % could not be found. Please create the column yourself before calling update_table_gradually, and possibly check your search_path setting', table_to_populate; \n\
     \  END IF;\n\
     \  PERFORM codd._assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);\n\
     \\n\

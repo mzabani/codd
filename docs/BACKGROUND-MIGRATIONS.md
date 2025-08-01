@@ -29,12 +29,12 @@ SELECT codd.setup_background_worker('pg_cron');
 
 -- Now we add the column that will gradually populate the new 'new_employee_id'
 -- column, and for the sake of an example, we update 1000 rows every 10 seconds.
--- The 'codd.populate_table_gradually' function will create a background job
+-- The 'codd.update_table_gradually' function will create a background job
 -- and triggers to keep the values in 'employee.new_employee_id' in sync.
 -- The job will automatically stop running when the `UPDATE` statement has no
 -- more rows to update.
 ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
-SELECT codd.populate_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
+SELECT codd.update_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
 -- Next is the job that will run every 10 seconds. Note that row-returning statements do not work here.
 $$
 UPDATE employee SET new_employee_id=employee_id::bigint
@@ -79,7 +79,7 @@ The status will be `run-complete-awaiting-finalization`, and the description wil
 -- environments, if you prefer.
 SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '10 seconds');
 
--- You still have to rename and drop columns yourself. The 'codd.populate_table_gradually' function
+-- You still have to rename and drop columns yourself. The 'codd.update_table_gradually' function
 -- does only that: populate the new column.
 ALTER TABLE employee ALTER COLUMN new_employee_id SET DEFAULT nextval('employee_employee_id_seq');
 ALTER SEQUENCE employee_employee_id_seq OWNED BY employee.new_employee_id;
@@ -148,4 +148,4 @@ Until we implement [customizable schema equality checks](https://github.com/mzab
 
 ## More complex background migrations
 
-You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.populate_table_gradually` to view how `populate_table_gradually` uses it.
+You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.update_table_gradually` to view how `update_table_gradually` uses it.

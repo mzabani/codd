@@ -117,7 +117,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 
 ````sql
 ALTER TABLE employee ADD COLUMN new_employee_id BIGINT;
-SELECT codd.populate_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
+SELECT codd.update_table_gradually('make-employee_id-a-bigint', '10 seconds', 'employee',
 -- Next is the job that will run every 10 seconds.
 $$
 UPDATE employee SET new_employee_id=employee_id::bigint
