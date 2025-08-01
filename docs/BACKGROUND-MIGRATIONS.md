@@ -9,6 +9,7 @@
   - [What if I can't use pg_cron?](#what-if-i-cant-use-pgcron)
   - [Ignoring the 'cron' namespace](#ignoring-the-cron-namespace)
   - [More complex background migrations](#more-complex-background-migrations)
+  - [Next steps](#next-steps)
 <!--toc:end-->
 
 When it is not feasible to `UPDATE/INSERT/DELETE` large numbers of rows in a migration because it would cause downtime when deployed, codd provides helper functions that allow those operations to run in the background, on a schedule.
@@ -151,3 +152,9 @@ Until we implement [customizable schema equality checks](https://github.com/mzab
 ## More complex background migrations
 
 You can implement your own by using the more primitive `codd.background_job_begin` function. The author does not promise API or functional stability for it at the moment, but you can run `\ef codd.update_table_gradually` to view how `update_table_gradually` uses it.
+
+## Next steps
+
+The author's main focus is to add a way to do DDL asynchronously. That will require [this task](https://github.com/mzabani/codd/issues/167) to be implemented as otherwise codd's schema equality checks would obviously complain.
+
+Feedback is much welcome.

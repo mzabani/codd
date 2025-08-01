@@ -112,7 +112,7 @@ Automatic merge failed; fix conflicts and then commit the result.
 </tr>
 
 <tr>
-<td>Background/gradual migrations for large datasets</td>
+<td>Background/gradual migrations for large datasets³</td>
 <td>
 
 ````sql
@@ -135,6 +135,7 @@ $$
 
 ¹ Postgresql itself requires some SQL to run without explicit transactions; single-transaction application only works when that is not present.  
 ² There can be false positives and false negatives in some cases.   
+³ Requires the pg_cron extension, feature still in early phases.
 
 ## Installing Codd
 
