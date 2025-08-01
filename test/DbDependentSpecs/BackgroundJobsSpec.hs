@@ -139,7 +139,7 @@ spec = do
                 lastRunAt coddJob `shouldNotBe` Nothing
                 completedOrAbortedAt coddJob `shouldBe` Nothing
                 finalizedAt coddJob `shouldBe` Nothing
-                description coddJob `shouldContain` "Gradually populating values in the"
+                description coddJob `shouldContain` "Gradually updating rows in the"
               lastRunAt coddJobStillNotDone `shouldSatisfy` (> lastRunAt coddJobAfterOneRun)
               -- Unlike in other tests, this doesn't have Goku because Goku is inserted in the synchronous finalisation
               -- migration
@@ -186,7 +186,7 @@ spec = do
                 jobname abortedCoddJob `shouldBe` "change- expèRiénce$"
                 completedOrAbortedAt abortedCoddJob `shouldNotBe` Nothing
                 finalizedAt abortedCoddJob `shouldBe` Nothing
-                description abortedCoddJob `shouldContain` "Given up populating values in the"
+                description abortedCoddJob `shouldContain` "Given up updating rows in the"
                 -- Test that we can DELETE from _background_jobs, like we promise, and that synchronous finalization
                 -- errors out
                 DB.execute conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" () `shouldThrow` (\(ex :: SomeException) -> "It is not possible to finalize the aborted job " `List.isInfixOf` show ex)

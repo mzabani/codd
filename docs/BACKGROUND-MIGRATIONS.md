@@ -50,7 +50,7 @@ When you add the migration above you should see some instructions, too, but let'
 
 jobname                    |          created_at           |  status   |                                                   description                                                   | num_jobs_succeeded | num_jobs_error |          last_run_at          |    completed_or_aborted_at    |         finalized_at          |         last_error_at         |                            last_error
 ---------------------------+-------------------------------+-----------+-----------------------------------------------------------------------------------------------------------------+--------------------+----------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------+-------------------------------------------------------------------
- make-employee_id-a-bigint | 2025-07-26 17:19:19.641087+00 | started   | Gradually populating values in the employee table                                          |                  0 |                  0 |                |                               |                               |                               |
+ make-employee_id-a-bigint | 2025-07-26 17:19:19.641087+00 | started   | Gradually updating rows in the employee table                                                                   |                  0 |              0 |                               |                               |                               |                               |
 ```
 
 You will be able to run this in any environments you deploy to, and after waiting long enough every row in the `employee` table will have its `new_employee_id` column synced to `employee_id`. Even newly inserted or updated rows will be that way due to the added triggers.
@@ -61,7 +61,7 @@ After a while, this is what you will see in `codd.jobs`:
 > SELECT jobname, status, description FROM codd.jobs;
 jobname                   |               status               |                                                                                                                             description
 --------------------------+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee has now been populated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date
+make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee has now been updated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date
 ```
 
 The status will be `run-complete-awaiting-finalization`, and the description will lay it out more clearly what that means. Supposing every environment is showing us this same status, let's follow that description and create our second migration:
@@ -114,6 +114,7 @@ In the examples above we use `'10 seconds'`, but any pg_cron expression is valid
 Examples include:
 - Saturday at 3:30am (GMT) is `'30 3 * * 6'`
 - Every day at 10:00am (GMT) is `'0 10 * * *'`
+- Every 30 seconds: `'30 seconds'`
 
 ## Aborting background migrations
 
@@ -126,7 +127,7 @@ SELECT codd.abort_background_job('make-employee_id-a-bigint');
 You can also query `codd.jobs` after this, and its description should now give you instructions, such as:
 
 ```
-Given up populating values in the employee.new_employee_id column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now
+Given up updating rows in the employee.new_employee_id column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now
 ````
 
 Make sure you don't `codd.synchronously_finalize_background_job` aborted migrations, as it will fail. It's probably easier if you abort the same job in every environment, delete the row from `codd._background_jobs` in every environment and try again with a new migration.
