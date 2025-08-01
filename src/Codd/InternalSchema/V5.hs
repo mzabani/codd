@@ -94,9 +94,9 @@ migrateInternalSchemaV4ToV5 conn = do
     \  num_jobs_error BIGINT NOT NULL DEFAULT 0,\n\
     \  last_error TEXT,\n\
     \  description_started TEXT,\n\
-    \  description_aborted TEXT NOT NULL DEFAULT 'You may delete this row from codd._background_jobs at any time with no side effects',\n\
+    \  description_aborted TEXT NOT NULL DEFAULT 'You may delete this job with the codd.delete_background_job function at any time with no side effects',\n\
     \  description_awaiting_finalization TEXT,\n\
-    \  description_finalized TEXT NOT NULL DEFAULT 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects',\n\
+    \  description_finalized TEXT NOT NULL DEFAULT 'Job completed successfully. You may delete this job with the codd.delete_background_job function at any time with no side effects',\n\
     \  job_function TEXT NOT NULL,\n\
     \  objects_to_drop_in_order codd._obj_to_drop[] NOT NULL,\n\
     \  pg_cron_jobs TEXT[] NOT NULL\n\
@@ -174,6 +174,20 @@ migrateInternalSchemaV4ToV5 conn = do
     \  UPDATE codd._background_jobs SET status='aborted' WHERE jobname=job_name;\n\
     \END;\n\
     \$$ LANGUAGE plpgsql;\n\
+    \CREATE FUNCTION codd.delete_background_job(job_name text) RETURNS VOID AS $$\n\
+    \DECLARE\n\
+    \  jobstatus text;\n\
+    \BEGIN\n\
+    \  NOTIFY \"codd.___require_codd_schema_channel\";\n\
+    \  SELECT status INTO jobstatus FROM codd._background_jobs WHERE jobname=job_name;\n\
+    \  IF jobstatus IS NULL THEN\n\
+    \    RAISE EXCEPTION 'Codd background job named % does not exist', job_name;\n\
+    \  ELSIF jobstatus NOT IN ('aborted', 'finalized') THEN\n\
+    \    RAISE EXCEPTION 'Codd background job named % not finalized nor aborted. Abort it or finalize it before deleting it.', job_name;\n\
+    \  END IF;\n\
+    \  DELETE FROM codd._background_jobs WHERE jobname=job_name;\n\
+    \END;\n\
+    \$$ LANGUAGE plpgsql;\n\
     \CREATE TRIGGER react_to_status_change\n\
     \    BEFORE UPDATE OF status\n\
     \    ON codd._background_jobs\n\
@@ -224,7 +238,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \  PERFORM codd._assert_worker_is_setup();\n\
     \  PERFORM codd._assert_job_can_be_created(jobname, cron_schedule, plpgsql_to_run_periodically);\n\
     \\n\
-    \  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd._obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd._obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this row from codd._background_jobs at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects')) RETURNING * INTO created_job;\n\
+    \  INSERT INTO codd._background_jobs (jobname, job_function, objects_to_drop_in_order, pg_cron_jobs, description_started, description_aborted, description_awaiting_finalization, description_finalized) VALUES (jobname, temp_bg_wrapper_func_name, ARRAY[ROW('FUNCTION', temp_bg_wrapper_func_name, NULL)::codd._obj_to_drop, ROW('FUNCTION', temp_bg_success_func_name, NULL)::codd._obj_to_drop], ARRAY[jobname], description_started, COALESCE(description_aborted, 'You may delete this job with the codd.delete_background_job function at any time with no side effects'), description_awaiting_finalization, COALESCE(description_finalized, 'Job completed successfully. You may delete this job with the codd.delete_background_job function at any time with no side effects')) RETURNING * INTO created_job;\n\
     \\n\
     \  -- Why two functions instead of just one: Because each function's effects are atomic, as if\n\
     \  -- there was a savepoint around each function call, and that enables us to update codd._background_jobs\n\
@@ -330,7 +344,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \END;\n\
     \$func$ LANGUAGE plpgsql;\n\
     \\n\
-    \CREATE FUNCTION codd.update_table_gradually(job_name text, cron_schedule text, table_to_populate text, plpgsql_to_run_periodically text, new_trigger_expr text) RETURNS VOID AS $func$\n\
+    \CREATE FUNCTION codd.update_table_gradually(job_name text, cron_schedule text, table_to_update text, plpgsql_to_run_periodically text, new_trigger_expr text) RETURNS VOID AS $func$\n\
     \DECLARE\n\
     \  trigger_name text;\n\
     \  triggfn_name text;\n\
@@ -338,7 +352,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \  qualif_table_name text;\n\
     \BEGIN\n\
     \  PERFORM codd._assert_worker_is_setup();\n\
-    \  IF table_to_populate IS NULL OR new_trigger_expr IS NULL THEN\n\
+    \  IF table_to_update IS NULL OR new_trigger_expr IS NULL THEN\n\
     \    RAISE EXCEPTION $err$\n\
     \Did you forget to supply some arguments to codd.update_table_gradually? Here is an usage example that updates one row every second:\n\
     \\n\
@@ -351,9 +365,9 @@ migrateInternalSchemaV4ToV5 conn = do
     \      );\n\
     \    $err$;\n\
     \  END IF;\n\
-    \  qualif_table = codd._qualify_existing_table(table_to_populate);\n\
+    \  qualif_table = codd._qualify_existing_table(table_to_update);\n\
     \  IF qualif_table IS NULL THEN\n\
-    \      RAISE EXCEPTION 'Column % could not be found. Please create the column yourself before calling update_table_gradually, and possibly check your search_path setting', table_to_populate; \n\
+    \      RAISE EXCEPTION 'Column % could not be found. Please create the column yourself before calling update_table_gradually, and possibly check your search_path setting', table_to_update; \n\
     \  END IF;\n\
     \  PERFORM codd._assert_job_can_be_created(job_name, cron_schedule, plpgsql_to_run_periodically);\n\
     \\n\
@@ -361,7 +375,7 @@ migrateInternalSchemaV4ToV5 conn = do
     \  triggfn_name := format('%I.%I', (qualif_table)._schemaname, '_codd_bgjob_' || job_name);\n\
     \  qualif_table_name := format('%I.%I', (qualif_table)._schemaname, (qualif_table)._tablename);\n\
     \  \n\
-    \  PERFORM codd.background_job_begin(job_name, cron_schedule, (qualif_table)._schemaname, plpgsql_to_run_periodically, format('Gradually updating rows in the %s table', qualif_table_name), format('Given up updating rows in the %s table. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now', qualif_table_name), format('Every row in table %I has now been updated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date', (qualif_table)._tablename), NULL);\n\
+    \  PERFORM codd.background_job_begin(job_name, cron_schedule, (qualif_table)._schemaname, plpgsql_to_run_periodically, format('Gradually updating rows in the %s table', qualif_table_name), format('Given up updating rows in the %s table. You can delete this job with the codd.delete_background_job function without any side-effects and do any DDL you deem necessary now', qualif_table_name), format('Every row in table %I has now been updated and background jobs are no longer running. You can now add a migration calling codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date', (qualif_table)._tablename), NULL);\n\
     \  UPDATE codd._background_jobs SET objects_to_drop_in_order=ARRAY[ROW('TRIGGER', trigger_name, qualif_table_name)::codd._obj_to_drop, ROW('FUNCTION', triggfn_name, NULL)::codd._obj_to_drop] || objects_to_drop_in_order WHERE jobname=job_name;\n\
     \  EXECUTE format($triggers$\n\
     \  CREATE FUNCTION %s() RETURNS TRIGGER AS $$\n\
@@ -398,7 +412,7 @@ migrateInternalSchemaV4ToV5 conn = do
 --       JOIN pg_catalog.pg_namespace ON relnamespace=pg_namespace.oid
 --       JOIN pg_catalog.pg_class index_table ON index_table.oid=indrelid
 --       WHERE nspname=%s AND index_class.relname=%s AND index_table.relname=%s AND indisready AND indislive AND indisvalid;$$, quote_literal(current_schema), quote_literal(indexname), quote_literal(tablename))
---     , format('Periodically checking that the %I index on table %I was (concurrently) created successfully and is ready to be used', indexname, tablename), format('Given up on creating the %I index on table %I. You may DELETE this job from codd._background_jobs at any time without side effects', indexname, tablename), NULL, format('Index %I on table %I successfully created. This job may be DELETEd from codd._background_jobs', indexname, tablename), 'select-into-status-var');
+--     , format('Periodically checking that the %I index on table %I was (concurrently) created successfully and is ready to be used', indexname, tablename), format('Given up on creating the %I index on table %I. You may delete this job with the codd.delete_background_job function at any time without side effects', indexname, tablename), NULL, format('Index %I on table %I successfully created. This job may be DELETEd from codd._background_jobs', indexname, tablename), 'select-into-status-var');
 
 --   -- Add another cron job that does not run in a transaction to create the index
 --   UPDATE codd._background_jobs

@@ -61,7 +61,7 @@ After a while, this is what you will see in `codd.jobs`:
 > SELECT jobname, status, description FROM codd.jobs;
 jobname                   |               status               |                                                                                                                             description
 --------------------------+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee has now been updated and background jobs are no longer running. You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date
+make-employee_id-a-bigint | run-complete-awaiting-finalization | Every row in table employee has now been updated and background jobs are no longer running. You can now add a migration calling codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date
 ```
 
 The status will be `run-complete-awaiting-finalization`, and the description will lay it out more clearly what that means. Supposing every environment is showing us this same status, let's follow that description and create our second migration:
@@ -78,6 +78,7 @@ The status will be `run-complete-awaiting-finalization`, and the description wil
 -- use '10 seconds' below. You can, of course, apply this with different time limits in different
 -- environments, if you prefer.
 SELECT codd.synchronously_finalize_background_job('make-employee_id-a-bigint', '10 seconds');
+SELECT codd.delete_background_job('make-employee_id-a-bigint'); -- Optionally remove it from `codd.jobs`
 
 -- You still have to rename and drop columns yourself. The 'codd.update_table_gradually' function
 -- does only that: populate the new column.
@@ -127,10 +128,10 @@ SELECT codd.abort_background_job('make-employee_id-a-bigint');
 You can also query `codd.jobs` after this, and its description should now give you instructions, such as:
 
 ```
-Given up updating rows in the employee.new_employee_id column. You can DELETE this job row from codd._background_jobs without any side-effects and do any DDL you deem necessary now
+Given up updating rows in the employee table. You can delete this job with the codd.delete_background_job function without any side-effects and do any DDL you deem necessary now
 ````
 
-Make sure you don't `codd.synchronously_finalize_background_job` aborted migrations, as it will fail. It's probably easier if you abort the same job in every environment, delete the row from `codd._background_jobs` in every environment and try again with a new migration.
+Make sure you don't `codd.synchronously_finalize_background_job('job-name')` aborted migrations, as it will fail. It's probably easier if you abort the same job in every environment, then call `codd.delete_background_job('job-name')` in every environment and try again with a new migration.
 
 ## What if I can't use pg_cron?
 

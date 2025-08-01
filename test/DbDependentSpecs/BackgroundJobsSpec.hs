@@ -6,7 +6,7 @@ import Codd.Internal (withConnection)
 import Codd.Internal.MultiQueryStatement (SqlStatementException)
 import Codd.Logging (runCoddLogger)
 import Codd.Parsing (AddedSqlMigration (..), SqlMigration (..))
-import Codd.Query (InTxnT, query, unsafeQuery1, withTransaction)
+import Codd.Query (InTxnT, execvoid_, query, unsafeQuery1, withTransaction)
 import Codd.Representations (readRepresentationsFromDbWithSettings)
 import Codd.Types (ConnectionString (..), TxnIsolationLvl (..))
 import Control.Monad (forM_, unless, void, when)
@@ -156,7 +156,7 @@ spec = do
               finalizedAt finalizedCoddJob `shouldBe` Nothing
               lastErrorAt finalizedCoddJob `shouldBe` Nothing
               someCronJobRunning `shouldBe` False
-              description finalizedCoddJob `shouldContain` "You can now call codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date"
+              description finalizedCoddJob `shouldContain` "You can now add a migration calling codd.synchronously_finalize_background_job to remove the triggers and accessory functions created to keep the rows up-to-date"
 
       aroundCoddTestDbAndAndPgCron [] $ forM_ [False, True] $ \pgCronSetup ->
         it ("Aborting a job - " ++ show pgCronSetup) $ \testDbInfo -> do
@@ -190,7 +190,8 @@ spec = do
                 -- Test that we can DELETE from _background_jobs, like we promise, and that synchronous finalization
                 -- errors out
                 DB.execute conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" () `shouldThrow` (\(ex :: SomeException) -> "It is not possible to finalize the aborted job " `List.isInfixOf` show ex)
-                DB.execute conn "DELETE FROM codd._background_jobs WHERE jobname='change- expèRiénce$'" () `shouldReturn` 1
+                _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.delete_background_job('change- expèRiénce$')" ()
+                pure ()
 
       aroundCoddTestDbAndAndPgCron [] $ forM_ [(cron, isol) | cron <- [True, False], isol <- [DbDefault, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable]] $ \(pgCronSetup, txnIsolationLvl) ->
         it ("Fully test gradual migration and its synchronous finalisation - " ++ show (pgCronSetup, txnIsolationLvl)) $ \testDbInfo -> do
@@ -239,7 +240,7 @@ spec = do
                 finalizedAt finalizedCoddJob `shouldNotBe` Nothing
                 lastErrorAt finalizedCoddJob `shouldNotBe` Nothing
                 scheduledCronJobs `shouldBe` []
-                description finalizedCoddJob `shouldContain` "Job completed successfully. You may delete this row from codd._background_jobs at any time with no side effects"
+                description finalizedCoddJob `shouldContain` "Job completed successfully. You may delete this job with the codd.delete_background_job function at any time with no side effects"
                 -- Finalizing a job that's already finalized does nothing and does not throw
                 _ :: DB.Only () <- unsafeQuery1 conn "SELECT codd.synchronously_finalize_background_job('change- expèRiénce$', '0 seconds')" ()
                 pure ()
