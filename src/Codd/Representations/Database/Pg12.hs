@@ -338,7 +338,7 @@ objRepQueryFor allRoles schemaSel schemaAlgoOpts schemaName tableName = \case
     let hq = pgClassRepQuery (Just (allRoles, "'r'")) schemaName
      in hq
           { repCols =
-              ("definition_md5", "MD5(pg_views.definition)")
+              ("definition", "pg_catalog.pg_get_viewdef(pg_class.oid)")
                 : repCols hq,
             joins =
               joins hq
