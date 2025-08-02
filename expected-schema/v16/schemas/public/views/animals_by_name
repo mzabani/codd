@@ -2,7 +2,7 @@
     "accessmethod": null,
     "amoptions": null,
     "compositetype": null,
-    "definition": " SELECT employee_name\n   FROM public.employee;",
+    "definition": " SELECT popular_name\n   FROM public.animals\n  ORDER BY popular_name;",
     "forcerowsecurity": false,
     "kind": "v",
     "owner": "codd_admin",
@@ -18,6 +18,6 @@
     },
     "replident": "n",
     "rowsecurity": false,
-    "rowtype": "all_employee_names",
+    "rowtype": "animals_by_name",
     "shared": false
 }
