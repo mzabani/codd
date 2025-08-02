@@ -22,11 +22,11 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
         submodules: recursive
 
-    - uses: jlumbroso/free-disk-space@v1.3.1
+    - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
       with:
         tool-cache: true
     
@@ -37,7 +37,7 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
         name: mzabani
         skipPush: false
@@ -106,7 +106,7 @@ jobs:
     runs-on: macos-14
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
         submodules: recursive
 
@@ -128,7 +128,7 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
         name: mzabani
         skipPush: false
