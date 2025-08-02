@@ -70,8 +70,7 @@ genObjName :: Gen ObjName
 genObjName =
   ObjName . Text.pack
     <$> frequency
-      -- TODO: freq > 0 genNasty
-      [(100, genLower), (5, genMixed), (0, genNastyIdentifier)]
+      [(100, genLower), (5, genMixed)]
   where
     -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
     validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
@@ -93,4 +92,3 @@ genObjName =
               validLowerOtherChars
                 ++ validUpperOtherChars
       pure $ c : r
-    genNastyIdentifier = getPrintableString <$> arbitrary @PrintableString
