@@ -138,6 +138,16 @@ jobs:
     - name: List locales
       run: locale -a
 
+    - name: Print some possibly useful limits
+      run: |
+        # According to https://doc.owncloud.com/server/next/admin_manual/troubleshooting/path_filename_length.html
+        # Macs do have an undocumented limit of 1024 bytes for file paths.
+        # If this is true, then it can explain some not-so-occasional test failures
+        # we see for Mac. So we print this here, and a few other interesting limits.
+        getconf NAME_MAX /
+        getconf PATH_MAX /
+        ulimit -n # Max number of open file descriptors
+
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
