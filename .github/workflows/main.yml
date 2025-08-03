@@ -77,7 +77,7 @@ jobs:
     - name: Run tests
       run: |
         echo "Running tests that don't depend on a database"
-        nix-build --no-out-link -A testsNoDb
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
         # We test the last version with the vanilla nixpkgs-built derivation,
@@ -85,10 +85,10 @@ jobs:
         # postgres versions aren't enough to make it worth testing every version here too.
         nix-env -iA concurrently -f ./nix/nixpkgs.nix
         concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
-          'nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
-          'nix-build --no-out-link -A testsPg15' \
-          'nix-build --no-out-link -A testsPg14' \
-          'nix-build --no-out-link -A testsPg13'
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13'
 
         echo "Running system resource usage tests"
         nix-build --no-out-link -A testsSystemResources
@@ -159,7 +159,7 @@ jobs:
     - name: Run tests
       run: |
         echo "Running tests that don't depend on a database"
-        nix-build --no-out-link -A testsNoDb
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
         # We test the last version with the vanilla nixpkgs-built derivation,
@@ -167,10 +167,10 @@ jobs:
         # postgres versions aren't enough to make it worth testing every version here too.
         nix-env -iA concurrently -f ./nix/nixpkgs.nix
         concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
-          'nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
-          'nix-build --no-out-link -A testsPg15' \
-          'nix-build --no-out-link -A testsPg14' \
-          'nix-build --no-out-link -A testsPg13'
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13'
 
     - name: Create macOS app bundle
       run: |
