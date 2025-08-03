@@ -24,7 +24,7 @@ import Options.Applicative
 import qualified System.IO as IO
 import qualified Text.Read as Text
 
-data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool
+data Cmd = Up (Maybe Codd.VerifySchemas) DiffTime | Add (Maybe FilePath) (LogLevel -> Bool) SqlFilePath | WriteSchema WriteSchemaOpts | VerifySchema (LogLevel -> Bool) Bool | PrintCoddVersion
 
 cmdParser :: Parser Cmd
 cmdParser =
@@ -61,6 +61,7 @@ cmdParser =
                   "Verifies that the Database's current schema matches on-disk schema files."
               )
           )
+        <> command "version" (info (pure PrintCoddVersion) (progDesc "Prints codd's version"))
     )
 
 upParser :: Parser Cmd
@@ -204,3 +205,4 @@ doWork dbInfo (Add destFolder verbosity fp) =
 doWork dbInfo (VerifySchema verbosity fromStdin) =
   runCoddLoggerLevelFilter verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts
+doWork _ PrintCoddVersion = putStrLn "0.1.7"
