@@ -3,8 +3,12 @@ let
   pkgsMusl = if pkgs.stdenv.isDarwin || !useMuslIfPossible then pkgs else pkgs.pkgsCross.musl64;
   pkgsDarwin = import ./nix/nixpkgs.nix { system = "aarch64-darwin"; };
   addPgExtensions = postgres: postgres.withPackages (ps: [ ps.pg_cron ]);
+  fs = pkgsMusl.lib.fileset;
   project = pkgsMusl.haskell-nix.stackProject' {
-    src = ./.;
+    src = fs.toSource {
+      root = ./.;
+      fileset = fs.gitTracked ./.;
+    };
     stackYaml = "stack.yaml";
     compiler-nix-name = "ghc965";
 
