@@ -28,6 +28,7 @@ spec = do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
       property $ \(DbRepsGen dbHashes pgVersion) -> do
         -- /dev/shm is shared memory so should be faster, if it exists (MacOS doesn't have it)
+        putStrLn "REMOVE ME"
         shmExists <- doesDirectoryExist "/dev/shm"
         baseFolder :: FilePath <- if shmExists then pure "/dev/shm" else getEmptyTempDir
         writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes (baseFolder </> "inverse-test-sql-folder")
@@ -79,5 +80,5 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
       pgVersion
       expectedSchemaDir
   let diffs = schemaDifferences dbReps readDbSchema
-  diffs `shouldBe` Map.empty
+  diffs `shouldNotBe` Map.empty
   readDbSchema `shouldBe` dbReps
