@@ -165,12 +165,12 @@ jobs:
         # We test the last version with the vanilla nixpkgs-built derivation,
         # not the IOHK one. We assume differences in the codebase regarding different
         # postgres versions aren't enough to make it worth testing every version here too.
-        nix-env -iA concurrently -f ./nix/nixpkgs.nix
-        concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14' \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13'
+        # We don't run these concurrently because Nix does not have a sandbox in Macs, so it's
+        # not worth the risk.
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13
 
     - name: Create macOS app bundle
       run: |
