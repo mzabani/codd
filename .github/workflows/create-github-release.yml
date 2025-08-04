@@ -40,7 +40,7 @@ jobs:
         # We don't want to build things all over again, so make sure they're in the cache with -j0
         nix-build -j0 -o results/codd-docker -A dockerImage
         nix-build -j0 -o results/codd-x86_64-linux -A coddexe
-        nix-build -j0 -o results/codd-aarch64-darwin -A darwinAppBundle
+        nix-build -j0 -o results/codd-aarch64-darwin --argstr system aarch64-darwin -A darwinAppBundle
 
     - name: Create Github Release Draft
       env:
