@@ -16,6 +16,7 @@ project.shellFor {
     with pkgs;
     [
       cacert
+      concurrently
       ghcid
       glibcLocales
       hyperfine

@@ -22,11 +22,11 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
         submodules: recursive
 
-    - uses: jlumbroso/free-disk-space@v1.3.1
+    - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
       with:
         tool-cache: true
     
@@ -37,7 +37,7 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
         name: mzabani
         skipPush: false
@@ -77,18 +77,18 @@ jobs:
     - name: Run tests
       run: |
         echo "Running tests that don't depend on a database"
-        nix-build --no-out-link -A testsNoDb
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
         # We test the last version with the vanilla nixpkgs-built derivation,
         # not the IOHK one. We assume differences in the codebase regarding different
         # postgres versions aren't enough to make it worth testing every version here too.
-        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
-        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
-
-        nix-build --no-out-link -A testsPg15
-        nix-build --no-out-link -A testsPg14
-        nix-build --no-out-link -A testsPg13
+        nix-env -iA concurrently -f ./nix/nixpkgs.nix
+        concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13'
 
         echo "Running system resource usage tests"
         nix-build --no-out-link -A testsSystemResources
@@ -106,7 +106,7 @@ jobs:
     runs-on: macos-14
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       with:
         submodules: recursive
 
@@ -128,7 +128,7 @@ jobs:
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
           trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
-    - uses: cachix/cachix-action@v12
+    - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
         name: mzabani
         skipPush: false
@@ -137,6 +137,16 @@ jobs:
 
     - name: List locales
       run: locale -a
+
+    - name: Print some possibly useful limits
+      run: |
+        # According to https://doc.owncloud.com/server/next/admin_manual/troubleshooting/path_filename_length.html
+        # Macs do have an undocumented limit of 1024 bytes for file paths.
+        # If this is true, then it can explain some not-so-occasional test failures
+        # we see for Mac. So we print this here, and a few other interesting limits.
+        getconf NAME_MAX /
+        getconf PATH_MAX /
+        ulimit -n # Max number of open file descriptors
 
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
@@ -149,18 +159,18 @@ jobs:
     - name: Run tests
       run: |
         echo "Running tests that don't depend on a database"
-        nix-build --no-out-link -A testsNoDb
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
         # We test the last version with the vanilla nixpkgs-built derivation,
         # not the IOHK one. We assume differences in the codebase regarding different
         # postgres versions aren't enough to make it worth testing every version here too.
-        echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
-        nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
-
-        nix-build --no-out-link -A testsPg15
-        nix-build --no-out-link -A testsPg14
-        nix-build --no-out-link -A testsPg13
+        # We don't run these concurrently because Nix does not have a sandbox in Macs, so it's
+        # not worth the risk.
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13
 
     - name: Create macOS app bundle
       run: |

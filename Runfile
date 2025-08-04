@@ -28,12 +28,11 @@ ci-tests:
     # We test the last version with the vanilla nixpkgs-built derivation,
     # not the IOHK one. We assume differences in the codebase regarding different
     # postgres versions aren't enough to make it worth testing every version here too.
-    echo "Running all tests on Postgres 16 with nixpkgs's cabal2nix derivation of codd"
-    nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
-
-    run test-with-db --nix --pg 15
-    run test-with-db --nix --pg 14
-    run test-with-db --nix --pg 13
+    concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
+      'nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+      'run test-with-db --nix --pg 15' \
+      'run test-with-db --nix --pg 14' \
+      'run test-with-db --nix --pg 13'
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         echo "Running system-resources test"
