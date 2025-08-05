@@ -25,7 +25,6 @@ jobs:
     # unless we use a third party action. So we just rely on Nix and our cachix cache.
     - uses: cachix/install-nix-action@526118121621777ccd86f79b04685a9319637641 # 31.3.30
       with:
-        install_url: https://releases.nixos.org/nix/nix-2.8.1/install
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
@@ -41,7 +40,7 @@ jobs:
         # We don't want to build things all over again, so make sure they're in the cache with -j0
         nix-build -j0 -o results/codd-docker -A dockerImage
         nix-build -j0 -o results/codd-x86_64-linux -A coddexe
-        nix-build -j0 -o results/codd-aarch64-darwin -A darwinAppBundle
+        nix-build -j0 -o results/codd-aarch64-darwin --argstr system aarch64-darwin -A darwinAppBundle
 
     - name: Create Github Release Draft
       env:
