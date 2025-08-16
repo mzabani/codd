@@ -27,6 +27,7 @@ import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
@@ -34,9 +35,11 @@ import System.FilePath
     (</>),
   )
 import System.IO.Error (isDoesNotExistError)
+import System.Posix (Fd (..), OpenFileFlags (directory), OpenMode (..), closeFd, defaultFileFlags, openFd)
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
+    bracket,
     evaluate,
     handle,
     throwIO,
@@ -196,7 +199,7 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
       -- We want this function to be fast and as atomic as it can be, but:
       -- 1. `renameFile` throws if the target path is in a different partition from the source path
       -- 2. The user might not have permissions to delete the target folder but does have permissions to modify its contents
-      -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails on Windows if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
+      -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
       -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
       --   separated from "can-create", IIRC.
       errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [NoSuchThing, UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
@@ -243,9 +246,14 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
           obj
           ( \parentDir sobj -> do
               createDirectoryIfMissing True (dir </> parentDir)
+              -- TODO: Ignore exception (let's keep trying if fsync fails)
+              bracket (openFd (dir </> parentDir) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd >>= print)
               writeRec (dir </> parentDir) sobj
           )
           (\fn jsonRep -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
+
+foreign import ccall safe "fsync"
+  c_fsync :: CInt -> IO CInt
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
