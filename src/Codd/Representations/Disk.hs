@@ -29,6 +29,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
@@ -49,7 +50,9 @@ import UnliftIO
     handle,
     modifyMVar_,
     newMVar,
+    newTVar,
     pooledMapConcurrentlyN_,
+    pooledMapConcurrently_,
     throwIO,
     tryJust,
   )
@@ -252,17 +255,22 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
     writeRec dir obj = do
       createDirectoryIfMissing True dir
       createdDirs <- newMVar (Set.singleton dir)
+      -- concWriters <- newTVar (mempty :: Set FilePath)
       let createDirAndAncestors fp = modifyMVar_ createdDirs $ \cdirs -> do
-            allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
-              unless (d `Set.member` cdirs) $
-                createDirectory d
-              pure d
-            evaluate $ Set.fromList allDirs `Set.union` cdirs
-      forM_ (NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)) $ \filesPerFolder -> do
-        let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
-        createDirAndAncestors (dir </> relFolderToCreate)
-        -- Codd only has 2 capabilities
-        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
+            createDirectoryIfMissing True fp
+            pure cdirs
+      -- allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
+      --   unless (d `Set.member` cdirs || takeFileName d == ".") $
+      --     createDirectory d
+      --   pure d
+      -- evaluate $ Set.fromList allDirs `Set.union` cdirs
+      -- Codd only has 2 capabilities
+      pooledMapConcurrentlyN_ 2 (writeFolder createDirAndAncestors dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
+    writeFolder :: (FilePath -> IO ()) -> FilePath -> NE.NonEmpty (FilePath, Value) -> IO ()
+    writeFolder createDirAndAncestors dir filesPerFolder = do
+      let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
+      createDirAndAncestors (dir </> relFolderToCreate)
+      forM_ filesPerFolder (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
 
 -- fsyncFolder (dir </> relFolderToCreate)
 
