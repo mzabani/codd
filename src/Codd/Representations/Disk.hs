@@ -24,14 +24,18 @@ import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Ord (comparing)
+import Debug.Trace
 import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
-  ( takeFileName,
+  ( takeDirectory,
+    takeFileName,
     (</>),
   )
 import System.IO.Error (isDoesNotExistError)
@@ -47,6 +51,7 @@ import UnliftIO
   )
 import UnliftIO.Directory
   ( canonicalizePath,
+    createDirectory,
     createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
@@ -239,21 +244,15 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
           forM_ entries $ \x -> removePathForcibly (path </> x)
         else createDirectoryIfMissing True path
 
-    writeRec :: (DbDiskObj a) => FilePath -> a -> IO ()
-    writeRec dir obj =
-      void $
-        appr
-          obj
-          ( \parentDir sobj -> do
-              createDirectoryIfMissing True (dir </> parentDir)
-              -- TODO: Ignore exception (let's keep trying if fsync fails)
-              bracket (openFd (dir </> parentDir) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd >>= print)
-              writeRec (dir </> parentDir) sobj
-          )
-          (\fn jsonRep -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
+    writeRec :: FilePath -> DbRep -> IO ()
+    writeRec dir obj = do
+      forM_ (NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)) $ \filesPerFolder -> do
+        let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
+        createDirectoryIfMissing True (dir </> relFolderToCreate)
+        forM_ filesPerFolder $ \(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)
 
-foreign import ccall safe "fsync"
-  c_fsync :: CInt -> IO CInt
+-- foreign import ccall safe "fsync"
+--   c_fsync :: CInt -> IO CInt
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
