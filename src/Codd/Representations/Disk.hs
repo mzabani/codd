@@ -2,6 +2,7 @@ module Codd.Representations.Disk
   ( persistRepsToDisk,
     readRepsFromDisk,
     toFiles,
+    dirAndAncestorsBetween,
   )
 where
 
@@ -31,7 +32,9 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Debug.Trace
 import Foreign.C (CInt (..))
+import qualified GHC.Conc as STM
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
@@ -45,6 +48,7 @@ import System.Posix.IO (OpenFileFlags (directory))
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
+    atomically,
     bracket,
     evaluate,
     handle,
@@ -254,18 +258,39 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
     writeRec :: FilePath -> DbRep -> IO ()
     writeRec dir obj = do
       createDirectoryIfMissing True dir
-      createdDirs <- newMVar (Set.singleton dir)
-      -- concWriters <- newTVar (mempty :: Set FilePath)
-      let createDirAndAncestors fp = modifyMVar_ createdDirs $ \cdirs -> do
-            createDirectoryIfMissing True fp
-            pure cdirs
+      dirsCreatedT <- STM.newTVarIO (Set.singleton dir)
+      concWritersT <- STM.newTVarIO (mempty :: Set FilePath)
+      let createDirAndAncestors fp = do
+            -- Check-and-add to list of dirs being created
+            let foldersInBetween = Set.fromList $ dirAndAncestorsBetween dir fp
+            alreadyCreated <- STM.atomically $ do
+              foldersBeingCreated <- STM.readTVar concWritersT
+              dirsCreated <- STM.readTVar dirsCreatedT
+              -- let alreadyCreated = traceShow (fp, foldersInBetween) $ all (`Set.member` dirsCreated) foldersInBetween
+              let alreadyCreated = all (`Set.member` dirsCreated) foldersInBetween
+                  wouldCompete = any (`Set.member` foldersBeingCreated) foldersInBetween
+              if wouldCompete
+                then STM.retry
+                else
+                  if alreadyCreated
+                    then pure True
+                    else do
+                      STM.writeTVar concWritersT ((foldersBeingCreated `Set.union` foldersInBetween) `Set.difference` dirsCreated)
+                      pure False
+            unless alreadyCreated $ createDirectoryIfMissing True fp
+            -- Update lists again
+            STM.atomically $ do
+              foldersBeingCreated <- STM.readTVar concWritersT
+              dirsCreated <- STM.readTVar dirsCreatedT
+              STM.writeTVar concWritersT $ foldersBeingCreated `Set.difference` foldersInBetween
+              STM.writeTVar dirsCreatedT $ dirsCreated `Set.union` foldersInBetween
       -- allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
       --   unless (d `Set.member` cdirs || takeFileName d == ".") $
       --     createDirectory d
       --   pure d
       -- evaluate $ Set.fromList allDirs `Set.union` cdirs
-      -- Codd only has 2 capabilities
-      pooledMapConcurrentlyN_ 2 (writeFolder createDirAndAncestors dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
+      -- Limit concurrent writers to 2 to avoid too many open file descriptors at once
+      pooledMapConcurrently_ (writeFolder createDirAndAncestors dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
     writeFolder :: (FilePath -> IO ()) -> FilePath -> NE.NonEmpty (FilePath, Value) -> IO ()
     writeFolder createDirAndAncestors dir filesPerFolder = do
       let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
@@ -275,14 +300,14 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
 -- fsyncFolder (dir </> relFolderToCreate)
 
 dirAndAncestorsBetween :: FilePath -> FilePath -> [FilePath]
-dirAndAncestorsBetween ancestor' dir' = go ancestor' dir' []
+dirAndAncestorsBetween ancestor dir' = filter ((/= ".") . takeFileName) $ go dir' []
   where
-    go ancestor dir res
+    go dir res
       | dir == ancestor = dir : res
       | not (ancestor `List.isPrefixOf` dir) = res
       | otherwise =
           let parent = takeDirectory dir
-           in go ancestor parent [dir]
+           in go parent $ dir : res
 
 -- fsyncFolder :: FilePath -> IO ()
 -- fsyncFolder _dir = do
