@@ -160,6 +160,34 @@ jobs:
       run: |
         echo "Running tests that don't depend on a database"
         scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 1'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 2'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 3'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 4'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 5'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 6'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 7'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 8'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 9'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 10'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 11'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 12'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 13'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 14'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 15'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 16'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 17'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 18'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 19'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 20'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 21'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 22'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 23'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 24'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 25'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 26'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 27'
+        scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb --argstr hspecArgs '--match Writing --seed 28'
 
         # Postgres-version dependent tests for each possible version next
         # We test the last version with the vanilla nixpkgs-built derivation,

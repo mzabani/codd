@@ -251,7 +251,8 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
         pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
 
         -- TODO: Ignore exception (let's keep trying if fsync fails)
-        bracket (openFd (dir </> relFolderToCreate) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd >>= print)
+        fsyncResult <- bracket (openFd (dir </> relFolderToCreate) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
+        when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
 
 foreign import ccall safe "fsync"
   c_fsync :: CInt -> IO CInt
