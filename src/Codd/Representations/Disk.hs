@@ -46,6 +46,7 @@ import UnliftIO
     bracket,
     evaluate,
     handle,
+    pooledMapConcurrentlyN_,
     throwIO,
     tryJust,
   )
@@ -249,7 +250,8 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
       forM_ (NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)) $ \filesPerFolder -> do
         let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
         createDirectoryIfMissing True (dir </> relFolderToCreate)
-        forM_ filesPerFolder $ \(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)
+        -- Codd only has 2 capabilities
+        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
 
 -- foreign import ccall safe "fsync"
 --   c_fsync :: CInt -> IO CInt
