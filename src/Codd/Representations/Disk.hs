@@ -12,6 +12,7 @@ import Control.Monad
   ( forM,
     forM_,
     join,
+    unless,
     when,
   )
 import Control.Monad.Identity (runIdentity)
@@ -23,10 +24,12 @@ import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
+import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import qualified Data.Set as Set
 import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
@@ -44,12 +47,15 @@ import UnliftIO
     bracket,
     evaluate,
     handle,
+    modifyMVar_,
+    newMVar,
     pooledMapConcurrentlyN_,
     throwIO,
     tryJust,
   )
 import UnliftIO.Directory
   ( canonicalizePath,
+    createDirectory,
     createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
@@ -244,23 +250,42 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
 
     writeRec :: FilePath -> DbRep -> IO ()
     writeRec dir obj = do
+      createDirectoryIfMissing True dir
+      createdDirs <- newMVar (Set.singleton dir)
+      let createDirAndAncestors fp = modifyMVar_ createdDirs $ \cdirs -> do
+            allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
+              unless (d `Set.member` cdirs) $
+                createDirectory d
+              pure d
+            evaluate $ Set.fromList allDirs `Set.union` cdirs
       forM_ (NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)) $ \filesPerFolder -> do
         let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
-        createDirectoryIfMissing True (dir </> relFolderToCreate)
+        createDirAndAncestors (dir </> relFolderToCreate)
         -- Codd only has 2 capabilities
-        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep) >> fsyncFile (dir </> fn)) filesPerFolder
-        fsyncFolder (dir </> relFolderToCreate)
+        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
 
-fsyncFolder :: FilePath -> IO ()
-fsyncFolder _dir = do
-  pure ()
+-- fsyncFolder (dir </> relFolderToCreate)
+
+dirAndAncestorsBetween :: FilePath -> FilePath -> [FilePath]
+dirAndAncestorsBetween ancestor' dir' = go ancestor' dir' []
+  where
+    go ancestor dir res
+      | dir == ancestor = dir : res
+      | not (ancestor `List.isPrefixOf` dir) = res
+      | otherwise =
+          let parent = takeDirectory dir
+           in go ancestor parent [dir]
+
+-- fsyncFolder :: FilePath -> IO ()
+-- fsyncFolder _dir = do
+--   pure ()
 
 -- -- TODO: Ignore exception (let's keep trying if fsync fails)
 -- fsyncResult <- bracket (openFd dir ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
 -- when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
 
-fsyncFile :: FilePath -> IO ()
-fsyncFile _fn = pure ()
+-- fsyncFile :: FilePath -> IO ()
+-- fsyncFile _fn = pure ()
 
 -- do
 -- -- TODO: Ignore exception (let's keep trying if fsync fails)

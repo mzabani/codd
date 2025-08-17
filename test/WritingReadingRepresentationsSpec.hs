@@ -73,7 +73,6 @@ spec = do
 writeSchemaAndReadSchemaRoundtrip :: PgMajorVersion -> DbRep -> FilePath -> IO ()
 writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   persistRepsToDisk pgVersion dbReps expectedSchemaDir
-  c_sync
   readDbSchema <-
     readRepsFromDisk
       pgVersion
@@ -81,6 +80,3 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   let diffs = schemaDifferences dbReps readDbSchema
   diffs `shouldBe` Map.empty
   readDbSchema `shouldBe` dbReps
-
-foreign import ccall safe "sync"
-  c_sync :: IO ()
