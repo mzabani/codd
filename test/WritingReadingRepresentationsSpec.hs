@@ -7,6 +7,7 @@ import Codd.Representations
     schemaDifferences,
   )
 import Codd.Types (PgMajorVersion)
+import Control.Concurrent (threadDelay)
 import qualified Data.Map as Map
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -72,6 +73,7 @@ spec = do
 writeSchemaAndReadSchemaRoundtrip :: PgMajorVersion -> DbRep -> FilePath -> IO ()
 writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   persistRepsToDisk pgVersion dbReps expectedSchemaDir
+  threadDelay 50_000
   readDbSchema <-
     readRepsFromDisk
       pgVersion
