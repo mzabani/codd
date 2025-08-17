@@ -248,11 +248,20 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
         let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
         createDirectoryIfMissing True (dir </> relFolderToCreate)
         -- Codd only has 2 capabilities
-        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
+        pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep) >> fsyncFile (dir </> fn)) filesPerFolder
+        fsyncFolder (dir </> relFolderToCreate)
 
-        -- TODO: Ignore exception (let's keep trying if fsync fails)
-        fsyncResult <- bracket (openFd (dir </> relFolderToCreate) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
-        when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
+fsyncFolder :: FilePath -> IO ()
+fsyncFolder dir = do
+  -- TODO: Ignore exception (let's keep trying if fsync fails)
+  fsyncResult <- bracket (openFd dir ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
+  when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
+
+fsyncFile :: FilePath -> IO ()
+fsyncFile fn = do
+  -- TODO: Ignore exception (let's keep trying if fsync fails)
+  fsyncResult <- bracket (openFd fn ReadOnly defaultFileFlags) closeFd (\(Fd fd) -> c_fsync fd)
+  when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
 
 foreign import ccall safe "fsync"
   c_fsync :: CInt -> IO CInt
