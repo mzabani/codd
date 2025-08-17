@@ -12,7 +12,6 @@ import Control.Monad
   ( forM,
     forM_,
     join,
-    unless,
     when,
   )
 import Control.Monad.Identity (runIdentity)
@@ -24,14 +23,10 @@ import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
-import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
@@ -40,25 +35,17 @@ import System.FilePath
     (</>),
   )
 import System.IO.Error (isDoesNotExistError)
-import System.Posix (Fd (..), OpenMode (..), closeFd, defaultFileFlags, openFd)
-import System.Posix.IO (OpenFileFlags (directory))
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
-    bracket,
     evaluate,
     handle,
-    modifyMVar_,
-    newMVar,
-    newTVar,
     pooledMapConcurrentlyN_,
-    pooledMapConcurrently_,
     throwIO,
     tryJust,
   )
 import UnliftIO.Directory
   ( canonicalizePath,
-    createDirectory,
     createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
@@ -254,54 +241,14 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
     writeRec :: FilePath -> DbRep -> IO ()
     writeRec dir obj = do
       createDirectoryIfMissing True dir
-      createdDirs <- newMVar (Set.singleton dir)
-      -- concWriters <- newTVar (mempty :: Set FilePath)
-      let createDirAndAncestors fp = modifyMVar_ createdDirs $ \cdirs -> do
-            createDirectoryIfMissing True fp
-            pure cdirs
-      -- allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
-      --   unless (d `Set.member` cdirs || takeFileName d == ".") $
-      --     createDirectory d
-      --   pure d
-      -- evaluate $ Set.fromList allDirs `Set.union` cdirs
-      -- Codd only has 2 capabilities
-      pooledMapConcurrentlyN_ 2 (writeFolder createDirAndAncestors dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
-    writeFolder :: (FilePath -> IO ()) -> FilePath -> NE.NonEmpty (FilePath, Value) -> IO ()
-    writeFolder createDirAndAncestors dir filesPerFolder = do
+      -- Limit number of open file descriptors even if in the future we
+      -- increase codd's capabilities beyond the current 2
+      pooledMapConcurrentlyN_ 2 (writeFolder dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
+    writeFolder :: FilePath -> NE.NonEmpty (FilePath, Value) -> IO ()
+    writeFolder dir filesPerFolder = do
       let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
-      createDirAndAncestors (dir </> relFolderToCreate)
+      createDirectoryIfMissing True (dir </> relFolderToCreate)
       forM_ filesPerFolder (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
-
--- fsyncFolder (dir </> relFolderToCreate)
-
-dirAndAncestorsBetween :: FilePath -> FilePath -> [FilePath]
-dirAndAncestorsBetween ancestor' dir' = go ancestor' dir' []
-  where
-    go ancestor dir res
-      | dir == ancestor = dir : res
-      | not (ancestor `List.isPrefixOf` dir) = res
-      | otherwise =
-          let parent = takeDirectory dir
-           in go ancestor parent [dir]
-
--- fsyncFolder :: FilePath -> IO ()
--- fsyncFolder _dir = do
---   pure ()
-
--- -- TODO: Ignore exception (let's keep trying if fsync fails)
--- fsyncResult <- bracket (openFd dir ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
--- when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
-
--- fsyncFile :: FilePath -> IO ()
--- fsyncFile _fn = pure ()
-
--- do
--- -- TODO: Ignore exception (let's keep trying if fsync fails)
--- fsyncResult <- bracket (openFd fn ReadOnly defaultFileFlags) closeFd (\(Fd fd) -> c_fsync fd)
--- when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
-
--- foreign import ccall safe "fsync"
---   c_fsync :: CInt -> IO CInt
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =

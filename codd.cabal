@@ -110,7 +110,6 @@ library
     , text
     , time
     , transformers
-    , unix
     , unliftio
     , unliftio-core
     , unordered-containers

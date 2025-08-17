@@ -12,7 +12,6 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import DbUtils (getEmptyTempDir)
-import Foreign.C (CInt (..))
 import System.FilePath
   ( (</>),
   )
