@@ -12,7 +12,6 @@ import Control.Monad
   ( forM,
     forM_,
     join,
-    void,
     when,
   )
 import Control.Monad.Identity (runIdentity)
@@ -28,8 +27,6 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Ord (comparing)
-import Debug.Trace
 import Foreign.C (CInt (..))
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
@@ -39,7 +36,8 @@ import System.FilePath
     (</>),
   )
 import System.IO.Error (isDoesNotExistError)
-import System.Posix (Fd (..), OpenFileFlags (directory), OpenMode (..), closeFd, defaultFileFlags, openFd)
+import System.Posix (Fd (..), OpenMode (..), closeFd, defaultFileFlags, openFd)
+import System.Posix.IO (OpenFileFlags (directory))
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
@@ -52,7 +50,6 @@ import UnliftIO
   )
 import UnliftIO.Directory
   ( canonicalizePath,
-    createDirectory,
     createDirectoryIfMissing,
     doesDirectoryExist,
     listDirectory,
@@ -253,8 +250,11 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
         -- Codd only has 2 capabilities
         pooledMapConcurrentlyN_ 2 (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep)) filesPerFolder
 
--- foreign import ccall safe "fsync"
---   c_fsync :: CInt -> IO CInt
+        -- TODO: Ignore exception (let's keep trying if fsync fails)
+        bracket (openFd (dir </> relFolderToCreate) ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd >>= print)
+
+foreign import ccall safe "fsync"
+  c_fsync :: CInt -> IO CInt
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
