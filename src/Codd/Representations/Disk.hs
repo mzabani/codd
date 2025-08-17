@@ -252,19 +252,23 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
         fsyncFolder (dir </> relFolderToCreate)
 
 fsyncFolder :: FilePath -> IO ()
-fsyncFolder dir = do
-  -- TODO: Ignore exception (let's keep trying if fsync fails)
-  fsyncResult <- bracket (openFd dir ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
-  when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
+fsyncFolder _dir = do
+  pure ()
+
+-- -- TODO: Ignore exception (let's keep trying if fsync fails)
+-- fsyncResult <- bracket (openFd dir ReadOnly defaultFileFlags {directory = True}) closeFd (\(Fd fd) -> c_fsync fd)
+-- when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
 
 fsyncFile :: FilePath -> IO ()
-fsyncFile fn = do
-  -- TODO: Ignore exception (let's keep trying if fsync fails)
-  fsyncResult <- bracket (openFd fn ReadOnly defaultFileFlags) closeFd (\(Fd fd) -> c_fsync fd)
-  when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
+fsyncFile _fn = pure ()
 
-foreign import ccall safe "fsync"
-  c_fsync :: CInt -> IO CInt
+-- do
+-- -- TODO: Ignore exception (let's keep trying if fsync fails)
+-- fsyncResult <- bracket (openFd fn ReadOnly defaultFileFlags) closeFd (\(Fd fd) -> c_fsync fd)
+-- when (fsyncResult /= 0) $ putStrLn $ "Got bad fsync result: " ++ show fsyncResult
+
+-- foreign import ccall safe "fsync"
+--   c_fsync :: CInt -> IO CInt
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =

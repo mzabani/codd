@@ -12,6 +12,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import DbUtils (getEmptyTempDir)
+import Foreign.C (CInt (..))
 import System.FilePath
   ( (</>),
   )
@@ -72,6 +73,7 @@ spec = do
 writeSchemaAndReadSchemaRoundtrip :: PgMajorVersion -> DbRep -> FilePath -> IO ()
 writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   persistRepsToDisk pgVersion dbReps expectedSchemaDir
+  c_sync
   readDbSchema <-
     readRepsFromDisk
       pgVersion
@@ -79,3 +81,6 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   let diffs = schemaDifferences dbReps readDbSchema
   diffs `shouldBe` Map.empty
   readDbSchema `shouldBe` dbReps
+
+foreign import ccall safe "sync"
+  c_sync :: IO ()
