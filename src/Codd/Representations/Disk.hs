@@ -262,25 +262,28 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
       concWritersT <- STM.newTVarIO (mempty :: Set FilePath)
       let createDirAndAncestors fp = do
             -- Check-and-add to list of dirs being created
-            let foldersInBetween = dirAndAncestorsBetween dir fp
-            forM_ foldersInBetween $ \folder -> do
-              doCreate <- STM.atomically $ do
-                foldersBeingCreated <- STM.readTVar concWritersT
-                dirsCreated <- STM.readTVar dirsCreatedT
-                if folder `Set.member` dirsCreated
-                  then pure False
-                  else do
-                    when (folder `Set.member` foldersBeingCreated) STM.retry
-                    STM.writeTVar concWritersT (Set.insert folder foldersBeingCreated)
-                    pure True
-              when doCreate $ do
-                createDirectory folder
-                -- Update lists again
-                STM.atomically $ do
-                  foldersBeingCreated <- STM.readTVar concWritersT
-                  dirsCreated <- STM.readTVar dirsCreatedT
-                  STM.writeTVar concWritersT $ Set.delete folder foldersBeingCreated
-                  STM.writeTVar dirsCreatedT $ Set.insert folder dirsCreated
+            let foldersInBetween = Set.fromList $ dirAndAncestorsBetween dir fp
+            alreadyCreated <- STM.atomically $ do
+              foldersBeingCreated <- STM.readTVar concWritersT
+              dirsCreated <- STM.readTVar dirsCreatedT
+              -- let alreadyCreated = traceShow (fp, foldersInBetween) $ all (`Set.member` dirsCreated) foldersInBetween
+              let alreadyCreated = all (`Set.member` dirsCreated) foldersInBetween
+                  wouldCompete = any (`Set.member` foldersBeingCreated) foldersInBetween
+              if wouldCompete
+                then STM.retry
+                else
+                  if alreadyCreated
+                    then pure True
+                    else do
+                      STM.writeTVar concWritersT ((foldersBeingCreated `Set.union` foldersInBetween) `Set.difference` dirsCreated)
+                      pure False
+            unless alreadyCreated $ createDirectoryIfMissing True fp
+            -- Update lists again
+            STM.atomically $ do
+              foldersBeingCreated <- STM.readTVar concWritersT
+              dirsCreated <- STM.readTVar dirsCreatedT
+              STM.writeTVar concWritersT $ foldersBeingCreated `Set.difference` foldersInBetween
+              STM.writeTVar dirsCreatedT $ dirsCreated `Set.union` foldersInBetween
       -- allDirs <- forM (dirAndAncestorsBetween dir fp) $ \d -> do
       --   unless (d `Set.member` cdirs || takeFileName d == ".") $
       --     createDirectory d
