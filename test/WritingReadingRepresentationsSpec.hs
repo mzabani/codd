@@ -7,7 +7,8 @@ import Codd.Representations
     schemaDifferences,
   )
 import Codd.Types (PgMajorVersion)
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Monad (forM_)
 import qualified Data.Map as Map
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -83,7 +84,7 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   -- This is all terrible.
   c_sync
   threadDelay 100_000
-  c_sync
+  forM_ [1 .. 1000] $ \_ -> forkIO c_sync
   threadDelay 100_000
   c_sync
   threadDelay 200_000
