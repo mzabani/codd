@@ -84,6 +84,8 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   c_sync
   threadDelay 100_000
   c_sync
+  threadDelay 100_000
+  c_sync
   readDbSchema <-
     readRepsFromDisk
       pgVersion
