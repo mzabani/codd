@@ -20,7 +20,7 @@ import Data.Aeson
     decode,
   )
 import Data.Bifunctor (first)
-import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
@@ -249,7 +249,7 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
     writeFolder dir filesPerFolder = do
       let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
       createDirectoryIfMissing True (dir </> relFolderToCreate)
-      forM_ filesPerFolder (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (detEncodeJSONByteString jsonRep))
+      forM_ filesPerFolder (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (BS.toStrict $ detEncodeJSONByteString jsonRep))
 
 readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
 readNamespaceRep dir =
