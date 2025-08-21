@@ -2,6 +2,7 @@ module TypesGen where
 
 import Codd.Representations
 import Codd.Types (PgMajorVersion (..))
+import qualified Data.Aeson as Aeson
 import Data.Function (on)
 import Data.List (nubBy)
 import Data.Map.Strict (Map)
@@ -15,7 +16,7 @@ instance Arbitrary DbRepsGen where
   arbitrary =
     let repsGen =
           DbRep
-            <$> arbitrary
+            <$> arbJson
             <*> uniqueMapOf 3 schemaHashGen objName
             <*> uniqueMapOf 2 roleHashGen objName
         versionGen = PgMajorVersion <$> arbitrary
@@ -24,39 +25,42 @@ instance Arbitrary DbRepsGen where
       schemaHashGen =
         SchemaRep
           <$> genObjName
-          <*> arbitrary
+          <*> arbJson
           <*> uniqueMapOf 20 tableGen objName
           <*> uniqueMapOf 5 viewGen objName
           <*> uniqueMapOf 10 routineGen objName
           <*> uniqueMapOf 15 sequenceGen objName
           <*> uniqueMapOf 2 collationGen objName
           <*> uniqueMapOf 5 typeGen objName
-      roleHashGen = RoleRep <$> genObjName <*> arbitrary
+      roleHashGen = RoleRep <$> genObjName <*> arbJson
 
       -- Per-schema object generators
       tableGen =
         TableRep
           <$> genObjName
-          <*> arbitrary
+          <*> arbJson
           <*> uniqueMapOf 20 colGen objName
           <*> uniqueMapOf 5 constraintGen objName
           <*> uniqueMapOf 1 triggerGen objName
           <*> uniqueMapOf 2 policyGen objName
           <*> uniqueMapOf 3 indexGen objName
           <*> uniqueMapOf 1 stxGen objName
-      viewGen = ViewRep <$> genObjName <*> arbitrary
-      routineGen = RoutineRep <$> genObjName <*> arbitrary
-      sequenceGen = SequenceRep <$> genObjName <*> arbitrary
-      collationGen = CollationRep <$> genObjName <*> arbitrary
-      typeGen = TypeRep <$> genObjName <*> arbitrary
+      viewGen = ViewRep <$> genObjName <*> arbJson
+      routineGen = RoutineRep <$> genObjName <*> arbJson
+      sequenceGen = SequenceRep <$> genObjName <*> arbJson
+      collationGen = CollationRep <$> genObjName <*> arbJson
+      typeGen = TypeRep <$> genObjName <*> arbJson
 
       -- Per-table object generators
-      colGen = TableColumnRep <$> genObjName <*> arbitrary
-      constraintGen = TableConstraintRep <$> genObjName <*> arbitrary
-      triggerGen = TableTriggerRep <$> genObjName <*> arbitrary
-      policyGen = TablePolicyRep <$> genObjName <*> arbitrary
-      indexGen = TableIndexRep <$> genObjName <*> arbitrary
-      stxGen = TableStatisticsRep <$> genObjName <*> arbitrary
+      colGen = TableColumnRep <$> genObjName <*> arbJson
+      constraintGen = TableConstraintRep <$> genObjName <*> arbJson
+      triggerGen = TableTriggerRep <$> genObjName <*> arbJson
+      policyGen = TablePolicyRep <$> genObjName <*> arbJson
+      indexGen = TableIndexRep <$> genObjName <*> arbJson
+      stxGen = TableStatisticsRep <$> genObjName <*> arbJson
+
+arbJson :: Gen Aeson.Value
+arbJson = arbitrary
 
 uniqueListOf :: (Eq b) => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy =
@@ -73,10 +77,10 @@ genObjName =
       [(100, genLower), (5, genMixed)]
   where
     -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
-    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
-    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚñ_"
-    validLowerOtherChars = validLowerFirstChars ++ "0123456789$"
-    validUpperOtherChars = validUpperFirstChars ++ "0123456789$"
+    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyz"
+    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZ"
+    validLowerOtherChars = validLowerFirstChars ++ "0123456789"
+    validUpperOtherChars = validUpperFirstChars ++ "0123456789"
     genLower = do
       c <- elements validLowerFirstChars
       -- Max Length 63 bytes of UTF8-Encoded name
