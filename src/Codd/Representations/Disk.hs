@@ -27,6 +27,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Debug.Trace
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
 import System.FilePath
@@ -201,7 +202,7 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
       -- 3. Different operating systems can have different behaviours, like Windows, where renameDirectory fails if the target directory exists: https://hackage.haskell.org/package/directory-1.3.9.0/docs/System-Directory.html#v:renameDirectory
       -- 4. Windows and I think even Linux can have ACLs that have more than just a binary "can-write" privilege, with "can-delete" being
       --   separated from "can-create", IIRC.
-      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type e `elem` [NoSuchThing, UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
+      errBestScenario <- tryJust (\(e :: IOError) -> if ioe_type (traceShowId e) `elem` [NoSuchThing, UnsatisfiedConstraints, PermissionDenied, IllegalOperation, UnsupportedOperation] then Just () else Nothing) $ do
         let nonCanonTempDir = schemaDir </> "../.temp-codd-dir-you-can-remove"
         -- We don't try to be too smart if the schema dir is a symlink so we preserve that symlink
         isLink <- pathIsSymbolicLink schemaDir
@@ -355,7 +356,7 @@ readMultiple dir f = do
       return $ listToMap objList
     Left () -> pure Map.empty
   where
-    checkDoesNotExist (e :: IOError) = if isDoesNotExistError e then pure (Left ()) else throwIO e
+    checkDoesNotExist (e :: IOError) = if isDoesNotExistError (traceShowId e) then pure (Left ()) else throwIO e
 
 readRepsFromDisk ::
   (MonadUnliftIO m) =>
