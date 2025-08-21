@@ -82,12 +82,9 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   -- folder takes place, so maybe that's what I'm missing.
   -- Anyway, just calling "sync" also doesn't work. We call "sync" and wait some time.
   -- This is all terrible.
-  c_sync
-  threadDelay 100_000
-  forM_ [1 .. 1000] $ \_ -> forkIO c_sync
+  forM_ [1 .. 10] $ \_ -> forkIO c_sync
   threadDelay 100_000
   c_sync
-  threadDelay 200_000
   readDbSchema <-
     readRepsFromDisk
       pgVersion
