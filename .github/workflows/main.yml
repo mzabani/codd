@@ -158,9 +158,9 @@ jobs:
 
     - name: Test filesystem capabilities
       run: |
-        mkdir "0123456789$"
-        echo something > "0123456789$/abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
-        cat "0123456789$/abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
+        mkdir -p "0123456789$/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
+        echo something > "0123456789$/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
+        cat "0123456789$/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_/abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
 
     - name: Run tests
       run: |
