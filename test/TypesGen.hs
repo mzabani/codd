@@ -77,8 +77,8 @@ genObjName =
       [(100, genLower), (5, genMixed)]
   where
     -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
-    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáé"
-    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉ"
+    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzíóúñ_"
+    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÍÓÚñ_"
     validLowerOtherChars = validLowerFirstChars ++ "0123456789$"
     validUpperOtherChars = validUpperFirstChars ++ "0123456789$"
     genLower = do
