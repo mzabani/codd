@@ -79,8 +79,8 @@ genObjName =
     -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
     validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzñ"
     validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZñ"
-    validLowerOtherChars = validLowerFirstChars ++ "0123456789$"
-    validUpperOtherChars = validUpperFirstChars ++ "0123456789$"
+    validLowerOtherChars = validLowerFirstChars ++ "0123456789"
+    validUpperOtherChars = validUpperFirstChars ++ "0123456789"
     genLower = do
       c <- elements validLowerFirstChars
       -- Max Length 63 bytes of UTF8-Encoded name
