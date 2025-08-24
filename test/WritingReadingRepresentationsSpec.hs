@@ -14,6 +14,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import DbUtils (getEmptyTempDir)
+import GHC.IO.Encoding
 import System.FilePath
   ( (</>),
   )
@@ -30,6 +31,8 @@ spec = do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
       property $ \(DbRepsGen dbHashes pgVersion) -> do
         baseFolder <- getEmptyTempDir
+        enc <- getFileSystemEncoding
+        print enc
         writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes (baseFolder </> "inverse-test-sql-folder")
     modifyMaxSuccess (const 1)
       $ it
@@ -74,17 +77,6 @@ spec = do
 writeSchemaAndReadSchemaRoundtrip :: PgMajorVersion -> DbRep -> FilePath -> IO ()
 writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   persistRepsToDisk pgVersion dbReps expectedSchemaDir
-  -- Tests fail intermittently on MacOS because apparently directory entry metadata
-  -- might not be flushed to disk without fsync.
-  -- I have tried fsync'ing the directory after the last file is written to it, but
-  -- it didn't work. fsync'ing every file also didn't work. Granted, I didn't try
-  -- fsync'ing after the `rename` operation for the whole of the written expected-schema
-  -- folder takes place, so maybe that's what I'm missing.
-  -- Anyway, just calling "sync" also doesn't work. We call "sync" and wait some time.
-  -- This is all terrible.
-  forM_ [1 .. 10] $ \_ -> forkIO c_sync
-  threadDelay 100_000
-  c_sync
   readDbSchema <-
     readRepsFromDisk
       pgVersion
@@ -92,6 +84,3 @@ writeSchemaAndReadSchemaRoundtrip pgVersion dbReps expectedSchemaDir = do
   let diffs = schemaDifferences dbReps readDbSchema
   diffs `shouldBe` Map.empty
   readDbSchema `shouldBe` dbReps
-
-foreign import ccall unsafe "sync"
-  c_sync :: IO ()
