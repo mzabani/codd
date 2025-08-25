@@ -50,6 +50,11 @@ import Database.PostgreSQL.Simple.ToField
   ( ToField,
   )
 import GHC.Generics (Generic)
+import qualified System.Directory.OsPath as OS
+import qualified System.File.OsPath as OS
+import System.IO.Unsafe (unsafePerformIO)
+import System.OsPath (OsPath)
+import qualified System.OsPath as OS
 
 data ObjectRep = HDatabaseSettings | HSchema | HTable | HView | HRoutine | HColumn | HIndex | HTableConstraint | HTrigger | HRole | HSequence | HPolicy | HCollation | HType | HStatistics
   deriving stock (Eq, Ord, Show, Generic)
@@ -156,11 +161,11 @@ data TypeRep = TypeRep ObjName Value
   deriving anyclass (FromJSON, ToJSON)
 
 -- | TODO: Make sure valid DB characters are replaced by valid on-disk characters when necessary
-mkPathFrag :: ObjName -> FilePath
-mkPathFrag (ObjName n) = Text.unpack n
+mkPathFrag :: ObjName -> OsPath
+mkPathFrag (ObjName n) = unsafePerformIO $ OS.encodeFS $ Text.unpack n
 
-fromPathFrag :: FilePath -> ObjName
-fromPathFrag fp = ObjName $ Text.pack fp
+fromPathFrag :: OsPath -> ObjName
+fromPathFrag fp = ObjName $ Text.pack $ unsafePerformIO $ OS.decodeFS fp
 
 newtype ObjName = ObjName {unObjName :: Text}
   deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable, FromJSON, FromJSONKey, ToJSON, ToJSONKey)

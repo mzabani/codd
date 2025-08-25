@@ -5,6 +5,7 @@ let haskellPatchesOverlay = final: prev: {
           haxl = final.haskell.lib.doJailbreak
             (final.haskell.lib.markUnbroken hsSuper.haxl);
           postgresql-query = final.haskell.lib.dontCheck (final.haskell.lib.markUnbroken hsSuper.postgresql-query);
+          file-io = final.haskell.lib.doJailbreak (final.haskell.lib.markUnbroken hsSuper.file-io);
         };
       };
     };

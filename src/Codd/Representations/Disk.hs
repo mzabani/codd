@@ -1,3 +1,5 @@
+{-# LANGUAGE QuasiQuotes #-}
+
 module Codd.Representations.Disk
   ( persistRepsToDisk,
     readRepsFromDisk,
@@ -20,22 +22,21 @@ import Data.Aeson
     decode,
   )
 import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Debug.Trace
 import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.Stack (HasCallStack)
+import qualified System.Directory.OsPath as OS
+import qualified System.File.OsPath as OS
 import System.FilePath
-  ( takeDirectory,
-    takeFileName,
-    (</>),
+  ( (</>),
   )
 import System.IO.Error (isDoesNotExistError)
+import System.OsPath (OsPath, osp)
+import qualified System.OsPath as OS
 import UnliftIO
   ( MonadIO (..),
     MonadUnliftIO,
@@ -80,22 +81,22 @@ class DbDiskObj a where
     -- | When recursing into a new sub-structure, this function
     -- will be called with a relative folder where that substructure's
     -- root belongs to.
-    (forall b. (DbDiskObj b) => FilePath -> b -> m d) ->
+    (forall b. (DbDiskObj b) => OsPath -> b -> m d) ->
     -- | This function will be called when writing to a file. A relative path
     -- to this structure's root will be passed.
-    (FilePath -> Value -> m d) ->
+    (OsPath -> Value -> m d) ->
     m [d]
 
 simpleDbDiskObj ::
-  (Functor m) => ObjName -> Value -> (FilePath -> Value -> m d) -> m [d]
+  (Functor m) => ObjName -> Value -> (OsPath -> Value -> m d) -> m [d]
 simpleDbDiskObj oname orep ffile = (: []) <$> ffile (mkPathFrag oname) orep
 
 instance DbDiskObj DbRep where
   appr (DbRep dbSettingsRep schemas roles) frec ffile = do
-    x <- ffile "db-settings" dbSettingsRep
-    rs <- forM (Map.elems roles) $ frec "roles"
+    x <- ffile [osp|db-settings|] dbSettingsRep
+    rs <- forM (Map.elems roles) $ frec [osp|roles|]
     ss <- forM (Map.toList schemas) $ \(schemaName, schema) ->
-      frec ("schemas" </> mkPathFrag schemaName) schema
+      frec ([osp|schemas|] OS.</> mkPathFrag schemaName) schema
     pure $ x : rs ++ ss
 
 instance DbDiskObj RoleRep where
@@ -104,29 +105,29 @@ instance DbDiskObj RoleRep where
 instance DbDiskObj SchemaRep where
   appr (SchemaRep _schemaName namespaceRep tables views routines seqs colls types) frec ffile =
     do
-      x <- ffile "objrep" namespaceRep
+      x <- ffile [osp|objrep|] namespaceRep
       tbls <- forM (Map.toList tables) $ \(tableName, table) ->
-        frec ("tables" </> mkPathFrag tableName) table
-      vs <- forM (Map.elems views) $ frec "views"
-      rs <- forM (Map.elems routines) $ frec "routines"
-      ss <- forM (Map.elems seqs) $ frec "sequences"
-      cs <- forM (Map.elems colls) $ frec "collations"
-      ts <- forM (Map.elems types) $ frec "types"
+        frec ([osp|tables|] OS.</> mkPathFrag tableName) table
+      vs <- forM (Map.elems views) $ frec [osp|views|]
+      rs <- forM (Map.elems routines) $ frec [osp|routines|]
+      ss <- forM (Map.elems seqs) $ frec [osp|sequences|]
+      cs <- forM (Map.elems colls) $ frec [osp|collations|]
+      ts <- forM (Map.elems types) $ frec [osp|types|]
       pure $ x : tbls ++ vs ++ rs ++ ss ++ cs ++ ts
 
 instance DbDiskObj TableRep where
   appr (TableRep _tblName tblRep columns constraints triggers policies indexes statistics) frec ffile =
     do
       let mkpath p = p
-      x <- ffile (mkpath "objrep") tblRep
-      cols <- forM (Map.elems columns) $ frec (mkpath "cols")
+      x <- ffile (mkpath [osp|objrep|]) tblRep
+      cols <- forM (Map.elems columns) $ frec (mkpath [osp|cols|])
       constrs <-
         forM (Map.elems constraints) $
-          frec (mkpath "constraints")
-      trgrs <- forM (Map.elems triggers) $ frec (mkpath "triggers")
-      pols <- forM (Map.elems policies) $ frec (mkpath "policies")
-      idxs <- forM (Map.elems indexes) $ frec (mkpath "indexes")
-      stats <- forM (Map.elems statistics) $ frec (mkpath "statistics")
+          frec (mkpath [osp|constraints|])
+      trgrs <- forM (Map.elems triggers) $ frec (mkpath [osp|triggers|])
+      pols <- forM (Map.elems policies) $ frec (mkpath [osp|policies|])
+      idxs <- forM (Map.elems indexes) $ frec (mkpath [osp|indexes|])
+      stats <- forM (Map.elems statistics) $ frec (mkpath [osp|statistics|])
       pure $ x : cols ++ constrs ++ trgrs ++ pols ++ idxs ++ stats
 
 instance DbDiskObj TableColumnRep where
@@ -166,10 +167,10 @@ instance DbDiskObj CollationRep where
 instance DbDiskObj TypeRep where
   appr (TypeRep typeName typeRep) _ = simpleDbDiskObj typeName typeRep
 
-toFiles :: DbRep -> [(FilePath, Value)]
+toFiles :: DbRep -> [(OsPath, Value)]
 toFiles = sortOn fst . frec
   where
-    frec :: (DbDiskObj a) => a -> [(FilePath, Value)]
+    frec :: (DbDiskObj a) => a -> [(OsPath, Value)]
     frec sobj =
       concat $
         runIdentity $
@@ -177,7 +178,7 @@ toFiles = sortOn fst . frec
             sobj
             (\parentDir obj -> pure $ prependDir parentDir $ frec obj)
             (\fn h -> pure [(fn, h)])
-    prependDir dir = map (first (dir </>))
+    prependDir dir = map (first (dir OS.</>))
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
 persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => PgMajorVersion -> DbRep -> FilePath -> m ()
@@ -240,52 +241,53 @@ persistRepsToDisk pgVersion dbSchema schemaDirBeforeVersions =
         else createDirectoryIfMissing True path
 
     writeRec :: FilePath -> DbRep -> IO ()
-    writeRec dir obj = do
-      createDirectoryIfMissing True dir
+    writeRec dir' obj = do
+      createDirectoryIfMissing True dir'
+      dir <- OS.encodeFS dir'
       -- Limit number of open file descriptors even if in the future we
       -- increase codd's capabilities beyond the current 2
-      pooledMapConcurrentlyN_ 2 (writeFolder dir) $ NE.groupBy (\(f1, _) (f2, _) -> takeDirectory f1 == takeDirectory f2) (sortOn fst $ toFiles obj)
-    writeFolder :: FilePath -> NE.NonEmpty (FilePath, Value) -> IO ()
+      pooledMapConcurrentlyN_ 2 (writeFolder dir) $ NE.groupBy (\(f1, _) (f2, _) -> OS.takeDirectory f1 == OS.takeDirectory f2) (sortOn fst $ toFiles obj)
+    writeFolder :: OsPath -> NE.NonEmpty (OsPath, Value) -> IO ()
     writeFolder dir filesPerFolder = do
-      let relFolderToCreate = takeDirectory $ fst $ NE.head filesPerFolder
-      createDirectoryIfMissing True (dir </> relFolderToCreate)
-      forM_ filesPerFolder (\(fn, jsonRep) -> BS.writeFile (dir </> fn) (BS.toStrict $ detEncodeJSONByteString jsonRep))
+      let relFolderToCreate = OS.takeDirectory $ fst $ NE.head filesPerFolder
+      OS.createDirectoryIfMissing True (dir OS.</> relFolderToCreate)
+      forM_ filesPerFolder (\(fn, jsonRep) -> OS.writeFile (dir OS.</> fn) (detEncodeJSONByteString jsonRep))
 
-readNamespaceRep :: (MonadUnliftIO m) => FilePath -> m SchemaRep
+readNamespaceRep :: (MonadUnliftIO m) => OsPath -> m SchemaRep
 readNamespaceRep dir =
   SchemaRep (readObjName dir)
-    <$> readFileRep (dir </> "objrep")
-    <*> readMultiple (dir </> "tables") readTable
-    <*> readMultiple (dir </> "views") readView
-    <*> readMultiple (dir </> "routines") readRoutine
-    <*> readMultiple (dir </> "sequences") readSequence
-    <*> readMultiple (dir </> "collations") readCollation
-    <*> readMultiple (dir </> "types") readType
+    <$> readFileRep (dir OS.</> [osp|objrep|])
+    <*> readMultiple (dir OS.</> [osp|tables|]) readTable
+    <*> readMultiple (dir OS.</> [osp|views|]) readView
+    <*> readMultiple (dir OS.</> [osp|routines|]) readRoutine
+    <*> readMultiple (dir OS.</> [osp|sequences|]) readSequence
+    <*> readMultiple (dir OS.</> [osp|collations|]) readCollation
+    <*> readMultiple (dir OS.</> [osp|types|]) readType
 
-readTable :: (MonadUnliftIO m) => FilePath -> m TableRep
-readView :: (MonadUnliftIO m) => FilePath -> m ViewRep
-readRoutine :: (MonadUnliftIO m) => FilePath -> m RoutineRep
-readSequence :: (MonadUnliftIO m) => FilePath -> m SequenceRep
-readCollation :: (MonadUnliftIO m) => FilePath -> m CollationRep
-readType :: (MonadUnliftIO m) => FilePath -> m TypeRep
+readTable :: (MonadUnliftIO m) => OsPath -> m TableRep
+readView :: (MonadUnliftIO m) => OsPath -> m ViewRep
+readRoutine :: (MonadUnliftIO m) => OsPath -> m RoutineRep
+readSequence :: (MonadUnliftIO m) => OsPath -> m SequenceRep
+readCollation :: (MonadUnliftIO m) => OsPath -> m CollationRep
+readType :: (MonadUnliftIO m) => OsPath -> m TypeRep
 readTable dir =
   TableRep (readObjName dir)
-    <$> readFileRep (dir </> "objrep")
-    <*> readMultiple (dir </> "cols") (simpleObjRepFileRead TableColumnRep)
+    <$> readFileRep (dir OS.</> [osp|objrep|])
+    <*> readMultiple (dir OS.</> [osp|cols|]) (simpleObjRepFileRead TableColumnRep)
     <*> readMultiple
-      (dir </> "constraints")
+      (dir OS.</> [osp|constraints|])
       (simpleObjRepFileRead TableConstraintRep)
     <*> readMultiple
-      (dir </> "triggers")
+      (dir OS.</> [osp|triggers|])
       (simpleObjRepFileRead TableTriggerRep)
     <*> readMultiple
-      (dir </> "policies")
+      (dir OS.</> [osp|policies|])
       (simpleObjRepFileRead TablePolicyRep)
     <*> readMultiple
-      (dir </> "indexes")
+      (dir OS.</> [osp|indexes|])
       (simpleObjRepFileRead TableIndexRep)
     <*> readMultiple
-      (dir </> "statistics")
+      (dir OS.</> [osp|statistics|])
       (simpleObjRepFileRead TableStatisticsRep)
 
 readView = simpleObjRepFileRead ViewRep
@@ -298,23 +300,23 @@ readCollation = simpleObjRepFileRead CollationRep
 
 readType = simpleObjRepFileRead TypeRep
 
-readObjName :: FilePath -> ObjName
-readObjName = fromPathFrag . takeFileName
+readObjName :: OsPath -> ObjName
+readObjName = fromPathFrag . OS.takeFileName
 
 readFileRep ::
-  forall m. (MonadUnliftIO m) => FilePath -> m Value
+  forall m. (MonadUnliftIO m) => OsPath -> m Value
 readFileRep filepath = rethrowIfNotExists $ do
   -- Careful, LBS.readFile is lazy and does not close
   -- the file handle unless we force the thunk, and not closing
   -- file handles can make shells with low ulimits barf.
   -- MacOS has particularly low ulimits.
-  !fileContents <- liftIO $ LBS.readFile filepath
+  !fileContents <- liftIO $ OS.readFile filepath
   !decodedJson <-
     evaluate
       $ fromMaybe
         ( error $
             "File '"
-              ++ filepath
+              ++ show filepath
               ++ "' was supposed to contain a JSON value"
         )
       $ force
@@ -330,7 +332,7 @@ readFileRep filepath = rethrowIfNotExists $ do
                 throwIO $
                   userError $
                     "File "
-                      <> filepath
+                      <> show filepath
                       <> " was expected but does not exist"
               else throwIO e
         )
@@ -338,21 +340,21 @@ readFileRep filepath = rethrowIfNotExists $ do
 simpleObjRepFileRead ::
   (MonadUnliftIO m) =>
   (ObjName -> Value -> a) ->
-  FilePath ->
+  OsPath ->
   m a
 simpleObjRepFileRead f filepath =
   f (readObjName filepath) <$> readFileRep filepath
 
 readMultiple ::
   (MonadUnliftIO m, HasName o) =>
-  FilePath ->
-  (FilePath -> m o) ->
+  OsPath ->
+  (OsPath -> m o) ->
   m (Map ObjName o)
 readMultiple dir f = do
-  foldersOrNotOne <- handle checkDoesNotExist $ Right . filter (/= "objrep") <$> listDirectory dir
+  foldersOrNotOne <- handle checkDoesNotExist $ Right . filter (/= [osp|objrep|]) <$> liftIO (OS.listDirectory dir)
   case foldersOrNotOne of
     Right folders -> do
-      objList <- traverse (f . (dir </>)) folders
+      objList <- traverse (f . (dir OS.</>)) folders
       return $ listToMap objList
     Left () -> pure Map.empty
   where
@@ -364,12 +366,12 @@ readRepsFromDisk ::
   -- | The path of CODD_EXPECTED_SCHEMA_DIR, without any major version numbers
   FilePath ->
   m DbRep
-readRepsFromDisk pgVersion schemaDir =
-  let dir = schemaDir </> show pgVersion
-   in DbRep
-        <$> readFileRep (dir </> "db-settings")
-        <*> readMultiple (dir </> "schemas") readNamespaceRep
-        <*> readMultiple (dir </> "roles") (simpleObjRepFileRead RoleRep)
+readRepsFromDisk pgVersion schemaDir = do
+  dir <- liftIO $ OS.encodeFS $ schemaDir </> show pgVersion
+  DbRep
+    <$> readFileRep (dir OS.</> [osp|db-settings|])
+    <*> readMultiple (dir OS.</> [osp|schemas|]) readNamespaceRep
+    <*> readMultiple (dir OS.</> [osp|roles|]) (simpleObjRepFileRead RoleRep)
 
 whenM :: (Monad m) => m Bool -> m () -> m ()
 whenM s r = s >>= flip when r
