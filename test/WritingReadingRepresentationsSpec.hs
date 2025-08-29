@@ -7,14 +7,11 @@ import Codd.Representations
     schemaDifferences,
   )
 import Codd.Types (PgMajorVersion)
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (forM_)
 import qualified Data.Map as Map
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import DbUtils (getEmptyTempDir)
-import GHC.IO.Encoding
 import System.FilePath
   ( (</>),
   )
@@ -31,8 +28,6 @@ spec = do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
       property $ \(DbRepsGen dbHashes pgVersion) -> do
         baseFolder <- getEmptyTempDir
-        enc <- getFileSystemEncoding
-        print enc
         writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes (baseFolder </> "inverse-test-sql-folder")
     modifyMaxSuccess (const 1)
       $ it

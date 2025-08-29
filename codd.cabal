@@ -97,8 +97,6 @@ library
     , containers
     , deepseq
     , dlist
-    , directory
-    , file-io
     , filepath
     , formatting
     , hashable

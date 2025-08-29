@@ -81,8 +81,11 @@ validLowerFirstChars, validUpperFirstChars :: [Char]
 -- I tried using 'OsPath' and encoding and decoding carefully, but it did not work.
 -- My best hypothesis still is some weird encoding that does not roundtrip,
 -- despite github actions seemingly using UTF8 encoding in their filesystem.
+-- Of course, ideally we would fix this, but without MacOS to test with,
+-- pushing to CI and checking what happens there is too terrible a feedback loop.
 -- https://eclecticlight.co/2021/05/08/explainer-unicode-normalization-and-apfs/
 -- https://hasufell.github.io/posts/2022-06-29-fixing-haskell-filepaths.html
+-- https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
 validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóú_"
 validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚ_"
 #else
