@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module TypesGen where
 
 import Codd.Representations
@@ -70,17 +72,33 @@ uniqueMapOf :: (Ord k) => Int -> Gen a -> (a -> k) -> Gen (Map k a)
 uniqueMapOf size gen uniqBy =
   Map.fromList . map (\v -> (uniqBy v, v)) <$> resize size (listOf gen)
 
+-- | Valid first characters for database object names.
+validLowerFirstChars, validUpperFirstChars :: [Char]
+#ifdef darwin_HOST_OS
+-- Tests fail intermittenly on Darwin, and ñ seems to be the offending character
+-- in filesystem operations. See https://github.com/mzabani/codd/pull/220 for
+-- a long attempt at fixing it nicely.
+-- I tried using 'OsPath' and encoding and decoding carefully, but it did not work.
+-- My best hypothesis still is some weird encoding that does not roundtrip,
+-- despite github actions seemingly using UTF8 encoding in their filesystem.
+-- https://eclecticlight.co/2021/05/08/explainer-unicode-normalization-and-apfs/
+-- https://hasufell.github.io/posts/2022-06-29-fixing-haskell-filepaths.html
+validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóú_"
+validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚ_"
+#else
+validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
+validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚñ_"
+#endif
+
 genObjName :: Gen ObjName
 genObjName =
   ObjName . Text.pack
     <$> frequency
       [(100, genLower), (5, genMixed)]
   where
-    -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
-    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzñ"
-    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZñ"
-    validLowerOtherChars = validLowerFirstChars ++ "0123456789"
-    validUpperOtherChars = validUpperFirstChars ++ "0123456789"
+    validLowerOtherChars = validLowerFirstChars ++ "0123456789$"
+    validUpperOtherChars = validUpperFirstChars ++ "0123456789$"
+
     genLower = do
       c <- elements validLowerFirstChars
       -- Max Length 63 bytes of UTF8-Encoded name
