@@ -9,12 +9,10 @@ import Codd.Representations.Types
 import Codd.Types (PgMajorVersion (..))
 import Control.DeepSeq (force)
 import Control.Monad
-  ( forM,
-    forM_,
+  ( forM_,
     join,
     when,
   )
-import Control.Monad.Identity (runIdentity)
 import Data.Aeson
   ( Value,
     decode,
@@ -57,125 +55,46 @@ import Prelude hiding
     writeFile,
   )
 
-{-
-This module contains functions and data models to write and read schema representations
-from disk. It has been rewritten a few times in attempt to find a model
-that is sufficiently clean and robust.
-
-The unsolved challenge at this point is to unify both reading and writing
-under a unique model that represents how files and directories are laid out
-on disk, but it doesn't seem worth the trouble, honestly.
--}
-
--- | This class is equivalent to some form of monadic unfolding, mixed
--- with a mockable "writeFile" function. It allows us to derive both
--- `toFiles` and `persistRepsToDisk`, for example, but isn't a very elegant
--- model otherwise.
-class DbDiskObj a where
-  appr ::
-    (Monad m) =>
-    a ->
-    -- | When recursing into a new sub-structure, this function
-    -- will be called with a relative folder where that substructure's
-    -- root belongs to.
-    (forall b. (DbDiskObj b) => FilePath -> b -> m d) ->
-    -- | This function will be called when writing to a file. A relative path
-    -- to this structure's root will be passed.
-    (FilePath -> Value -> m d) ->
-    m [d]
-
 simpleDbDiskObj ::
-  (Functor m) => ObjName -> Value -> (FilePath -> Value -> m d) -> m [d]
-simpleDbDiskObj oname orep ffile = (: []) <$> ffile (mkPathFrag oname) orep
+  ObjName -> Value -> (FilePath, Value)
+simpleDbDiskObj oname orep = (mkPathFrag oname, orep)
 
-instance DbDiskObj DbRep where
-  appr (DbRep dbSettingsRep schemas roles) frec ffile = do
-    x <- ffile "db-settings" dbSettingsRep
-    rs <- forM (Map.elems roles) $ frec "roles"
-    ss <- forM (Map.toList schemas) $ \(schemaName, schema) ->
-      frec ("schemas" </> mkPathFrag schemaName) schema
-    pure $ x : rs ++ ss
+apprDbRep :: DbRep -> [(FilePath, Value)]
+apprDbRep (DbRep dbSettingsRep schemas roles) =
+  let x = ("db-settings", dbSettingsRep)
+      rs = prependDir "roles" $ flip map (Map.elems roles) $ \(RoleRep n v) -> simpleDbDiskObj n v
+      ss = prependDir "schemas" $ mconcat $ flip map (Map.toList schemas) $ \(schemaName, schema) ->
+        prependDir (mkPathFrag schemaName) (apprSchemaRep schema)
+   in x : rs ++ ss
 
-instance DbDiskObj RoleRep where
-  appr (RoleRep roleName roleRep) _ = simpleDbDiskObj roleName roleRep
+apprSchemaRep :: SchemaRep -> [(FilePath, Value)]
+apprSchemaRep (SchemaRep _schemaName namespaceRep tables views routines seqs colls types) =
+  let x = ("objrep", namespaceRep)
+      tbls = prependDir "tables" $ mconcat $ flip map (Map.toList tables) $ \(tableName, table) ->
+        prependDir (mkPathFrag tableName) (apprTableRep table)
+      vs = prependDir "views" $ map (\(ViewRep n v) -> simpleDbDiskObj n v) $ Map.elems views
+      rs = prependDir "routines" $ map (\(RoutineRep n v) -> simpleDbDiskObj n v) (Map.elems routines)
+      ss = prependDir "sequences" $ map (\(SequenceRep n v) -> simpleDbDiskObj n v) (Map.elems seqs)
+      cs = prependDir "collations" $ map (\(CollationRep n v) -> simpleDbDiskObj n v) (Map.elems colls)
+      ts = prependDir "types" $ map (\(TypeRep n v) -> simpleDbDiskObj n v) (Map.elems types)
+   in x : tbls ++ vs ++ rs ++ ss ++ cs ++ ts
 
-instance DbDiskObj SchemaRep where
-  appr (SchemaRep _schemaName namespaceRep tables views routines seqs colls types) frec ffile =
-    do
-      x <- ffile "objrep" namespaceRep
-      tbls <- forM (Map.toList tables) $ \(tableName, table) ->
-        frec ("tables" </> mkPathFrag tableName) table
-      vs <- forM (Map.elems views) $ frec "views"
-      rs <- forM (Map.elems routines) $ frec "routines"
-      ss <- forM (Map.elems seqs) $ frec "sequences"
-      cs <- forM (Map.elems colls) $ frec "collations"
-      ts <- forM (Map.elems types) $ frec "types"
-      pure $ x : tbls ++ vs ++ rs ++ ss ++ cs ++ ts
+apprTableRep :: TableRep -> [(FilePath, Value)]
+apprTableRep (TableRep _tblName tblRep columns constraints triggers policies indexes statistics) =
+  let x = ("objrep", tblRep)
+      cols = prependDir "cols" $ flip map (Map.elems columns) $ \(TableColumnRep colName colRep) -> simpleDbDiskObj colName colRep
+      constrs = prependDir "constraints" $ flip map (Map.elems constraints) $ \(TableConstraintRep n v) -> simpleDbDiskObj n v
+      trgrs = prependDir "triggers" $ flip map (Map.elems triggers) $ \(TableTriggerRep n v) -> simpleDbDiskObj n v
+      pols = prependDir "policies" $ flip map (Map.elems policies) $ \(TablePolicyRep n v) -> simpleDbDiskObj n v
+      idxs = prependDir "indexes" $ flip map (Map.elems indexes) $ \(TableIndexRep n v) -> simpleDbDiskObj n v
+      stats = prependDir "statistics" $ flip map (Map.elems statistics) $ \(TableStatisticsRep n v) -> simpleDbDiskObj n v
+   in x : cols ++ constrs ++ trgrs ++ pols ++ idxs ++ stats
 
-instance DbDiskObj TableRep where
-  appr (TableRep _tblName tblRep columns constraints triggers policies indexes statistics) frec ffile =
-    do
-      let mkpath p = p
-      x <- ffile (mkpath "objrep") tblRep
-      cols <- forM (Map.elems columns) $ frec (mkpath "cols")
-      constrs <-
-        forM (Map.elems constraints) $
-          frec (mkpath "constraints")
-      trgrs <- forM (Map.elems triggers) $ frec (mkpath "triggers")
-      pols <- forM (Map.elems policies) $ frec (mkpath "policies")
-      idxs <- forM (Map.elems indexes) $ frec (mkpath "indexes")
-      stats <- forM (Map.elems statistics) $ frec (mkpath "statistics")
-      pure $ x : cols ++ constrs ++ trgrs ++ pols ++ idxs ++ stats
-
-instance DbDiskObj TableColumnRep where
-  appr (TableColumnRep colName colRep) _ = simpleDbDiskObj colName colRep
-
-instance DbDiskObj TableConstraintRep where
-  appr (TableConstraintRep constrName constrRep) _ =
-    simpleDbDiskObj constrName constrRep
-
-instance DbDiskObj TableTriggerRep where
-  appr (TableTriggerRep triggerName triggerRep) _ =
-    simpleDbDiskObj triggerName triggerRep
-
-instance DbDiskObj TablePolicyRep where
-  appr (TablePolicyRep polName polRep) _ = simpleDbDiskObj polName polRep
-
-instance DbDiskObj TableStatisticsRep where
-  appr (TableStatisticsRep stxName stxRep) _ = simpleDbDiskObj stxName stxRep
-
-instance DbDiskObj TableIndexRep where
-  appr (TableIndexRep idxName indexRep) _ = simpleDbDiskObj idxName indexRep
-
-instance DbDiskObj ViewRep where
-  appr (ViewRep viewName viewRep) _ = simpleDbDiskObj viewName viewRep
-
-instance DbDiskObj RoutineRep where
-  appr (RoutineRep routineName routineRep) _ =
-    simpleDbDiskObj routineName routineRep
-
-instance DbDiskObj SequenceRep where
-  appr (SequenceRep seqName seqRep) _ = simpleDbDiskObj seqName seqRep
-
-instance DbDiskObj CollationRep where
-  appr (CollationRep collName collationRep) _ =
-    simpleDbDiskObj collName collationRep
-
-instance DbDiskObj TypeRep where
-  appr (TypeRep typeName typeRep) _ = simpleDbDiskObj typeName typeRep
+prependDir :: FilePath -> [(FilePath, Value)] -> [(FilePath, Value)]
+prependDir dir = map (first (dir </>))
 
 toFiles :: DbRep -> [(FilePath, Value)]
-toFiles = sortOn fst . frec
-  where
-    frec :: (DbDiskObj a) => a -> [(FilePath, Value)]
-    frec sobj =
-      concat $
-        runIdentity $
-          appr
-            sobj
-            (\parentDir obj -> pure $ prependDir parentDir $ frec obj)
-            (\fn h -> pure [(fn, h)])
-    prependDir dir = map (first (dir </>))
+toFiles = sortOn fst . apprDbRep
 
 -- | Wipes out completely the supplied folder and writes the representations of the Database's structures to it again.
 persistRepsToDisk :: forall m. (HasCallStack, MonadUnliftIO m) => PgMajorVersion -> DbRep -> FilePath -> m ()
