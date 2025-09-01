@@ -27,9 +27,7 @@ spec = do
   describe "Writing and reading representations" $ do
     it "persistRepsToDisk is inverse of readRepsFromDisk" $ do
       property $ \(DbRepsGen dbHashes pgVersion) -> do
-        -- /dev/shm is shared memory so should be faster, if it exists (MacOS doesn't have it)
-        shmExists <- doesDirectoryExist "/dev/shm"
-        baseFolder :: FilePath <- if shmExists then pure "/dev/shm" else getEmptyTempDir
+        baseFolder <- getEmptyTempDir
         writeSchemaAndReadSchemaRoundtrip pgVersion dbHashes (baseFolder </> "inverse-test-sql-folder")
     modifyMaxSuccess (const 1)
       $ it

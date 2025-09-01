@@ -1,7 +1,10 @@
+{-# LANGUAGE CPP #-}
+
 module TypesGen where
 
 import Codd.Representations
 import Codd.Types (PgMajorVersion (..))
+import qualified Data.Aeson as Aeson
 import Data.Function (on)
 import Data.List (nubBy)
 import Data.Map.Strict (Map)
@@ -15,7 +18,7 @@ instance Arbitrary DbRepsGen where
   arbitrary =
     let repsGen =
           DbRep
-            <$> arbitrary
+            <$> arbJson
             <*> uniqueMapOf 3 schemaHashGen objName
             <*> uniqueMapOf 2 roleHashGen objName
         versionGen = PgMajorVersion <$> arbitrary
@@ -24,39 +27,42 @@ instance Arbitrary DbRepsGen where
       schemaHashGen =
         SchemaRep
           <$> genObjName
-          <*> arbitrary
+          <*> arbJson
           <*> uniqueMapOf 20 tableGen objName
           <*> uniqueMapOf 5 viewGen objName
           <*> uniqueMapOf 10 routineGen objName
           <*> uniqueMapOf 15 sequenceGen objName
           <*> uniqueMapOf 2 collationGen objName
           <*> uniqueMapOf 5 typeGen objName
-      roleHashGen = RoleRep <$> genObjName <*> arbitrary
+      roleHashGen = RoleRep <$> genObjName <*> arbJson
 
       -- Per-schema object generators
       tableGen =
         TableRep
           <$> genObjName
-          <*> arbitrary
+          <*> arbJson
           <*> uniqueMapOf 20 colGen objName
           <*> uniqueMapOf 5 constraintGen objName
           <*> uniqueMapOf 1 triggerGen objName
           <*> uniqueMapOf 2 policyGen objName
           <*> uniqueMapOf 3 indexGen objName
           <*> uniqueMapOf 1 stxGen objName
-      viewGen = ViewRep <$> genObjName <*> arbitrary
-      routineGen = RoutineRep <$> genObjName <*> arbitrary
-      sequenceGen = SequenceRep <$> genObjName <*> arbitrary
-      collationGen = CollationRep <$> genObjName <*> arbitrary
-      typeGen = TypeRep <$> genObjName <*> arbitrary
+      viewGen = ViewRep <$> genObjName <*> arbJson
+      routineGen = RoutineRep <$> genObjName <*> arbJson
+      sequenceGen = SequenceRep <$> genObjName <*> arbJson
+      collationGen = CollationRep <$> genObjName <*> arbJson
+      typeGen = TypeRep <$> genObjName <*> arbJson
 
       -- Per-table object generators
-      colGen = TableColumnRep <$> genObjName <*> arbitrary
-      constraintGen = TableConstraintRep <$> genObjName <*> arbitrary
-      triggerGen = TableTriggerRep <$> genObjName <*> arbitrary
-      policyGen = TablePolicyRep <$> genObjName <*> arbitrary
-      indexGen = TableIndexRep <$> genObjName <*> arbitrary
-      stxGen = TableStatisticsRep <$> genObjName <*> arbitrary
+      colGen = TableColumnRep <$> genObjName <*> arbJson
+      constraintGen = TableConstraintRep <$> genObjName <*> arbJson
+      triggerGen = TableTriggerRep <$> genObjName <*> arbJson
+      policyGen = TablePolicyRep <$> genObjName <*> arbJson
+      indexGen = TableIndexRep <$> genObjName <*> arbJson
+      stxGen = TableStatisticsRep <$> genObjName <*> arbJson
+
+arbJson :: Gen Aeson.Value
+arbJson = arbitrary
 
 uniqueListOf :: (Eq b) => Int -> Gen a -> (a -> b) -> Gen [a]
 uniqueListOf size gen uniqBy =
@@ -66,17 +72,36 @@ uniqueMapOf :: (Ord k) => Int -> Gen a -> (a -> k) -> Gen (Map k a)
 uniqueMapOf size gen uniqBy =
   Map.fromList . map (\v -> (uniqBy v, v)) <$> resize size (listOf gen)
 
+-- | Valid first characters for database object names.
+validLowerFirstChars, validUpperFirstChars :: [Char]
+#ifdef darwin_HOST_OS
+-- Tests fail intermittenly on Darwin, and ñ seems to be the offending character
+-- in filesystem operations. See https://github.com/mzabani/codd/pull/220 for
+-- a long attempt at fixing it nicely.
+-- I tried using 'OsPath' and encoding and decoding carefully, but it did not work.
+-- My best hypothesis still is some weird encoding that does not roundtrip,
+-- despite github actions seemingly using UTF8 encoding in their filesystem.
+-- Of course, ideally we would fix this, but without MacOS to test with,
+-- pushing to CI and checking what happens there is too terrible a feedback loop.
+-- https://eclecticlight.co/2021/05/08/explainer-unicode-normalization-and-apfs/
+-- https://hasufell.github.io/posts/2022-06-29-fixing-haskell-filepaths.html
+-- https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
+validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóú_"
+validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚ_"
+#else
+validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
+validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚñ_"
+#endif
+
 genObjName :: Gen ObjName
 genObjName =
   ObjName . Text.pack
     <$> frequency
       [(100, genLower), (5, genMixed)]
   where
-    -- Docs: https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
-    validLowerFirstChars = "abcdefghijklmnopqrstuvxwyzçáéíóúñ_"
-    validUpperFirstChars = "ABCDEFGHIJKLMNOPQRSTUVXWYZÇÁÉÍÓÚñ_"
     validLowerOtherChars = validLowerFirstChars ++ "0123456789$"
     validUpperOtherChars = validUpperFirstChars ++ "0123456789$"
+
     genLower = do
       c <- elements validLowerFirstChars
       -- Max Length 63 bytes of UTF8-Encoded name
