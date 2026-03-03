@@ -116,6 +116,7 @@ validSqlStatements =
           <> "\nEND"
           <> "\n$do$;",
       OtherSqlPiece "CREATE TABLE \"escaped--table /* nasty */\";",
+      OtherSqlPiece "SELECT x, pg_sleep(x / 1000.0) FROM generate_series(1,1000) q(x);",
       OtherSqlPiece "CREATE TABLE any_table();",
       OtherSqlPiece $
         "CREATE FUNCTION sales_tax(subtotal real) RETURNS real AS $$"
