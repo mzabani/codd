@@ -247,7 +247,7 @@ hoistAddedSqlMigration f (AddedSqlMigration sqlMig tst) =
 data SectionOption = OptInTxn | OptNoTxn | OptNoParse | OptRequiresCoddSchema
   deriving stock (Eq, Ord, Show)
 
-data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | OtherSqlPiece !Text
+data SqlPiece = CommentPiece !Text | WhiteSpacePiece !Text | CopyFromStdinStatement !Text | CopyFromStdinRows !Text | CopyFromStdinEnd !Text | BeginTransaction !Text | RollbackTransaction !Text | CommitTransaction !Text | RestrictOrUnrestrictMetaCommand !Text | OtherSqlPiece !Text
   deriving stock (Show, Eq)
 
 data ParsingException = ParsingException
@@ -360,6 +360,7 @@ sqlPieceText (BeginTransaction s) = s
 sqlPieceText (RollbackTransaction s) = s
 sqlPieceText (CommitTransaction s) = s
 sqlPieceText (OtherSqlPiece s) = s
+sqlPieceText (RestrictOrUnrestrictMetaCommand s) = s
 sqlPieceText (CopyFromStdinStatement s) = s
 sqlPieceText (CopyFromStdinRows s) = s
 sqlPieceText (CopyFromStdinEnd s) = s
@@ -372,6 +373,7 @@ mapSqlPiece f = \case
   RollbackTransaction s -> RollbackTransaction (f s)
   CommitTransaction s -> CommitTransaction (f s)
   OtherSqlPiece s -> OtherSqlPiece (f s)
+  RestrictOrUnrestrictMetaCommand s -> RestrictOrUnrestrictMetaCommand (f s)
   CopyFromStdinStatement s -> CopyFromStdinStatement (f s)
   CopyFromStdinRows s -> CopyFromStdinRows (f s)
   CopyFromStdinEnd s -> CopyFromStdinEnd (f s)
@@ -405,6 +407,8 @@ sqlPieceParser parserState = case parserState of
           . CommitTransaction
           <$> commitTransactionParser
         <|> (,OutsideCopy)
+          <$> restrictOrUnrestrictMetaCommandParser
+        <|> (,OutsideCopy)
           . OtherSqlPiece
           <$> anySqlPieceParser
     beginTransactionParser =
@@ -421,6 +425,11 @@ sqlPieceParser parserState = case parserState of
     commitTransactionParser =
       spaceSeparatedTokensToParser
         [CITextToken "COMMIT", AllUntilEndOfStatement]
+    restrictOrUnrestrictMetaCommandParser = do
+      r <- string "\\restrict " <|> string "\\unrestrict "
+      key <- Parsec.takeWhile1 Char.isAlphaNum
+      eolOrEof <- "" <$ endOfInput <|> eol
+      pure $ RestrictOrUnrestrictMetaCommand $ r <> key <> eolOrEof
     anySqlPieceParser = do
       arbText <- spaceSeparatedTokensToParser [AllUntilEndOfStatement]
       when (arbText == "") $ fail "Please report this as a bug in codd: trying to parse empty string as SQL piece"

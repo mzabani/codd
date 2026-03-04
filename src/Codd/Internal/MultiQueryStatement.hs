@@ -191,6 +191,7 @@ isCountableRunnable = \case
   WhiteSpacePiece _ -> False
   BeginTransaction _ -> True
   CommitTransaction _ -> True
+  RestrictOrUnrestrictMetaCommand _ -> False
   RollbackTransaction _ -> True
   CopyFromStdinStatement _ -> False
   CopyFromStdinRows _ -> False
@@ -220,6 +221,7 @@ runSingleStatementInternal_ ::
 runSingleStatementInternal_ conn p = case p of
   CommentPiece _ -> applied
   WhiteSpacePiece _ -> applied
+  RestrictOrUnrestrictMetaCommand _ -> applied
   BeginTransaction s -> singleStatement_ conn s
   CommitTransaction s -> singleStatement_ conn s
   RollbackTransaction s -> singleStatement_ conn s
