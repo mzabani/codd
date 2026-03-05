@@ -2,6 +2,7 @@
 
 set -eo pipefail
 
+PGCTLSTATUS=0
 pg_ctl status -D "$PGDATA" || PGCTLSTATUS=$?
 
 if [ "$PGCTLSTATUS" = "0" ]; then
