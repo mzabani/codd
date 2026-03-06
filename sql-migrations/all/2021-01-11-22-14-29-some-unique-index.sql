@@ -1,1 +1,2 @@
-CREATE UNIQUE INDEX any_unique_employee_idx_will_do ON employee (employee_name);
+\restrict pbgv1pF8SxQK6cuT7hwDi21uDYr8wpxKJ3wlLa9Zk5EIO1xBiu84SJQU8fL22PT
+CREATE UNIQUE INDEX any_unique_employee_idx_will_do ON employee (employee_name);\unrestrict pbgv1pF8SxQK6cuT7hwDi21uDYr8wpxKJ3wlLa9Zk5EIO1xBiu84SJQU8fL22PT

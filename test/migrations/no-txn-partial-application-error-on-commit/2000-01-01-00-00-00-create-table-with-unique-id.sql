@@ -1,4 +1,5 @@
 -- codd: no-txn
+\restrict TAXaYefQ7OaPsbhTIwM0eA6r8S102Jqiy0mRQfQXQQmIdA9fqI7q4LFmKpchNqQ
 CREATE TABLE somedata (id INT NOT NULL, UNIQUE(id) DEFERRABLE INITIALLY DEFERRED);
 
 COPY somedata FROM STDIN WITH (FORMAT csv);
@@ -6,3 +7,4 @@ COPY somedata FROM STDIN WITH (FORMAT csv);
 2
 3
 \.
+\unrestrict TAXaYefQ7OaPsbhTIwM0eA6r8S102Jqiy0mRQfQXQQmIdA9fqI7q4LFmKpchNqQ

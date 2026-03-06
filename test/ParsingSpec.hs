@@ -260,10 +260,12 @@ genSql onlySyntacticallyValid = do
   where
     emptyLineGen = pure "\n"
     bizarreLineGen = (<> "\n") . Text.pack . getUnicodeString <$> arbitrary
+    restrictUnrestrictLineGen = elements ["\\restrict pbgv1pF8SxQK6cuT7hwDi21uDYr8wpxKJ3wlLa9Zk5EIO1xBiu84SJQU8fL22PT\n", "\\unrestrict pbgv1pF8SxQK6cuT7hwDi21uDYr8wpxKJ3wlLa9Zk5EIO1xBiu84SJQU8fL22PT\n"]
     lineGen =
       frequency
         [ (if onlySyntacticallyValid then 0 else 1, bizarreLineGen),
           (1, emptyLineGen),
+          (1, restrictUnrestrictLineGen),
           (5, piecesToText <$> genSingleSqlStatement)
         ]
     -- Note: the likelihood that QuickCheck will randomly generate text that has a line starting with "-- codd:"
@@ -555,7 +557,7 @@ spec = do
             `shouldBe` groupCopyRows (mconcat origPieces)
       modifyMaxSuccess (const 10000)
         $ it
-          "Statements concatenation matches original and statements end with semi-colon"
+          "Statements concatenation matches original and some assertions on parsed statements"
         $ do
           property $ \SyntacticallyValidRandomSql {..} -> do
             blks <-
@@ -577,6 +579,7 @@ spec = do
               WhiteSpacePiece t ->
                 t `shouldSatisfy` (\c -> Text.strip c == "")
               CopyFromStdinEnd ll -> ll `shouldBe` "\\.\n"
+              RestrictOrUnrestrictMetaCommand t -> t `shouldSatisfy` (\c -> "\\restrict " `Text.isPrefixOf` c || "\\unrestrict " `Text.isPrefixOf` c)
               _ -> pure ()
 
       modifyMaxSuccess (const 10000) $

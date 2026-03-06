@@ -1,1 +1,3 @@
+\restrict TAXaYefQ7OaPsbhTIwM0eA6r8S102Jqiy0mRQfQXQQmIdA9fqI7q4LFmKpchNqQ
 SELECT 3+25;
+\unrestrict TAXaYefQ7OaPsbhTIwM0eA6r8S102Jqiy0mRQfQXQQmIdA9fqI7q4LFmKpchNqQ
