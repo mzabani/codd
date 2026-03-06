@@ -205,4 +205,4 @@ doWork dbInfo (Add destFolder verbosity fp) =
 doWork dbInfo (VerifySchema verbosity fromStdin) =
   runCoddLoggerLevelFilter verbosity $ verifySchema dbInfo fromStdin
 doWork dbInfo (WriteSchema opts) = writeSchema dbInfo opts
-doWork _ PrintCoddVersion = putStrLn "0.1.7"
+doWork _ PrintCoddVersion = putStrLn "0.1.8"

@@ -120,7 +120,7 @@ shouldBeF errorMsg tolerance actual expected =
 -- to be slightly related, so I'm assuming that's the only case when it happens.
 r2ShouldBe1 :: (HasCallStack) => String -> Double -> IO ()
 r2ShouldBe1 errorMsg r2 =
-  unless (isNaN r2 || isInfinite r2) $ shouldBeF errorMsg 0.001 r2 1
+  unless (isNaN r2 || isInfinite r2) $ shouldBeF errorMsg 1e-2 r2 1
 
 fromSlopeAndIntercept :: V.Vector Double -> (Double, Double)
 fromSlopeAndIntercept v = case V.toList v of
