@@ -1536,14 +1536,6 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                           error $
                             "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this as a bug: "
                               ++ show states
-                        states@(PQ.TransUnknown, _) ->
-                          error $
-                            "Connection to database may have gone bad. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you: "
-                              ++ show states
-                        states@(_, PQ.TransUnknown) ->
-                          error $
-                            "Connection to database may have gone bad. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you: "
-                              ++ show states
                 )
                 ( numCountableRunnableStmtsToSkip,
                   Nothing,
