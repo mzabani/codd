@@ -212,8 +212,12 @@ addMigration dbInfo@Codd.CoddSettings {onDiskReps, migsConnString = defaultConnI
                             (pgMajorVer, _) <- queryServerMajorAndFullVersion conn
                             (pgMajorVer,) <$> readRepresentationsFromDbWithSettings dbInfo conn
                         )
-                    addedMigRequiresCoddSchema <- liftIO $ checkCoddSchemaFunctionsHaveBeenCalled listenConn
+                    -- Different connections means different sockets, which means we have to fetch
+                    -- some query results _before_ `checkCoddSchemaFunctionsHaveBeenCalled`, because
+                    -- that checks if a notification was received non-blocking, and that can return
+                    -- no notifications unless we fetch something on "listenConn" first.
                     newlyStartedJobs <- getAddedJobsStillRunning listenConn maxBackgroundJobIdBefore
+                    addedMigRequiresCoddSchema <- liftIO $ checkCoddSchemaFunctionsHaveBeenCalled listenConn
                     closeFileStream migStream
                     pure (pgVerAndSchemas, addedMigRequiresCoddSchema, newlyStartedJobs)
                 persistRepsToDisk pgMajorVer databaseSchemas onDiskRepsDir
