@@ -1,3 +1,5 @@
+-- This file has CRLF line endings, just another test
+-- 
 CREATE STATISTICS IF NOT EXISTS test_stat_expr
     ( dependencies,mcv) ON employee_id, lower(employee_name)
     FROM employee ;
