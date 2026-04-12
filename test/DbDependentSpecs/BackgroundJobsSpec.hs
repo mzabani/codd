@@ -219,7 +219,7 @@ spec = do
                     lastRunAt startedCoddJob `shouldNotBe` Nothing
                     completedOrAbortedAt startedCoddJob `shouldBe` Nothing
                     finalizedAt startedCoddJob `shouldBe` Nothing
-              (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [String]) <-
+              (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [DB.Only String]) <-
                 applyMigrationsNoCheck
                   testDbInfo {txnIsolationLvl = txnIsolationLvl}
                   (Just [finalizeExperienceMigration])
@@ -274,7 +274,7 @@ spec = do
             -- it to conflict with itself.
             -- The call to applyMigrationsNoCheck below deadlocks unless codd's schema has carefully designed locks
             -- in its functions.
-            (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [String]) <-
+            (allEmployees :: [(String, String)], finalizedCoddJob :: JobInfo, scheduledCronJobs :: [DB.Only String]) <-
               applyMigrationsNoCheck
                 testDbInfo {txnIsolationLvl = txnIsolationLvl}
                 (Just [finalizeExperienceMigration])
