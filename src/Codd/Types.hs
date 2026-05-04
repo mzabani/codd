@@ -64,12 +64,15 @@ libpqConnString ConnectionString {..} =
   where
     mixedKwvps =
       catMaybes
-        [ Just ("user", quote user),
+        [ if user == "" then Nothing else Just ("user", quote user),
           Just
             ("host", quote hostname),
-          Just
-            ("dbname", quote database),
-          Just ("password", quote password),
+          if database == ""
+            then Nothing
+            else
+              Just
+                ("dbname", quote database),
+          if password == "" then Nothing else Just ("password", quote password),
           Just ("port", quote (show port)),
           options >>= (Just . ("options",)) . quote
         ]
