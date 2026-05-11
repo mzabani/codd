@@ -103,8 +103,7 @@ library
     , haxl
     , mtl
     , network-uri
-    , postgresql-libpq
-    , postgresql-simple
+    , hpgsql-simple-compat
     , resourcet
     , streaming
     , text
@@ -158,7 +157,7 @@ executable codd
       base
     , codd
     , optparse-applicative
-    , postgresql-simple
+    , hpgsql-simple-compat
     , text
     , time
   default-language: Haskell2010
@@ -272,6 +271,7 @@ test-suite codd-test
       aeson >= 2
     , attoparsec
     , base
+    , bytestring
     , codd
     , containers
     , filepath
@@ -280,7 +280,7 @@ test-suite codd-test
     , hspec-core
     , mtl
     , network-uri
-    , postgresql-simple
+    , hpgsql-simple-compat
     , QuickCheck
     , random
     , resourcet
