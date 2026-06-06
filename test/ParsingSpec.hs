@@ -20,6 +20,7 @@ import Control.Monad
     forM_,
     forever,
     guard,
+    replicateM,
     unless,
     void,
     when,
@@ -303,7 +304,7 @@ instance (Monad m) => Arbitrary (RandomSql m) where
 instance (Monad m) => Arbitrary (SyntacticallyValidRandomSql m) where
   arbitrary = uncurry SyntacticallyValidRandomSql <$> genSql True
 
-data CopyBody m = CopyBody
+data CopyBody = CopyBody
   { numLines :: Int,
     chunkSize :: Int,
     terminator :: Text,
@@ -311,12 +312,13 @@ data CopyBody m = CopyBody
   }
   deriving stock (Show)
 
-instance Arbitrary (CopyBody m) where
+instance Arbitrary CopyBody where
   arbitrary = do
     numLines <- chooseInt (0, 99)
     chunkSize <- chooseInt (1, 10)
-    terminator <- elements ["\\.", "\\.\n", ""] -- We also accept no terminator (maybe that's overly relaxed compared to psql, but oh well)
-    rows <- forM [1 .. numLines] $ \_ -> do
+    lineBreak <- elements ["\n", "\r\n"]
+    terminator <- elements ["\\.", "\\." <> lineBreak, ""] -- We also accept no terminator (maybe that's overly relaxed compared to psql, but oh well)
+    rows <- replicateM numLines $ do
       notEnding <- elements ["\\", ".", "\\.", ".\\", ""] -- Any characters that look like a terminator and could confuse the parser
       someCharsBefore <- arbitrary
       someCharsAfter <- arbitrary
@@ -331,7 +333,7 @@ instance Arbitrary (CopyBody m) where
             then listOf1 (arbitrary @Char `suchThat` (/=) '\n')
             else pure ""
       let row' = bef <> notEnding <> aft <> "\n"
-          row = if row' == "\\.\n" then "x\\.\n" else row'
+          row = if row' `elem` ["\\.\n", "\\.\r\n"] then "x" <> row' else row'
       pure row
     pure $ CopyBody {..}
 
