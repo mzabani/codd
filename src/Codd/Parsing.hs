@@ -512,35 +512,42 @@ copyFromStdinAfterStatementParser approxMaxChunkSize = do
     error "approxMaxChunkSize must be strictly positive"
   -- This stateful parser is tricky to get right but it's proven to be much faster than simpler
   -- alternatives I've tried (e.g. taking lines and concatenating them was incredibly slow for some reason)
-  (contents, (_, _, terminatorLen)) <-
+  (contents, (_, _, terminatorLen, _)) <-
     Parsec.runScanner
-      (0 :: Int, 0 :: Int, 0 :: Int)
-      ( \(lenTotalParsed, lenCurrentLine, lenTerminatorSoFar) c ->
+      (0 :: Int, 0 :: Int, 0 :: Int, Nothing)
+      ( \(!lenTotalParsed, !lenCurrentLine, !lenTerminatorSoFar, !previousChar) c ->
           if lenTotalParsed >= approxMaxChunkSize && lenCurrentLine == 0
             then Nothing -- Only stop at the beginning of a new line
             else
               if lenCurrentLine /= lenTerminatorSoFar && c == '\n'
-                then Just (1 + lenTotalParsed, 0, 0)
+                then Just (1 + lenTotalParsed, 0, 0, Just c)
                 else
                   if lenCurrentLine /= lenTerminatorSoFar
-                    then Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0)
-                    else case (lenTerminatorSoFar, c) of
-                      (0, '\\') ->
-                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 1)
-                      (1, '.') ->
-                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 2)
-                      (2, '\n') ->
-                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 3) -- Last char in terminator, but `Just` because it needs to be in the parsed contents
-                      (3, _) -> Nothing -- Terminator with len=3 means it's been parsed, so end here.
-                      (_, '\n') -> Just (1 + lenTotalParsed, 0, 0)
+                    then Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0, Just c)
+                    else case (lenTerminatorSoFar, c, previousChar) of
+                      (0, '\\', _) ->
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 1, Just c)
+                      (1, '.', Just '\\') ->
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 2, Just c)
+                      (2, '\n', Just '.') ->
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 3, Just c) -- Last char in terminator, but `Just` because it needs to be in the parsed contents
+                      (2, '\r', Just '.') ->
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 3, Just c) -- \r\n line endings are also valid
+                      (3, '\n', Just '\r') ->
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 4, Just c) -- The \n for a \r\n line ending
+                      (3, _, Just '\n') -> Nothing -- Stop at the next char after a "\\.\n" terminator
+                      (4, _, Just '\n') -> Nothing -- Stop at the next char after a "\\.\r\n" terminator
+                      (_, '\n', _) -> Just (1 + lenTotalParsed, 0, 0, Just c) -- A data row's line break
                       _ ->
-                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0)
+                        Just (1 + lenTotalParsed, 1 + lenCurrentLine, 0, Just c)
       )
   isEnd :: Bool <- Parsec.atEnd
-  let fullTerminator = "\\.\n"
+  let fullTerminatorLF = "\\.\n"
+      fullTerminatorCRLF = "\\.\r\n"
       eofTerminator = "\\."
       terminatorFound
-        | terminatorLen == 3 = fullTerminator
+        | terminatorLen == 3 = fullTerminatorLF
+        | terminatorLen == 4 = fullTerminatorCRLF
         | isEnd && terminatorLen == 2 = eofTerminator
         | otherwise = ""
       rows = Text.dropEnd terminatorLen contents

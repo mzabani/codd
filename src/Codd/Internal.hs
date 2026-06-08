@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+-- For HLINT ignore pragmas
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Codd.Internal where
@@ -1344,7 +1345,7 @@ strictCheckLastAction coddSettings@CoddSettings {onDiskReps} blocksOfMigs conn =
   unless (isOneShotApplication (migsConnString coddSettings) blocksOfMigs) $
     do
       logWarn
-        "Because it wasn't possible to apply all pending migrations in a single transaction, all migrations have been applied. We'll run a schema check."
+        "Because it wasn't possible to apply all pending migrations in a single transaction, the schema check runs now, after COMMIT."
   logSchemasComparison dbReps expectedReps
   when (dbReps /= expectedReps) $
     throwIO $
