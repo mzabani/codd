@@ -10,7 +10,7 @@ let
       fileset = fs.gitTracked ./.;
     };
     stackYaml = "stack.yaml";
-    compiler-nix-name = "ghc966";
+    compiler-nix-name = "ghc984";
 
     modules =
       [

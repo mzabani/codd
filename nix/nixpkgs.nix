@@ -9,9 +9,9 @@ let haskellPatchesOverlay = final: prev: {
       };
     };
     haskellNix = import (fetchTarball {
-      url = "https://github.com/input-output-hk/haskell.nix/archive/e35f00f2aaee653ce8b504c512a3eb4030517c14.tar.gz";
-      sha256 = "sha256:ceWHb8+EZJKi+o4dr6/5vp2X+QIdo35I7ZjPc9nfFGU=";
+      url = "https://github.com/input-output-hk/haskell.nix/archive/439046aebd36d8ba65948407aed9bd6c5a494dc6.tar.gz";
+      sha256 = "sha256-dElIcx6PM0s5ffopDaRPeWt9jKuf6PfsViqq/Bj/aSU=";
     }) {};
     nixpkgsImportArgs = haskellNix.nixpkgsArgs // { inherit system; overlays = haskellNix.nixpkgsArgs.overlays ++ [haskellPatchesOverlay ]; };
 in
-  import haskellNix.sources.nixpkgs-2405 nixpkgsImportArgs
+  import haskellNix.sources.nixpkgs-2511 nixpkgsImportArgs
