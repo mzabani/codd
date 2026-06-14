@@ -33,22 +33,27 @@ let
             # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
             # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
             # dynamically linked glibc builds.
-            # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
-            # https://github.com/NixOS/nixpkgs/issues/191920
-            # This doesn't seem like a big issue since we only need libpq and we do run tests against
-            # postgresql-16-the-server.
+            # The musl overlay maps `postgresql` to the standalone `libpq` package
+            # (see nix/nixpkgs.nix) to avoid the full server's clang/LTO build.
+            # Static archives (.a) are in the dev output.
             muslConfigureFlags = [
               "--ghc-option=-optl=-L${pkgsMusl.openssl.out}/lib"
               "--ghc-option=-optl=-lssl"
               "--ghc-option=-optl=-lcrypto"
 
-              "--ghc-option=-optl=-L${pkgsMusl.postgresql.out}/lib"
+              "--ghc-option=-optl=-L${pkgsMusl.postgresql.dev}/lib"
               "--ghc-option=-optl=-lpgcommon"
               "--ghc-option=-optl=-lpgport"
             ];
           in
           [
             {
+              # Ensure pg_config is in PATH for the postgresql-libpq-configure
+              # autoconf script during cross-compilation (it's in buildInputs
+              # via haskell.nix's configuration-nix.nix, but for cross builds
+              # it needs to be in nativeBuildInputs to appear in PATH).
+              packages.postgresql-libpq-configure.components.library.build-tools = [ pkgsMusl.postgresql.pg_config ];
+
               # Apply the same configureFlags to all components so that
               # haskell.nix doesn't recompile the library inside exe/test
               # derivations due to a configuration mismatch.
