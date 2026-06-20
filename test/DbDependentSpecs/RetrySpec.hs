@@ -494,9 +494,9 @@ spec = do
             (migsConnString emptyTestDbInfo)
             testConnTimeout
             (const $ pure ())
-            `shouldThrow` ( \(e :: SomeException) ->
+            `shouldThrow` ( \(e :: DB.SqlError) ->
                               "database \"codd-test-db\" does not exist"
-                                `List.isInfixOf` show e
+                                == DB.sqlErrorMsg e
                           )
           logsmv <- newMVar []
           runMVarLogger

@@ -48,6 +48,7 @@ import Database.PostgreSQL.Simple.FromField
   )
 import Database.PostgreSQL.Simple.ToField
   ( ToField,
+    ToPgField,
   )
 import GHC.Generics (Generic)
 
@@ -163,7 +164,7 @@ fromPathFrag :: FilePath -> ObjName
 fromPathFrag fp = ObjName $ Text.pack fp
 
 newtype ObjName = ObjName {unObjName :: Text}
-  deriving newtype (FromField, ToField, Eq, Ord, Show, Hashable, FromJSON, FromJSONKey, ToJSON, ToJSONKey)
+  deriving newtype (FromField, ToField, ToPgField, Eq, Ord, Show, Hashable, FromJSON, FromJSONKey, ToJSON, ToJSONKey)
 
 class HasName a where
   objName :: a -> ObjName

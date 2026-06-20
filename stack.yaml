@@ -8,6 +8,13 @@ extra-deps:
     commit: 6cd30c084debcde9bb83e0f517bbe98cdd80e945
     # nix-sha256: sha256-/P44enZEdgbhULD/3eFNnSinSFlwqXfmvLHDISHBceM=
 
+  - git: https://github.com/mzabani/hpgsql.git
+    commit: b0b831884080d0231482a022b150f9646d494a86
+    # nix-sha256: sha256-t916kTFO5q22ccNYov72hIXMH2s1v+GTkdRSJBBgufs=
+    subdirs:
+      - hpgsql
+      - hpgsql-simple-compat
+
 flags:
   hashable:
     random-initial-seed: true

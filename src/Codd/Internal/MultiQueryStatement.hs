@@ -17,13 +17,13 @@ import Codd.Query (txnStatus)
 import Control.Exception (BlockedIndefinitelyOnSTM)
 import Control.Monad (void)
 import Data.Maybe (fromMaybe)
+import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding (encodeUtf8)
 import qualified Database.PostgreSQL.LibPQ as PQ
 import qualified Database.PostgreSQL.Simple as DB
 import qualified Database.PostgreSQL.Simple.Copy as DB
-import qualified Database.PostgreSQL.Simple.Internal as PGInternal
 import qualified Database.PostgreSQL.Simple.Types as DB
 import GHC.Num (Natural)
 import Streaming
@@ -35,11 +35,9 @@ import qualified Streaming.Prelude as S
 import qualified Streaming.Prelude as Streaming
 import UnliftIO
   ( Exception,
-    IOException,
     MonadUnliftIO,
     SomeException,
     fromException,
-    handle,
     handleJust,
     liftIO,
     throwIO,
@@ -69,16 +67,10 @@ data StatementApplied
 singleStatement_ ::
   (MonadUnliftIO m) => DB.Connection -> Text -> m StatementApplied
 singleStatement_ conn sql = do
-  res <- liftIO $ PGInternal.exec conn $ encodeUtf8 sql
-  status <- liftIO $ PQ.resultStatus res
-  case status of
-    PQ.CommandOk -> StatementApplied <$> txnStatus conn
-    PQ.TuplesOk -> StatementApplied <$> txnStatus conn
-    _ ->
-      liftIO $
-        handle (pure . StatementErred . SqlStatementException sql) $
-          -- Throw to catch and with that get the statement that failed and error message.. a bit nasty, but should be ok
-          PGInternal.throwResultError "singleStatement_" res status
+  res <- liftIO $ try $ DB.execute_ conn (fromString $ Text.unpack sql)
+  case res of
+    Right _ -> StatementApplied <$> txnStatus conn
+    Left (ex :: DB.SqlError) -> pure $ StatementErred $ SqlStatementException sql ex
 
 -- | Returns a Stream that should be a copy of the supplied stream, but puts a background thread to work on forcing the supplied stream concurrently so the consumer of the returned stream is more likely to find elements without having to wait for them to be produced by upstream.
 -- May evaluate and keep in memory elements ahead of time up to the supplied number+2.
@@ -244,30 +236,10 @@ runSingleStatementInternal_ conn p = case p of
     handleCopyErrors (fromMaybe "" -> stmt) =
       handleJust
         ( \(e :: SomeException) ->
-            -- In my tests, COPY errors are of type `IOException` for `putCopyEnd` and of type `SqlError` for `copy_`.
-            -- Sadly the ones of type `IOException` don't contain e.g. error codes, but at least their message shows the failed statement.
-            -- They also _sometimes_ contain an internal postgresql-simple error concatenated to the actual database error, which isn't great, so we remove it if it's there.
-            -- We should file a bug report to postgresql-simple.
-            -- We transform those into `SqlError` here since all of the codebase is prepared for that.
             case () of
               ()
                 | Just sqlEx <- fromException @DB.SqlError e ->
                     Just sqlEx
-                | Just ioEx <- fromException @IOException e ->
-                    let fullError = Text.pack $ show ioEx
-                     in Just
-                          DB.SqlError
-                            { DB.sqlState = "",
-                              DB.sqlExecStatus = DB.FatalError,
-                              DB.sqlErrorMsg =
-                                encodeUtf8 $
-                                  fromMaybe fullError $
-                                    Text.stripPrefix
-                                      "user error (Database.PostgreSQL.Simple.Copy.putCopyEnd: failed to parse command status\nConnection error: ERROR:  "
-                                      fullError,
-                              DB.sqlErrorDetail = "",
-                              DB.sqlErrorHint = ""
-                            }
                 | otherwise ->
                     Nothing -- Let it blow up if we don't expect it
         )

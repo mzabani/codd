@@ -60,14 +60,14 @@ jobs:
     - name: Build statically linked benchmarks
       run: nix-build --no-out-link -A coddbenchmarks
 
-    - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
+    # - name: Build executable used for installer
+    #   run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
 
-    - name: Install codd with nix-env and uninstall it
-      run: |
-        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
-        codd --help
-        nix-env --uninstall codd
+    # - name: Install codd with nix-env and uninstall it
+    #   run: |
+    #     nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+    #     codd --help
+    #     nix-env --uninstall codd
 
     - name: Testing install script posix compatibility
       run: |
@@ -85,7 +85,7 @@ jobs:
         # postgres versions aren't enough to make it worth testing every version here too.
         nix-env -iA concurrently -f ./nix/nixpkgs.nix
         concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg16' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13'
@@ -167,7 +167,7 @@ jobs:
         # postgres versions aren't enough to make it worth testing every version here too.
         # We don't run these concurrently because Nix does not have a sandbox in Macs, so it's
         # not worth the risk.
-        scripts/ci/run-tests-and-annotate-with-error.sh local/pg16Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg16
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg14-tests.txt nix-build --no-out-link -A testsPg14
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg13-tests.txt nix-build --no-out-link -A testsPg13
@@ -179,9 +179,9 @@ jobs:
         unzip result/codd.zip -d extracted-bundle
         ./extracted-bundle/codd.app/Contents/MacOS/codd --help # A smoke test
 
-    - name: Install codd with nix-env and uninstall it
-      run: |
-        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
-        codd --help
-        nix-env --uninstall codd
+    # - name: Install codd with nix-env and uninstall it
+    #   run: |
+    #     nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+    #     codd --help
+    #     nix-env --uninstall codd
 

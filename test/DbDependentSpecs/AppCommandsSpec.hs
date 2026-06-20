@@ -23,6 +23,7 @@ import Codd.Representations (DbRep (..))
 import Codd.Types (ConnectionString (..))
 import Control.Monad.Trans.Resource (MonadThrow)
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
 import qualified Data.Map as Map
 import qualified Database.PostgreSQL.Simple as DB
@@ -71,11 +72,10 @@ doesNotCreateDB _act = do
                 }
           }
   runCoddLogger $ do
-    -- libpq's fatal connection error is an IOException
     verifySchema testSettings False
-      `shouldThrow` ( \(e :: IOException) ->
+      `shouldThrow` ( \(e :: DB.SqlError) ->
                         "database \"non-existing-db-name\" does not exist"
-                          `isInfixOf` show e
+                          == DB.sqlErrorMsg e
                     )
 
   withConnection

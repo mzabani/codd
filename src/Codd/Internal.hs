@@ -124,8 +124,7 @@ import UnliftIO
 import UnliftIO.Concurrent (threadDelay)
 import UnliftIO.Directory (listDirectory)
 import UnliftIO.Exception
-  ( IOException,
-    bracket,
+  ( bracket,
     catchJust,
     handleJust,
     throwIO,
@@ -157,7 +156,7 @@ connectWithTimeout connStr timeLimit = do
   -- open for a while. This is probably not very probable, and not a terrible consequence as a single failing connection means
   -- we'll likely close codd itself pretty soon.
   -- The "decent" alternative (which I feel isn't worth it) here is to wrap postgresql-simple's `connectPostgreSQL` in a `onException` that closes the open handle on exception, or copy that code over ourselves and do that here. See https://hackage.haskell.org/package/postgresql-simple-0.7.0.0/docs/src/Database.PostgreSQL.Simple.Internal.html#connectPostgreSQL
-  lastErrorRef <- newIORef (Nothing :: Maybe IOException)
+  lastErrorRef <- newIORef (Nothing :: Maybe DB.SqlError)
   mconn <-
     timeout
       (fromInteger $ diffTimeToPicoseconds timeLimit `div` 1_000_000)
@@ -198,7 +197,7 @@ withConnection connStr timeLimit =
 
 -- | Verifies if a libpq error means the server is not ready to accept connections yet,
 -- either by not being listening at all or still being initializing.
-isServerNotAvailableError :: IOException -> Bool
+isServerNotAvailableError :: DB.SqlError -> Bool
 isServerNotAvailableError e =
   let err = Text.pack $ show e
    in "libpq"
@@ -256,9 +255,9 @@ checkNeedsBootstrapping connInfo connectTimeout =
       connectTimeout
       (fmap (BootstrapCheck True) . detectCoddSchema)
   where
-    isLibPqError :: IOException -> Bool
+    isLibPqError :: DB.SqlError -> Bool
     isLibPqError e =
-      let err = Text.pack $ show e in "libpq: failed" `Text.isInfixOf` err
+      let err = Text.pack $ show e in " does not exist" `Text.isInfixOf` err
 
 data PendingMigrations m = PendingMigrations
   { pendingMigs :: [BlockOfMigrations m],
@@ -1536,14 +1535,6 @@ applySingleMigration conn registerMigRan skip (AddedSqlMigration sqlMig migTimes
                         states@(_, PQ.TransInError) ->
                           error $
                             "Internal error in codd. Erring statements should be in stream's return, not as an element of it. Please report this as a bug: "
-                              ++ show states
-                        states@(PQ.TransUnknown, _) ->
-                          error $
-                            "Connection to database may have gone bad. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you: "
-                              ++ show states
-                        states@(_, PQ.TransUnknown) ->
-                          error $
-                            "Connection to database may have gone bad. Did someone else kill the connection while codd was applying migrations, perhaps? Codd cannot retry under these circumstances, sadly. Please file a bug report if retrying under such circumstances is important to you: "
                               ++ show states
                 )
                 ( numCountableRunnableStmtsToSkip,
