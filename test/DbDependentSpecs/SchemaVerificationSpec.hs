@@ -1649,13 +1649,8 @@ spec = do
         schemaAfterRestore `shouldBe` expectedSchema
 
     describe "Schema verification tests" $ do
-      modifyMaxSuccess (const 3) $ -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important
       -- This is a bit heavy on CI but this test is too important
-      -- This is a bit heavy on CI but this test is too important
-      -- This is a bit heavy on CI but this test is too important
-      -- This is a bit heavy on CI but this test is too important
-      -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important -- This is a bit heavy on CI but this test is too important
-      -- This is a bit heavy on CI but this test is too important
+      modifyMaxSuccess (const 3) $
         aroundCoddTestDb $
           it "Accurate and reversible representation changes" $
             \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do
