@@ -1,0 +1,36 @@
+{
+    "accessmethod": "heap",
+    "amoptions": null,
+    "columns_in_order": [
+        "employee_name",
+        "experience",
+        "surname",
+        "experience2",
+        "employee_id",
+        "слон"
+    ],
+    "compositetype": null,
+    "forcerowsecurity": false,
+    "kind": "r",
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "codd-user": [
+            [
+                "damxrtDw",
+                "codd_admin"
+            ]
+        ],
+        "codd_admin": [
+            [
+                "damxrtDw",
+                "codd_admin"
+            ]
+        ]
+    },
+    "replident": "d",
+    "rowsecurity": false,
+    "rowtype": "employee",
+    "shared": false
+}
