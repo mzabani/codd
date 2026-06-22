@@ -114,5 +114,5 @@ test-system-resources:
         trap "rm -f /tmp/strace-codd-system-resources-test.log" ERR EXIT
 
         cabal build -O0 codd-test
-        nix-shell -A "shellPg16" ./default.nix --run "./scripts/run-tests-system-resources.sh"
+        nix-shell -A "shellPg18" ./default.nix --run "./scripts/run-tests-system-resources.sh"
     fi
