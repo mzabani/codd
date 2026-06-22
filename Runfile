@@ -28,11 +28,12 @@ ci-tests:
     # We test the last version with the vanilla nixpkgs-built derivation,
     # not the IOHK one. We assume differences in the codebase regarding different
     # postgres versions aren't enough to make it worth testing every version here too.
-    concurrently -g --timings --names pg16Nixpkgs,pg15,pg14,pg13 \
+    concurrently -g --timings --names pg18Nixpkgs,pg17,pg16,pg15,pg14 \
       'nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+      'run test-with-db --nix --pg 17' \
+      'run test-with-db --nix --pg 16' \
       'run test-with-db --nix --pg 15' \
-      'run test-with-db --nix --pg 14' \
-      'run test-with-db --nix --pg 13'
+      'run test-with-db --nix --pg 14'
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         echo "Running system-resources test"
@@ -80,8 +81,8 @@ test-no-db:
 # OPTION NIX --nix Run tests in a Nix derivation's sandbox
 test-with-db:
     set -eo pipefail
-    [ -z "$PG" ] && PG=(16)
-    [ "${PG[0]}" = "all" ] && PG=(13 14 15 16)
+    [ -z "$PG" ] && PG=(18)
+    [ "${PG[0]}" = "all" ] && PG=(14 15 16 17 18)
     TARGS="--match '/DbDependentSpecs/'" && [ -n "$1" ] && TARGS=$(printf "'%s' " "${@}")
     
     for pg in "${PG[@]}"; do
