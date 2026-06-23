@@ -1,0 +1,29 @@
+{
+    "accessmethod": "heap",
+    "amoptions": null,
+    "columns_in_order": [
+        "id",
+        "payer",
+        "receiver",
+        "value",
+        "anonymous"
+    ],
+    "compositetype": null,
+    "forcerowsecurity": false,
+    "kind": "r",
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "codd_admin": [
+            [
+                "damxrtDw",
+                "codd_admin"
+            ]
+        ]
+    },
+    "replident": "d",
+    "rowsecurity": false,
+    "rowtype": "transactions",
+    "shared": false
+}

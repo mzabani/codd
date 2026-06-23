@@ -196,7 +196,7 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
     "CREATE TABLE employee (employee_id SERIAL PRIMARY KEY, employee_name VARCHAR(30), favorite_number numeric(10,2))"
     "DROP TABLE employee"
     $ ChangeEq
-      [ ( "schemas/public/sequences/employee_employee_id_seq",
+    $ [ ( "schemas/public/sequences/employee_employee_id_seq",
           DExpectedButNotFound
         ),
         ( "schemas/public/tables/employee/cols/employee_id",
@@ -210,12 +210,19 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
         ),
         ( "schemas/public/tables/employee/constraints/employee_pkey",
           DExpectedButNotFound
-        ),
-        ( "schemas/public/tables/employee/indexes/employee_pkey",
-          DExpectedButNotFound
-        ),
-        ("schemas/public/tables/employee/objrep", DExpectedButNotFound)
+        )
       ]
+      ++ ( [ ( "schemas/public/tables/employee/constraints/employee_employee_id_not_null",
+               DExpectedButNotFound
+             )
+             | pgVersion >= 18
+           ]
+         )
+      ++ [ ( "schemas/public/tables/employee/indexes/employee_pkey",
+             DExpectedButNotFound
+           ),
+           ("schemas/public/tables/employee/objrep", DExpectedButNotFound)
+         ]
   addMig_
     "ALTER TABLE employee ALTER COLUMN employee_name TYPE VARCHAR(50)"
     "ALTER TABLE employee ALTER COLUMN employee_name TYPE VARCHAR(30)"
@@ -228,10 +235,14 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
     "ALTER TABLE employee ALTER COLUMN employee_name SET NOT NULL"
     "ALTER TABLE employee ALTER COLUMN employee_name DROP NOT NULL"
     $ ChangeEq
-      [ ( "schemas/public/tables/employee/cols/employee_name",
-          DBothButDifferent
-        )
-      ]
+    $ ( "schemas/public/tables/employee/cols/employee_name",
+        DBothButDifferent
+      )
+      : [ ( "schemas/public/tables/employee/constraints/employee_employee_name_not_null",
+            DExpectedButNotFound
+          )
+          | pgVersion >= 18
+        ]
 
   addMig_
     "ALTER TABLE employee ALTER COLUMN favorite_number TYPE numeric(9,2)"
@@ -406,7 +417,7 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
     "CREATE TABLE employee_car (employee_id INT NOT NULL, car_model TEXT NOT NULL)"
     "DROP TABLE employee_car"
     $ ChangeEq
-      [ ( "schemas/public/tables/employee_car/cols/car_model",
+    $ [ ( "schemas/public/tables/employee_car/cols/car_model",
           DExpectedButNotFound
         ),
         ( "schemas/public/tables/employee_car/cols/employee_id",
@@ -416,12 +427,22 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
           DExpectedButNotFound
         )
       ]
-
+      ++ ( if pgVersion >= 18
+             then
+               [ ( "schemas/public/tables/employee_car/constraints/employee_car_car_model_not_null",
+                   DExpectedButNotFound
+                 ),
+                 ( "schemas/public/tables/employee_car/constraints/employee_car_employee_id_not_null",
+                   DExpectedButNotFound
+                 )
+               ]
+             else []
+         )
   addMig_
     "CREATE TABLE employee_computer (employee_id INT NOT NULL, computer_model TEXT NOT NULL, UNIQUE (employee_id))"
     "DROP TABLE employee_computer"
     $ ChangeEq
-      [ ( "schemas/public/tables/employee_computer/cols/computer_model",
+    $ [ ( "schemas/public/tables/employee_computer/cols/computer_model",
           DExpectedButNotFound
         ),
         ( "schemas/public/tables/employee_computer/cols/employee_id",
@@ -437,6 +458,17 @@ migrationsAndRepChangeText pgVersion pgFullVersion = flip execState [] $ do
           DExpectedButNotFound
         )
       ]
+      ++ ( if pgVersion >= 18
+             then
+               [ ( "schemas/public/tables/employee_computer/constraints/employee_computer_employee_id_not_null",
+                   DExpectedButNotFound
+                 ),
+                 ( "schemas/public/tables/employee_computer/constraints/employee_computer_computer_model_not_null",
+                   DExpectedButNotFound
+                 )
+               ]
+             else []
+         )
 
   addMig_
     "ALTER TABLE employee_car ADD CONSTRAINT employee_car_employee_fk FOREIGN KEY (employee_id) REFERENCES employee(employee_id)"
@@ -1617,7 +1649,8 @@ spec = do
         schemaAfterRestore `shouldBe` expectedSchema
 
     describe "Schema verification tests" $ do
-      modifyMaxSuccess (const 3) $ -- This is a bit heavy on CI but this test is too important
+      -- This is a bit heavy on CI but this test is too important
+      modifyMaxSuccess (const 3) $
         aroundCoddTestDb $
           it "Accurate and reversible representation changes" $
             \emptyDbInfo2 -> property $ \(NumMigsToReverse num) -> do

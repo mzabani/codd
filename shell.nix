@@ -2,7 +2,7 @@
 let
   pkgs = import ./nix/nixpkgs.nix {};
   project = (import ./default.nix { inherit pkgs; useMuslIfPossible = false; }).project;
-  postgres = pkgs.postgresql_16.withPackages (ps: with ps; [ pg_cron ]);
+  postgres = pkgs.postgresql_18.withPackages (ps: with ps; [ pg_cron ]);
 in
 project.shellFor {
   tools = {

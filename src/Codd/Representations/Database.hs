@@ -28,6 +28,7 @@ import qualified Codd.Representations.Database.Pg14 as Pg14
 import qualified Codd.Representations.Database.Pg15 as Pg15
 import qualified Codd.Representations.Database.Pg16 as Pg16
 import qualified Codd.Representations.Database.Pg17 as Pg17
+import qualified Codd.Representations.Database.Pg18 as Pg18
 import Codd.Representations.Database.SqlGen
   ( interspBy,
     parens,
@@ -336,6 +337,15 @@ readRepresentationsFromDbWithSettings CoddSettings {migsConnString, namespacesTo
       PgMajorVersion 17 ->
         readSchemaFromDatabase
           ( Pg17.objRepQueryFor
+              fullVersion
+          )
+          conn
+          namespacesToCheck
+          rolesToCheck
+          schemaAlgoOpts
+      PgMajorVersion 18 ->
+        readSchemaFromDatabase
+          ( Pg18.objRepQueryFor
               fullVersion
           )
           conn

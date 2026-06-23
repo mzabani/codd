@@ -10,7 +10,7 @@ let
       fileset = fs.gitTracked ./.;
     };
     stackYaml = "stack.yaml";
-    compiler-nix-name = "ghc966";
+    compiler-nix-name = "ghc984";
 
     modules =
       [
@@ -33,22 +33,27 @@ let
             # in pgcommon_shlib (from postgres) but it doesn't work if it comes from there either.
             # Also, the order of -lssl and -lcrypto is important here, and this doesn't seem to affect
             # dynamically linked glibc builds.
-            # IMPORTANT: `postgresql` is postgresql 15, not 16. pg16 static builds are failing, see
-            # https://github.com/NixOS/nixpkgs/issues/191920
-            # This doesn't seem like a big issue since we only need libpq and we do run tests against
-            # postgresql-16-the-server.
+            # The musl overlay maps `postgresql` to the standalone `libpq` package
+            # (see nix/nixpkgs.nix) to avoid the full server's clang/LTO build.
+            # Static archives (.a) are in the dev output.
             muslConfigureFlags = [
               "--ghc-option=-optl=-L${pkgsMusl.openssl.out}/lib"
               "--ghc-option=-optl=-lssl"
               "--ghc-option=-optl=-lcrypto"
 
-              "--ghc-option=-optl=-L${pkgsMusl.postgresql.out}/lib"
+              "--ghc-option=-optl=-L${pkgsMusl.postgresql.dev}/lib"
               "--ghc-option=-optl=-lpgcommon"
               "--ghc-option=-optl=-lpgport"
             ];
           in
           [
             {
+              # Ensure pg_config is in PATH for the postgresql-libpq-configure
+              # autoconf script during cross-compilation (it's in buildInputs
+              # via haskell.nix's configuration-nix.nix, but for cross builds
+              # it needs to be in nativeBuildInputs to appear in PATH).
+              packages.postgresql-libpq-configure.components.library.build-tools = [ pkgsMusl.postgresql.pg_config ];
+
               # Apply the same configureFlags to all components so that
               # haskell.nix doesn't recompile the library inside exe/test
               # derivations due to a configuration mismatch.
@@ -79,18 +84,20 @@ in
           inherit coddexe;
         };
 
+  testsPg18 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_18; };
+  testsPg17 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_17; };
   testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_16; };
   testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_15; };
   testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_14; };
-  testsPg13 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs coddtests hspecArgs; postgres = addPgExtensions pkgs.postgresql_13; };
   testsNoDb = { hspecArgs ? "--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/" }: import ./nix/run-no-db-tests.nix { inherit pkgs coddtests hspecArgs; };
-  testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs coddtests; postgres = addPgExtensions pkgs.postgresql_16; };
+  testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs coddtests; postgres = addPgExtensions pkgs.postgresql_18; };
 
   # Shells with specific-versioned postgres servers to run tests locally
+  shellPg18 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_18; };
+  shellPg17 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_17; };
   shellPg16 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_16; };
   shellPg15 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_15; };
   shellPg14 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_14; };
-  shellPg13 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_13; };
 
   shellForCITests = import ./nix/test-shell-ci.nix { inherit pkgs; };
 
