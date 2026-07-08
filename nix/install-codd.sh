@@ -24,10 +24,10 @@ fi
 SRCDIR=$(mktemp -d || echo /tmp/codd-checkout-Y6fRwa_23x)
 git clone --depth 1 -b v0.2.0 https://github.com/mzabani/codd.git "$SRCDIR"
 
-nix-env -f "$SRCDIR/nix/install-codd-nixpkgs.nix" \
-    --option trusted-substituters 'https://cache.nixos.org https://cache.iog.io https://mzabani.cachix.org' \
-    --option trusted-public-keys  'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=' \
-    -iA codd
+nix-env -f "$SRCDIR/default.nix" \
+    --option trusted-substituters 'https://cache.nixos.org https://mzabani.cachix.org' \
+    --option trusted-public-keys  'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA=' \
+    -iA haskellPackages.codd
 
 echo "---------------------------------------------------------------"
 echo "Codd successfully installed. Run 'codd --help' to view options."

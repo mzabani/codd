@@ -1,0 +1,83 @@
+cabal-version: 2.0
+
+name:           codd-tests
+version:        0.1.0
+description:    Tests for the codd library
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+
+executable codd-tests
+  main-is: Main.hs
+  other-modules:
+      AllSpecs
+      DbDependentSpecs.AnalysisSpec
+      DbDependentSpecs.AppCommandsSpec
+      DbDependentSpecs.ApplicationSpec
+      DbDependentSpecs.BackgroundJobsSpec
+      DbDependentSpecs.CoddAddSpec
+      DbDependentSpecs.RetrySpec
+      DbDependentSpecs.SchemaVerificationSpec
+      DbDependentSpecs.InvariantsSpec
+      DbUtils
+      EnvironmentSpec
+      LiftedExpectations
+      ParsingSpec
+      SystemResourcesSpecs.OpenFilesSpec
+      TypesGen
+      TxnConstraintsSpecs.ValidConstructsSpec
+      WritingReadingRepresentationsSpec
+  hs-source-dirs:
+      .
+  default-extensions:
+      BangPatterns
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      LambdaCase
+      FlexibleContexts
+      FlexibleInstances
+      GADTs
+      GeneralizedNewtypeDeriving
+      MultiParamTypeClasses
+      NamedFieldPuns
+      NumericUnderscores
+      OverloadedStrings
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeFamilyDependencies
+      TypeOperators
+      ViewPatterns
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-maxN2 -qg" -Wunused-packages -optP-Wno-nonportable-include-path
+  build-tool-depends:
+      hspec-discover:hspec-discover
+  build-depends:
+      aeson >= 2
+    , attoparsec
+    , base
+    , codd
+    , containers
+    , filepath
+    , hashable
+    , hspec
+    , hspec-core
+    , mtl
+    , network-uri
+    , postgresql-simple
+    , QuickCheck
+    , random
+    , resourcet
+    , streaming
+    , text
+    , time
+    , typed-process
+    , unliftio
+    , uuid
+  default-language: Haskell2010

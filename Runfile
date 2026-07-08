@@ -7,10 +7,10 @@ benchmarks:
     set -eo pipefail
 
     if [ -n "$NIX" ]; then
-        nix-build -A coddbenchmarks -o local/codd-bench
-        ./local/codd-bench/bin/codd-bench
+        nix-build -A coddbenchmarks -o local/codd-benchmarks
+        ./local/codd-benchmarks/bin/codd-benchmarks
     else
-        cabal run -O2 codd-bench
+        cabal run -O2 codd-benchmarks
     fi
 
 ##
@@ -25,11 +25,8 @@ ci-tests:
     run test-no-db --nix
 
     # Postgres-version dependent tests for each possible version next
-    # We test the last version with the vanilla nixpkgs-built derivation,
-    # not the IOHK one. We assume differences in the codebase regarding different
-    # postgres versions aren't enough to make it worth testing every version here too.
-    concurrently -g --timings --names pg18Nixpkgs,pg17,pg16,pg15,pg14 \
-      'nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+    concurrently -g --timings --names pg18,pg17,pg16,pg15,pg14 \
+      'run test-with-db --nix --pg 18' \
       'run test-with-db --nix --pg 17' \
       'run test-with-db --nix --pg 16' \
       'run test-with-db --nix --pg 15' \
@@ -70,8 +67,8 @@ test-no-db:
     if [ -n "$NIX" ]; then
         nix-build --no-out-link -A testsNoDb --argstr hspecArgs "$TARGS"
     else
-        cabal build -O0 codd-test
-        `cabal list-bin -O0 codd-test` "${ARGSARRAY[@]}"
+        cabal build -O0 codd-tests
+        `cabal list-bin -O0 codd-tests` "${ARGSARRAY[@]}"
     fi
 
 ## 
@@ -90,7 +87,7 @@ test-with-db:
         if [ -n "$NIX" ]; then
             nix-build --no-out-link -A "testsPg${pg}" --argstr hspecArgs "$TARGS"
         else
-            cabal build -O0 codd-test
+            cabal build -O0 codd-tests
             nix-shell -A "shellPg${pg}" ./default.nix --run "./scripts/run-tests-db-internal.sh $TARGS"
         fi
     done
@@ -113,6 +110,6 @@ test-system-resources:
         rm -f /tmp/strace-codd-system-resources-test.log
         trap "rm -f /tmp/strace-codd-system-resources-test.log" ERR EXIT
 
-        cabal build -O0 codd-test
+        cabal build -O0 codd-tests
         nix-shell -A "shellPg18" ./default.nix --run "./scripts/run-tests-system-resources.sh"
     fi

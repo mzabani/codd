@@ -690,11 +690,11 @@ spec = do
             do
               [BlockInTxn ConsecutiveInTxnMigrations {inTxnMigs = asqlmig :| []}] <-
                 parseMigrationFiles mempty $
-                  Left ["test/migrations/normal-parse-test/"]
+                  Left ["codd-tests/migrations/normal-parse-test/"]
               rawFileContents <-
                 liftIO $
                   Text.readFile
-                    "test/migrations/normal-parse-test/2000-01-01-00-00-00-normal-parse-migration.sql"
+                    "codd-tests/migrations/normal-parse-test/2000-01-01-00-00-00-normal-parse-migration.sql"
               let (AddedSqlMigration mig _) = asqlmig
               mig `shouldHaveWellParsedSql` rawFileContents
 
@@ -720,11 +720,11 @@ spec = do
             do
               [BlockInTxn ConsecutiveInTxnMigrations {inTxnMigs = asqlmig :| []}] <-
                 parseMigrationFiles mempty $
-                  Left ["test/migrations/no-parse-test/"]
+                  Left ["codd-tests/migrations/no-parse-test/"]
               rawFileContents <-
                 liftIO $
                   Text.readFile
-                    "test/migrations/no-parse-test/2000-01-01-00-00-00-no-parse-migration.sql"
+                    "codd-tests/migrations/no-parse-test/2000-01-01-00-00-00-no-parse-migration.sql"
               let (AddedSqlMigration mig _) = asqlmig
               mig `shouldHaveUnparsedSql` rawFileContents
 
