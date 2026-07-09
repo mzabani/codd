@@ -4,7 +4,11 @@
 }:
 let
   addPgExtensions = postgres: postgres.withPackages (ps: [ ps.pg_cron ]);
-  pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else pkgs.pkgsCross.musl64;
+  pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else
+    import ./nix/nixpkgs.nix {
+      inherit system;
+      crossSystem = { config = "x86_64-unknown-linux-musl"; isStatic = true; };
+    };
   pkgsDarwin = import ./nix/nixpkgs.nix { system = "aarch64-darwin"; };
   haskellPackages = builtins.getAttr ghc pkgs.haskell.packages;
   haskellPackagesMusl = builtins.getAttr ghc pkgsMusl.haskell.packages;

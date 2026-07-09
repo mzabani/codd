@@ -1,4 +1,4 @@
-{ system ? builtins.currentSystem }:
+{ system ? builtins.currentSystem, crossSystem ? null }:
 let
     haskellPatchesOverlay = final: prev:
       {
@@ -52,6 +52,11 @@ let
         postgresql = final.libpq.overrideAttrs (old: {
           # Keep .a files for static linking (normally removed for non-static builds)
           postInstall = "";
+          # In static builds all library files end up in the dev output,
+          # leaving the out output empty.  The fixup phase removes empty
+          # directories, which deletes $out and makes nix reject the
+          # derivation.  Ensure $out exists after fixup.
+          postFixup = (old.postFixup or "") + "\nmkdir -p $out";
           # Break the meta inheritance cycle: libpq.meta inherits from
           # postgresql.meta, but we are replacing postgresql with libpq.
           meta = {
@@ -107,7 +112,7 @@ in
     import (fetchTarball {
       url = "https://github.com/NixOS/nixpkgs/archive/22fa6f7b5510a5492e46232efcb0a07f68d8be03.tar.gz";
       sha256 = "sha256:1md1mh2h6xz9cd80lfjnwrjyi575py02s8dm2naks6wd6n3ay3rr";
-    }) {
+    }) ({
       inherit system;
       overlays = [ haskellPatchesOverlay muslPostgresFixOverlay ourOwnHaskellPkgsOverlay ];
-    }
+    } // (if crossSystem != null then { inherit crossSystem; } else {}))
