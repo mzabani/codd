@@ -1,4 +1,4 @@
-{ system ? builtins.currentSystem, crossSystem ? null }:
+{ system ? builtins.currentSystem, crossSystem ? null, staticLinking ? false }:
 let
     haskellPatchesOverlay = final: prev:
       {
@@ -70,13 +70,12 @@ let
 
     ourOwnHaskellPkgsOverlay = final: prev:
       let
-        isMusl = prev.stdenv.hostPlatform.isMusl;
         sourceOverrides = prev.haskell.lib.compose.packageSourceOverrides {
           codd = ../.;
           codd-tests = ../codd-tests;
           codd-benchmarks = ../codd-benchmarks;
         };
-        muslConfigureFlags = [
+        staticLinkingConfigureFlags = [
           "--ghc-option=-optl=-L${final.openssl.out}/lib"
           "--ghc-option=-optl=-lssl"
           "--ghc-option=-optl=-lcrypto"
@@ -85,16 +84,15 @@ let
           "--ghc-option=-optl=-lpgcommon"
           "--ghc-option=-optl=-lpgport"
         ];
-        dontCheckAndMuslOverrides = hsSelf: hsSuper:
+        dontCheckAndStaticOverrides = hsSelf: hsSuper:
           let noProfiling = final.haskell.lib.disableLibraryProfiling;
+              withStaticFlags = pkg: if staticLinking
+                then final.haskell.lib.appendConfigureFlags pkg staticLinkingConfigureFlags
+                else pkg;
           in {
-          codd = noProfiling (if isMusl
-            then final.haskell.lib.appendConfigureFlags (final.haskell.lib.dontCheck hsSuper.codd) muslConfigureFlags
-            else final.haskell.lib.dontCheck hsSuper.codd);
+          codd = noProfiling (withStaticFlags (final.haskell.lib.dontCheck hsSuper.codd));
           codd-tests = noProfiling (final.haskell.lib.addBuildTool
-            (if isMusl
-              then final.haskell.lib.appendConfigureFlags (final.haskell.lib.dontCheck hsSuper.codd-tests) muslConfigureFlags
-              else final.haskell.lib.dontCheck hsSuper.codd-tests)
+            (withStaticFlags (final.haskell.lib.dontCheck hsSuper.codd-tests))
             hsSelf.hspec-discover);
           codd-benchmarks = noProfiling (final.haskell.lib.dontCheck hsSuper.codd-benchmarks);
         };
@@ -105,7 +103,7 @@ let
             in if canExtend then
               hpkgs.extend (prev.lib.composeExtensions
                 sourceOverrides
-                dontCheckAndMuslOverrides)
+                dontCheckAndStaticOverrides)
             else hpkgs
           ) prev.haskell.packages;
         };

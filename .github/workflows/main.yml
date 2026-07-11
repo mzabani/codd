@@ -146,7 +146,10 @@ jobs:
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
-      run: nix-build --no-out-link -A coddexe
+      run: |
+        nix-build -A coddexe -o coddexe
+        otool -L coddexe/bin/codd
+        rm coddexe
 
     - name: Build codd's tests
       run: nix-build --no-out-link -A coddtests

@@ -4,17 +4,21 @@
 }:
 let
   addPgExtensions = postgres: postgres.withPackages (ps: [ ps.pg_cron ]);
-  pkgsMusl = if pkgs.stdenv.isDarwin then pkgs else
-    import ./nix/nixpkgs.nix {
+  pkgsStaticLinking = if pkgs.stdenv.isDarwin
+    then import ./nix/nixpkgs.nix { inherit system; staticLinking = true; }
+    else import ./nix/nixpkgs.nix {
       inherit system;
       crossSystem = { config = "x86_64-unknown-linux-musl"; isStatic = true; };
+      staticLinking = true;
     };
   pkgsDarwin = import ./nix/nixpkgs.nix { system = "aarch64-darwin"; };
   haskellPackages = builtins.getAttr ghc pkgs.haskell.packages;
-  haskellPackagesMusl = builtins.getAttr ghc pkgsMusl.haskell.packages;
+  haskellPackagesStaticLinking = builtins.getAttr ghc pkgsStaticLinking.haskell.packages;
 
-  coddexe = haskellPackagesMusl.codd;
-  coddtests = haskellPackagesMusl.codd-tests;
+  justStatic = pkgsStaticLinking.haskell.lib.justStaticExecutables;
+
+  coddexe = justStatic haskellPackagesStaticLinking.codd;
+  coddtests = justStatic haskellPackagesStaticLinking.codd-tests;
   coddbenchmarks = haskellPackages.codd-benchmarks;
   coddhaddocks = haskellPackages.codd.doc;
 in
