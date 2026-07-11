@@ -148,6 +148,7 @@ jobs:
     - name: Build codd without static linking
       run: |
         nix-build -A coddexe -o coddexe
+        # One day we'll get static linking on Darwin to work... one day.
         otool -L coddexe/bin/codd
         rm coddexe
 

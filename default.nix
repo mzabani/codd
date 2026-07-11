@@ -17,6 +17,7 @@ let
 
   justStatic = pkgsStaticLinking.haskell.lib.justStaticExecutables;
 
+  # Statically linking against libpq simply doesn't work in Darwin. Silently.
   coddexe = justStatic haskellPackagesStaticLinking.codd;
   coddtests = justStatic haskellPackagesStaticLinking.codd-tests;
   coddbenchmarks = haskellPackages.codd-benchmarks;
