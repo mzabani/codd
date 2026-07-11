@@ -57,7 +57,7 @@ jobs:
     - name: Build statically linked codd's tests
       run: nix-build --no-out-link -A coddtests
 
-    - name: Build statically linked benchmarks
+    - name: Build (not statically linked) benchmarks
       run: nix-build --no-out-link -A coddbenchmarks
 
     - name: Install codd with nix-env and uninstall it
