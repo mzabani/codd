@@ -91,9 +91,7 @@ let
                 else pkg;
           in {
           codd = noProfiling (withStaticFlags (final.haskell.lib.dontCheck hsSuper.codd));
-          codd-tests = noProfiling (final.haskell.lib.addBuildTool
-            (withStaticFlags (final.haskell.lib.dontCheck hsSuper.codd-tests))
-            hsSelf.hspec-discover);
+          codd-tests = noProfiling (withStaticFlags (final.haskell.lib.dontCheck hsSuper.codd-tests));
           codd-benchmarks = noProfiling (final.haskell.lib.dontCheck hsSuper.codd-benchmarks);
         };
       in {
