@@ -85,16 +85,18 @@ let
           "--ghc-option=-optl=-lpgcommon"
           "--ghc-option=-optl=-lpgport"
         ];
-        dontCheckAndMuslOverrides = hsSelf: hsSuper: {
-          codd = (if isMusl
+        dontCheckAndMuslOverrides = hsSelf: hsSuper:
+          let noProfiling = final.haskell.lib.disableLibraryProfiling;
+          in {
+          codd = noProfiling (if isMusl
             then final.haskell.lib.appendConfigureFlags (final.haskell.lib.dontCheck hsSuper.codd) muslConfigureFlags
             else final.haskell.lib.dontCheck hsSuper.codd);
-          codd-tests = final.haskell.lib.addBuildTool
+          codd-tests = noProfiling (final.haskell.lib.addBuildTool
             (if isMusl
               then final.haskell.lib.appendConfigureFlags (final.haskell.lib.dontCheck hsSuper.codd-tests) muslConfigureFlags
               else final.haskell.lib.dontCheck hsSuper.codd-tests)
-            hsSelf.hspec-discover;
-          codd-benchmarks = final.haskell.lib.dontCheck hsSuper.codd-benchmarks;
+            hsSelf.hspec-discover);
+          codd-benchmarks = noProfiling (final.haskell.lib.dontCheck hsSuper.codd-benchmarks);
         };
       in {
         haskell = prev.haskell // {
