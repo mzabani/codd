@@ -1,11 +1,11 @@
-{ postgres, pkgs, coddtests, hspecArgs }:
+{ postgres, pkgs, codd-tests, hspecArgs }:
 let fs = pkgs.lib.fileset;
 in
  pkgs.stdenv.mkDerivation {
      name = "codd-test-with-db-results";
      src = fs.toSource {
       root = ../.;
-      fileset = fs.unions [ ../conf/test-db ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
+      fileset = fs.unions [ ../conf/test-db ../codd-tests/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
      };
      nativeBuildInputs = [ postgres pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
      installPhase = ''
@@ -22,7 +22,7 @@ in
       trap "pg_ctl stop || true" EXIT ERR
       pg_ctl -l "pg_ctl_init.log" start
       scripts/wait-for-pg-ready.sh
-      ${coddtests}/bin/codd-test ${hspecArgs}
+      ${codd-tests}/bin/codd-tests ${hspecArgs}
       pg_ctl stop
       trap - EXIT ERR
     '';

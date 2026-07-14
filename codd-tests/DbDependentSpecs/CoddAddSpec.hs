@@ -51,7 +51,7 @@ tellsUserToCreateExpectedSchemaDir dbInfo = do
         addMigration
           dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left missingFolder}
           Nothing
-          (SqlFilePath "test/migrations/codd-add-tests/very-first-migration-but-connection-not-accessible.sql")
+          (SqlFilePath "codd-tests/migrations/codd-add-tests/very-first-migration-but-connection-not-accessible.sql")
 
 tellsUserAboutBootstrapMigrationToCreateDatabase :: CoddSettings -> IO ()
 tellsUserAboutBootstrapMigrationToCreateDatabase dbInfo = do
@@ -65,7 +65,7 @@ tellsUserAboutBootstrapMigrationToCreateDatabase dbInfo = do
         addMigration
           dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left expectedSchemaDir}
           Nothing
-          (SqlFilePath "test/migrations/codd-add-tests/very-first-migration-but-connection-not-accessible.sql")
+          (SqlFilePath "codd-tests/migrations/codd-add-tests/very-first-migration-but-connection-not-accessible.sql")
 
 bootstrapMigrationThatCreatesDBCanBeAdded :: CoddSettings -> IO ()
 bootstrapMigrationThatCreatesDBCanBeAdded dbInfo = do
@@ -76,7 +76,7 @@ bootstrapMigrationThatCreatesDBCanBeAdded dbInfo = do
       addMigration
         dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left expectedSchemaDir}
         Nothing
-        (SqlFilePath "test/migrations/codd-add-tests/migration-that-creates-database-correctly.sql")
+        (SqlFilePath "codd-tests/migrations/codd-add-tests/migration-that-creates-database-correctly.sql")
 
 backgroundMigrationPrintsTipAndAddsSpecialToplevelComment :: CoddSettings -> IO ()
 backgroundMigrationPrintsTipAndAddsSpecialToplevelComment dbInfo = do
@@ -88,7 +88,7 @@ backgroundMigrationPrintsTipAndAddsSpecialToplevelComment dbInfo = do
       addMigration
         dbInfo {sqlMigrations = [emptyMigsFolder], onDiskReps = Left expectedSchemaDir}
         Nothing
-        (SqlFilePath "test/migrations/codd-add-tests/example-background-migration.sql")
+        (SqlFilePath "codd-tests/migrations/codd-add-tests/example-background-migration.sql")
   logs <- readMVar logsmv
   -- Check a nice tip was printed
   logs

@@ -34,8 +34,8 @@ jobs:
       with:
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
-          substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
-          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+          substituters = https://cache.nixos.org https://mzabani.cachix.org
+          trusted-public-keys = mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
     - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
@@ -57,15 +57,12 @@ jobs:
     - name: Build statically linked codd's tests
       run: nix-build --no-out-link -A coddtests
 
-    - name: Build statically linked benchmarks
+    - name: Build (not statically linked) benchmarks
       run: nix-build --no-out-link -A coddbenchmarks
-
-    - name: Build executable used for installer
-      run: nix-build --no-out-link ./nix/install-codd-nixpkgs.nix -A codd
 
     - name: Install codd with nix-env and uninstall it
       run: |
-        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+        nix-env -f default.nix -iA haskellPackages.codd
         codd --help
         nix-env --uninstall codd
 
@@ -80,12 +77,9 @@ jobs:
         scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
-        # We test the last version with the vanilla nixpkgs-built derivation,
-        # not the IOHK one. We assume differences in the codebase regarding different
-        # postgres versions aren't enough to make it worth testing every version here too.
         nix-env -iA concurrently -f ./nix/nixpkgs.nix
-        concurrently -g --timings --names pg18Nixpkgs,pg17,pg16,pg15,pg14 \
-          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg18Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck' \
+        concurrently -g --timings --names pg18,pg17,pg16,pg15,pg14 \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg18-tests.txt nix-build --no-out-link -A testsPg18' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg17-tests.txt nix-build --no-out-link -A testsPg17' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16-tests.txt nix-build --no-out-link -A testsPg16' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15' \
@@ -126,8 +120,8 @@ jobs:
       with:
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
-          substituters = https://cache.nixos.org https://mzabani.cachix.org https://cache.iog.io
-          trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+          substituters = https://cache.nixos.org https://mzabani.cachix.org
+          trusted-public-keys = mzabani.cachix.org-1:wnkKakfl+rbT7zTtV1P1tAtjBTuh6GQVX7LfSd9sMbA= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
     - uses: cachix/cachix-action@6a9a34cdd93d0ae4b4b59fd678660efb08109f2f # v12
       with:
@@ -152,7 +146,11 @@ jobs:
     # Statically linking in macOS seems hard at this time. Also, app bundles seem relatively easy to produce
     # and are a standard for macOS app distribution.
     - name: Build codd without static linking
-      run: nix-build --no-out-link -A coddexe
+      run: |
+        nix-build -A coddexe -o coddexe
+        # One day we'll get static linking on Darwin to work... one day.
+        otool -L coddexe/bin/codd
+        rm coddexe
 
     - name: Build codd's tests
       run: nix-build --no-out-link -A coddtests
@@ -163,12 +161,9 @@ jobs:
         scripts/ci/run-tests-and-annotate-with-error.sh local/tests-no-db.txt nix-build --no-out-link -A testsNoDb
 
         # Postgres-version dependent tests for each possible version next
-        # We test the last version with the vanilla nixpkgs-built derivation,
-        # not the IOHK one. We assume differences in the codebase regarding different
-        # postgres versions aren't enough to make it worth testing every version here too.
         # We don't run these concurrently because Nix does not have a sandbox in Macs, so it's
         # not worth the risk.
-        scripts/ci/run-tests-and-annotate-with-error.sh local/pg18Nixpkgs-tests.txt nix-build ./nix/install-codd-nixpkgs.nix --no-out-link -A coddWithCheck
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg18-tests.txt nix-build --no-out-link -A testsPg18
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg17-tests.txt nix-build --no-out-link -A testsPg17
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg16-tests.txt nix-build --no-out-link -A testsPg16
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg15-tests.txt nix-build --no-out-link -A testsPg15
@@ -183,7 +178,7 @@ jobs:
 
     - name: Install codd with nix-env and uninstall it
       run: |
-        nix-env -f ./nix/install-codd-nixpkgs.nix -iA codd
+        nix-env -f default.nix -iA haskellPackages.codd
         codd --help
         nix-env --uninstall codd
 

@@ -1,0 +1,55 @@
+cabal-version: 2.0
+
+name:           codd-benchmarks
+version:        0.1.0
+description:    Benchmarks for the codd library
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+
+executable codd-benchmarks
+  main-is: Main.hs
+  hs-source-dirs:
+      src
+  default-extensions:
+      BangPatterns
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DerivingVia
+      LambdaCase
+      FlexibleContexts
+      FlexibleInstances
+      GADTs
+      GeneralizedNewtypeDeriving
+      MultiParamTypeClasses
+      NamedFieldPuns
+      NumericUnderscores
+      OverloadedStrings
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeFamilyDependencies
+      TypeOperators
+      ViewPatterns
+  -- -optP-Wno-nonportable-include-path fixes macOS builds: https://github.com/haskell/cabal/issues/4739#issuecomment-359209133
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-maxN2 -qg -T" -Wall -Wpartial-fields -optP-Wno-nonportable-include-path
+  build-depends:
+      aeson >= 2
+    , base
+    , codd
+    , criterion-measurement >= 0.2.0.0
+    , deepseq
+    , hspec
+    , hspec-core
+    , hspec-expectations
+    , statistics
+    , streaming
+    , text
+    , vector
+  default-language: Haskell2010

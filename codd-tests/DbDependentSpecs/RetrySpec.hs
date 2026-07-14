@@ -76,7 +76,7 @@ spec = do
             ( applyMigrationsNoCheck
                 dbInfo
                   { sqlMigrations =
-                      [ "test/migrations/in-txn-application-error-with-COPY"
+                      [ "codd-tests/migrations/in-txn-application-error-with-COPY"
                       ]
                   }
                 Nothing
@@ -124,7 +124,7 @@ spec = do
             ( applyMigrationsNoCheck
                 dbInfo
                   { sqlMigrations =
-                      [ "test/migrations/in-txn-application-error-on-COMMIT"
+                      [ "codd-tests/migrations/in-txn-application-error-on-COMMIT"
                       ]
                   }
                 Nothing
@@ -180,7 +180,7 @@ spec = do
             ( applyMigrationsNoCheck
                 dbInfo
                   { sqlMigrations =
-                      [ "test/migrations/no-txn-partial-application-error-outside-txn"
+                      [ "codd-tests/migrations/no-txn-partial-application-error-outside-txn"
                       ]
                   }
                 Nothing
@@ -250,7 +250,7 @@ spec = do
             ( applyMigrationsNoCheck
                 dbInfo
                   { sqlMigrations =
-                      [ "test/migrations/no-txn-partial-application-error-inside-txn"
+                      [ "codd-tests/migrations/no-txn-partial-application-error-inside-txn"
                       ]
                   }
                 Nothing
@@ -320,7 +320,7 @@ spec = do
             ( applyMigrationsNoCheck
                 dbInfo
                   { sqlMigrations =
-                      [ "test/migrations/no-txn-partial-application-error-on-commit"
+                      [ "codd-tests/migrations/no-txn-partial-application-error-on-commit"
                       ]
                   }
                 Nothing
@@ -510,7 +510,7 @@ spec = do
                               (realToFrac @Double 0.001)
                           ),
                       sqlMigrations =
-                        [ "test/migrations/bootstrap-no-txn-fails-but-makes-default-conn-accessible"
+                        [ "codd-tests/migrations/bootstrap-no-txn-fails-but-makes-default-conn-accessible"
                         ]
                     }
                 )
@@ -558,9 +558,9 @@ spec = do
                           sqlMigrations =
                             [ if inTxn
                                 then
-                                  "test/migrations/retry-policy-test-in-txn/"
+                                  "codd-tests/migrations/retry-policy-test-in-txn/"
                                 else
-                                  "test/migrations/retry-policy-test-no-txn/"
+                                  "codd-tests/migrations/retry-policy-test-no-txn/"
                             ]
                         }
                     )

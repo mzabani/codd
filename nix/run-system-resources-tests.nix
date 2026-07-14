@@ -1,11 +1,11 @@
-{ postgres, pkgs, coddtests }:
+{ postgres, pkgs, codd-tests }:
 let fs = pkgs.lib.fileset;
 in
  pkgs.stdenv.mkDerivation {
      name = "codd-test-system-resources-results";
      src = fs.toSource {
       root = ../.;
-      fileset = fs.unions [ ../conf/test-db ../expected-schema ../test/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
+      fileset = fs.unions [ ../conf/test-db ../expected-schema ../codd-tests/migrations ../scripts/init-pg-cluster.sh ../scripts/wait-for-pg-ready.sh ];
      };
      nativeBuildInputs = [ postgres pkgs.strace pkgs.bash pkgs.coreutils pkgs.glibcLocales ];
      installPhase = ''
@@ -22,8 +22,8 @@ in
       pg_ctl -l "pg_ctl_init.log" start
       scripts/wait-for-pg-ready.sh
       strace -f -e openat,open,close -o /tmp/strace-codd-system-resources-test.log \
-       ${coddtests}/bin/codd-test --match "/SystemResourcesSpecs/RUNNING"
+       ${codd-tests}/bin/codd-tests --match "/SystemResourcesSpecs/RUNNING"
       pg_ctl stop
-      ${coddtests}/bin/codd-test --match "/SystemResourcesSpecs/CHECKING"
+      ${codd-tests}/bin/codd-tests --match "/SystemResourcesSpecs/CHECKING"
     '';
   }

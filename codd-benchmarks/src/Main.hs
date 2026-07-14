@@ -193,8 +193,8 @@ main = do
   isCI <- isJust <$> lookupEnv "CI"
   let expectedPerfPath :: FilePath =
         if isCI
-          then "bench/expected-perf/ci.json"
-          else "bench/expected-perf/local.json"
+          then "codd-benchmarks/expected-perf/ci.json"
+          else "codd-benchmarks/expected-perf/local.json"
   putStrLn $ "Reading expected performance numbers from " ++ expectedPerfPath
   CurrentPerf {..} <-
     either (error "Could not decode expected performance file") id

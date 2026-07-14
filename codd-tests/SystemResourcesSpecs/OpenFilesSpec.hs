@@ -46,7 +46,7 @@ spec = do
             applyMigrations
               emptyTestDbInfo
                 { sqlMigrations =
-                    ["test/migrations/open-files-limit/"],
+                    ["codd-tests/migrations/open-files-limit/"],
                   onDiskReps = Left "./expected-schema"
                 }
               Nothing

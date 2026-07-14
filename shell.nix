@@ -1,23 +1,17 @@
-{ }:
 let
-  pkgs = import ./nix/nixpkgs.nix {};
-  project = (import ./default.nix { inherit pkgs; useMuslIfPossible = false; }).project;
-  postgres = pkgs.postgresql_18.withPackages (ps: with ps; [ pg_cron ]);
+  ghc = "ghc9103";
 in
-project.shellFor {
-  tools = {
-    cabal = "latest";
-    hlint = "latest";
-    haskell-language-server = "latest";
-    fourmolu = "latest";
-  };
-  exactDeps = true;
-  buildInputs =
-    with pkgs;
-    [
+{ pkgs ? import ./nix/nixpkgs.nix {} }:
+let
+  postgres = pkgs.postgresql_18.withPackages (ps: with ps; [ pg_cron ]);
+  haskellPackages = builtins.getAttr ghc pkgs.haskell.packages;
+in
+  haskellPackages.shellFor {
+    packages = p: [ p.codd p.codd-tests p.codd-benchmarks ];
+    withHoogle = true;
+    buildInputs = with pkgs; [
       cacert
       concurrently
-      ghcid
       glibcLocales
       hyperfine
       postgres
@@ -25,6 +19,12 @@ project.shellFor {
       podman
       run
       shellcheck
+      haskellPackages.cabal-install
+      haskellPackages.ghcid
+      haskellPackages.haskell-language-server
+      haskellPackages.hlint
+      haskellPackages.hspec-discover
+      haskellPackages.fourmolu
     ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
 
