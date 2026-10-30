@@ -1,0 +1,12 @@
+{
+    "collate": "en_gb.utf8",
+    "ctype": "en_gb.utf8",
+    "encoding": "utf8",
+    "owner": "codd_admin",
+    "public_privileges": "[[\"cT\", \"codd_admin\"]]",
+    "settings": [
+        "default_transaction_deferrable=true",
+        "default_transaction_isolation=serializable",
+        "default_transaction_read_only=false"
+    ]
+}

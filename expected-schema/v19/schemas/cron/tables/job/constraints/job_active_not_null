@@ -1,0 +1,16 @@
+{
+    "deferrable": false,
+    "deferred": false,
+    "definition": "NOT NULL active",
+    "fk_deltype": " ",
+    "fk_matchtype": " ",
+    "fk_ref_table": null,
+    "fk_updtype": " ",
+    "inhcount": 0,
+    "local": true,
+    "noinherit": false,
+    "parent_constraint": null,
+    "supporting_index": null,
+    "type": "n",
+    "validated": true
+}

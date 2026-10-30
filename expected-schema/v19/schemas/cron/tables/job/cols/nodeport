@@ -1,0 +1,13 @@
+{
+    "collation": null,
+    "collation_nsp": null,
+    "default": "inet_server_port()",
+    "generated": "",
+    "hasdefault": true,
+    "identity": "",
+    "inhcount": 0,
+    "local": true,
+    "notnull": true,
+    "privileges": null,
+    "type": "integer"
+}

@@ -1,0 +1,31 @@
+{
+    "accessmethod": null,
+    "amoptions": null,
+    "cache": 1,
+    "compositetype": null,
+    "cycle": false,
+    "forcerowsecurity": false,
+    "increment": 1,
+    "kind": "S",
+    "max": 9223372036854775807,
+    "min": 1,
+    "owner": "postgres",
+    "owner_col_order": null,
+    "owner_table": null,
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "public": [
+            [
+                "r",
+                "postgres"
+            ]
+        ]
+    },
+    "replident": "n",
+    "rowsecurity": false,
+    "rowtype": null,
+    "seq_type": "int8",
+    "shared": false,
+    "start": 1
+}

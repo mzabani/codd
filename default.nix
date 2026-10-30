@@ -4,7 +4,7 @@
 }:
 let
   addPgExtensions = postgres: postgres.withPackages (ps: [ ps.pg_cron ]);
-  pkgsStaticLinking = if pkgs.stdenv.isDarwin
+  pkgsStaticLinking = if pkgs.stdenv.hostPlatform.isDarwin
     then import ./nix/nixpkgs.nix { inherit system; staticLinking = true; }
     else import ./nix/nixpkgs.nix {
       inherit system;
@@ -32,6 +32,7 @@ in
     inherit coddexe;
   };
 
+  testsPg19 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_19; };
   testsPg18 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_18; };
   testsPg17 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_17; };
   testsPg16 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_16; };
@@ -41,6 +42,7 @@ in
   testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_18; };
 
   # Shells with specific-versioned postgres servers to run tests locally
+  shellPg19 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_19; };
   shellPg18 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_18; };
   shellPg17 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_17; };
   shellPg16 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_16; };

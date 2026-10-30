@@ -1,0 +1,27 @@
+{
+    "argmodes": null,
+    "argnames": [
+        "job_id",
+        "schedule",
+        "command",
+        "database",
+        "username",
+        "active"
+    ],
+    "args": "job_id bigint, schedule text DEFAULT NULL::text, command text DEFAULT NULL::text, database text DEFAULT NULL::text, username text DEFAULT NULL::text, active boolean DEFAULT NULL::boolean",
+    "config": null,
+    "definition": null,
+    "kind": "f",
+    "lang": "c",
+    "leakproof": false,
+    "nargs": 6,
+    "nargs_defaults": 5,
+    "owner": "postgres",
+    "parallel": "u",
+    "privileges": null,
+    "return_type": "void",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": false,
+    "volatile": "v"
+}

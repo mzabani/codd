@@ -1,0 +1,34 @@
+{
+    "accessmethod": "heap",
+    "amoptions": null,
+    "columns_in_order": [
+        "jobid",
+        "runid",
+        "job_pid",
+        "database",
+        "username",
+        "command",
+        "status",
+        "return_message",
+        "start_time",
+        "end_time"
+    ],
+    "compositetype": null,
+    "forcerowsecurity": false,
+    "kind": "r",
+    "owner": "postgres",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "public": [
+            [
+                "dr",
+                "postgres"
+            ]
+        ]
+    },
+    "replident": "d",
+    "rowsecurity": true,
+    "rowtype": "job_run_details",
+    "shared": false
+}

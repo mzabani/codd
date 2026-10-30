@@ -1,0 +1,29 @@
+{
+    "argmodes": null,
+    "argnames": [
+        "job_name"
+    ],
+    "args": "job_name text",
+    "config": null,
+    "definition": null,
+    "kind": "f",
+    "lang": "c",
+    "leakproof": false,
+    "nargs": 1,
+    "nargs_defaults": 0,
+    "owner": "postgres",
+    "parallel": "u",
+    "privileges": {
+        "public": [
+            [
+                "X",
+                "postgres"
+            ]
+        ]
+    },
+    "return_type": "bool",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": true,
+    "volatile": "v"
+}

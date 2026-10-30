@@ -1,0 +1,14 @@
+{
+    "associated_constraint": null,
+    "deferrable": false,
+    "definition": "CREATE TRIGGER cron_job_cache_invalidate AFTER INSERT OR DELETE OR UPDATE OR TRUNCATE ON cron.job FOR EACH STATEMENT EXECUTE FUNCTION cron.job_cache_invalidate()",
+    "enabled": "O",
+    "function": "job_cache_invalidate;",
+    "initdeferred": false,
+    "nargs": 0,
+    "newtblname": null,
+    "oldtblname": null,
+    "supporting_index": null,
+    "table_ref": null,
+    "type": 60
+}

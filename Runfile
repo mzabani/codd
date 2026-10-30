@@ -25,7 +25,8 @@ ci-tests:
     run test-no-db --nix
 
     # Postgres-version dependent tests for each possible version next
-    concurrently -g --timings --names pg18,pg17,pg16,pg15,pg14 \
+    concurrently -g --timings --names pg19,pg18,pg17,pg16,pg15,pg14 \
+      'run test-with-db --nix --pg 19' \
       'run test-with-db --nix --pg 18' \
       'run test-with-db --nix --pg 17' \
       'run test-with-db --nix --pg 16' \
@@ -78,8 +79,8 @@ test-no-db:
 # OPTION NIX --nix Run tests in a Nix derivation's sandbox
 test-with-db:
     set -eo pipefail
-    [ -z "$PG" ] && PG=(18)
-    [ "${PG[0]}" = "all" ] && PG=(14 15 16 17 18)
+    [ -z "$PG" ] && PG=(19)
+    [ "${PG[0]}" = "all" ] && PG=(14 15 16 17 18 19)
     TARGS="--match '/DbDependentSpecs/'" && [ -n "$1" ] && TARGS=$(printf "'%s' " "${@}")
     
     for pg in "${PG[@]}"; do
@@ -111,5 +112,5 @@ test-system-resources:
         trap "rm -f /tmp/strace-codd-system-resources-test.log" ERR EXIT
 
         cabal build -O0 codd-tests
-        nix-shell -A "shellPg18" ./default.nix --run "./scripts/run-tests-system-resources.sh"
+        nix-shell -A "shellPg19" ./default.nix --run "./scripts/run-tests-system-resources.sh"
     fi

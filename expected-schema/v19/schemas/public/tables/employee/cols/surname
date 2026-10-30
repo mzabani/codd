@@ -1,0 +1,13 @@
+{
+    "collation": "pt_br_test_coll",
+    "collation_nsp": "collations_1",
+    "default": null,
+    "generated": "",
+    "hasdefault": false,
+    "identity": "",
+    "inhcount": 0,
+    "local": true,
+    "notnull": false,
+    "privileges": null,
+    "type": "text"
+}

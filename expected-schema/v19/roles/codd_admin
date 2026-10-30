@@ -1,0 +1,23 @@
+{
+    "bypassrls": false,
+    "canlogin": true,
+    "config": [
+        "search_path=public, collations_1"
+    ],
+    "createdb": false,
+    "createrole": true,
+    "db_privileges": "[[\"cCT\", \"codd_admin\"]]",
+    "inherit": true,
+    "membership": [
+        {
+            "admin_option": true,
+            "role": "codd-user"
+        },
+        {
+            "admin_option": true,
+            "role": "codd_low_privilege_user"
+        }
+    ],
+    "replication": false,
+    "superuser": false
+}

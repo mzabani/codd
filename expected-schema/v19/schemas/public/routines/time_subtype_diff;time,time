@@ -1,0 +1,36 @@
+{
+    "argmodes": null,
+    "argnames": [
+        "x",
+        "y"
+    ],
+    "args": "x time without time zone, y time without time zone",
+    "config": null,
+    "definition": "SELECT EXTRACT(EPOCH FROM (x - y))",
+    "kind": "f",
+    "lang": "sql",
+    "leakproof": false,
+    "nargs": 2,
+    "nargs_defaults": 0,
+    "owner": "codd_admin",
+    "parallel": "u",
+    "privileges": {
+        "codd_admin": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ],
+        "public": [
+            [
+                "X",
+                "codd_admin"
+            ]
+        ]
+    },
+    "return_type": "float8",
+    "returns_set": false,
+    "security_definer": false,
+    "strict": true,
+    "volatile": "i"
+}

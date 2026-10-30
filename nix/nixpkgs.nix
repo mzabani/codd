@@ -108,8 +108,8 @@ let
       };
 in
     import (fetchTarball {
-      url = "https://github.com/NixOS/nixpkgs/archive/22fa6f7b5510a5492e46232efcb0a07f68d8be03.tar.gz";
-      sha256 = "sha256:1md1mh2h6xz9cd80lfjnwrjyi575py02s8dm2naks6wd6n3ay3rr";
+      url = "https://github.com/NixOS/nixpkgs/archive/1390f0e44d0976f422bc82d5c64cab542d851a2c.tar.gz";
+      sha256 = "sha256-VIWLSnafdIqm+9fBBamh6kgd040kwSB/r+PZ9TNlQQM=";
     }) ({
       inherit system;
       overlays = [ haskellPatchesOverlay muslPostgresFixOverlay ourOwnHaskellPkgsOverlay ];

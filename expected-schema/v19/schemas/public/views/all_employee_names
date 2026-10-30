@@ -1,0 +1,23 @@
+{
+    "accessmethod": null,
+    "amoptions": null,
+    "compositetype": null,
+    "definition": " SELECT employee_name\n   FROM public.employee;",
+    "forcerowsecurity": false,
+    "kind": "v",
+    "owner": "codd_admin",
+    "partition": false,
+    "persistence": "p",
+    "privileges": {
+        "codd_admin": [
+            [
+                "damxrtDw",
+                "codd_admin"
+            ]
+        ]
+    },
+    "replident": "n",
+    "rowsecurity": false,
+    "rowtype": "all_employee_names",
+    "shared": false
+}
