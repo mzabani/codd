@@ -542,7 +542,12 @@ spec = do
                                "Dianne's horse",
                                "Dianne's horse"
                              ]
-            it
+
+            -- Test below is disabled because PG 19 no longer supports non-standard string
+            -- literals. It doesn't feel worth running it conditionally for older versions
+            -- because I rarely touch parser code these days.
+            -- Keeping this here until PG 18 is unsupported, which is many years in the future.
+            xit
               "String escaping works in all its forms with standard_conforming_strings=off"
               $ \emptyTestDbInfo -> void @IO $ do
                 stringsAndIds :: [(Int, Text)] <-
@@ -770,8 +775,7 @@ spec = do
                             conn
                             "SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE tablename='newtable' OR tablename='sometable'"
                             `shouldReturn` [ DB.Only
-                                               ( 2 :: Int
-                                               )
+                                               (2 :: Int)
                                            ]
 
             it
@@ -903,7 +907,7 @@ spec = do
                         ( Just $
                             -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
                             [ alwaysPassingMig
-                              | addDefaultConnMig
+                            | addDefaultConnMig
                             ]
                               ++ [ changeConnDb
                                      dbInfo
@@ -965,7 +969,7 @@ spec = do
                         ( Just $
                             -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used too soon
                             [ alwaysPassingMig
-                              | addDefaultConnMig
+                            | addDefaultConnMig
                             ]
                               ++ [ changeConnDb
                                      dbInfo
@@ -1026,7 +1030,7 @@ spec = do
                         ( Just $
                             -- A default-conn mig is interesting because it makes the default connection available if it runs first, but we don't want that default connection to be used regardless
                             [ alwaysPassingMig
-                              | addDefaultConnMig
+                            | addDefaultConnMig
                             ]
                               ++ [ changeConnUser
                                      dbInfo
@@ -1108,14 +1112,14 @@ spec = do
                               i
                           )
                           (getIncreasingTimestamp 0)
-                        | i <- [0 .. 3],
-                          previousDbName <-
-                            if i == 0
-                              then ["postgres"]
-                              else
-                                [ "new_database_"
-                                    <> show (i - 1)
-                                ]
+                      | i <- [0 .. 3],
+                        previousDbName <-
+                          if i == 0
+                            then ["postgres"]
+                            else
+                              [ "new_database_"
+                                  <> show (i - 1)
+                              ]
                       ]
                         ++ createCoddTestDbMigs
 
@@ -1183,8 +1187,7 @@ spec = do
                       migsWithSleep
                       (drop 1 migsWithSleep)
                       `shouldSatisfy` all
-                        ( > minTimeBetweenMigs
-                        )
+                        (> minTimeBetweenMigs)
                     migsWithSleep
                       `shouldSatisfy` all
                         ( \(_, _, applicationDuration) ->
@@ -1348,11 +1351,11 @@ spec = do
                                 cid1,
                                 cid2
                               )
-                              | (migId1, conStr1, intxn1, t1, cid1) <-
-                                  migsForTests,
-                                (migId2, conStr2, intxn2, t2, cid2) <-
-                                  migsForTests,
-                                migId1 < migId2
+                            | (migId1, conStr1, intxn1, t1, cid1) <-
+                                migsForTests,
+                              (migId2, conStr2, intxn2, t2, cid2) <-
+                                migsForTests,
+                              migId1 < migId2
                             ]
                           consecutiveMigs =
                             zipWith
@@ -1477,10 +1480,10 @@ diversifyAppCheckMigs defaultConnInfo createCoddTestDbMigs = do
                   migOrder
               )
               (getIncreasingTimestamp 0)
-            | previousDbName <-
-                if i == 0
-                  then ["postgres"]
-                  else ["new_database_" <> show (i - 1)]
+          | previousDbName <-
+              if i == 0
+                then ["postgres"]
+                else ["new_database_" <> show (i - 1)]
           ]
         CreatePassingMig inTxn ->
           [ AddedSqlMigration
