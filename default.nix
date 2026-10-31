@@ -39,7 +39,7 @@ in
   testsPg15 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_15; };
   testsPg14 = { hspecArgs ? "--match /DbDependentSpecs/"}: import ./nix/run-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_14; };
   testsNoDb = { hspecArgs ? "--skip /DbDependentSpecs/ --skip /SystemResourcesSpecs/" }: import ./nix/run-no-db-tests.nix { inherit pkgs hspecArgs; codd-tests = coddtests; };
-  testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_18; };
+  testsSystemResources = import ./nix/run-system-resources-tests.nix { inherit pkgs; codd-tests = coddtests; postgres = addPgExtensions pkgs.postgresql_19; };
 
   # Shells with specific-versioned postgres servers to run tests locally
   shellPg19 = import ./nix/test-shell-pg.nix { inherit pkgs; postgres = addPgExtensions pkgs.postgresql_19; };
