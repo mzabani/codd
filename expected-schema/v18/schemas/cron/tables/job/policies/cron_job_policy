@@ -1,9 +1,0 @@
-{
-    "cmd": "*",
-    "permissive": true,
-    "qual": "(username = CURRENT_USER)",
-    "roles_applied": [
-        null
-    ],
-    "withcheck": null
-}
