@@ -3,7 +3,7 @@ let
 in
 { pkgs ? import ./nix/nixpkgs.nix {} }:
 let
-  postgres = pkgs.postgresql_18.withPackages (ps: with ps; [ pg_cron ]);
+  postgres = pkgs.postgresql_19.withPackages (ps: with ps; [ pg_cron ]);
   haskellPackages = builtins.getAttr ghc pkgs.haskell.packages;
 in
   haskellPackages.shellFor {
@@ -26,7 +26,7 @@ in
       haskellPackages.hspec-discover
       haskellPackages.fourmolu
     ]
-    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ strace ];
+    ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ strace ];
 
   shellHook = ''
     source scripts/source-env.sh .env

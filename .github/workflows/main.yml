@@ -78,7 +78,8 @@ jobs:
 
         # Postgres-version dependent tests for each possible version next
         nix-env -iA concurrently -f ./nix/nixpkgs.nix
-        concurrently -g --timings --names pg18,pg17,pg16,pg15,pg14 \
+        concurrently -g --timings --names pg19,pg18,pg17,pg16,pg15,pg14 \
+          'scripts/ci/run-tests-and-annotate-with-error.sh local/pg19-tests.txt nix-build --no-out-link -A testsPg19' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg18-tests.txt nix-build --no-out-link -A testsPg18' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg17-tests.txt nix-build --no-out-link -A testsPg17' \
           'scripts/ci/run-tests-and-annotate-with-error.sh local/pg16-tests.txt nix-build --no-out-link -A testsPg16' \
@@ -163,6 +164,7 @@ jobs:
         # Postgres-version dependent tests for each possible version next
         # We don't run these concurrently because Nix does not have a sandbox in Macs, so it's
         # not worth the risk.
+        scripts/ci/run-tests-and-annotate-with-error.sh local/pg19-tests.txt nix-build --no-out-link -A testsPg19
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg18-tests.txt nix-build --no-out-link -A testsPg18
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg17-tests.txt nix-build --no-out-link -A testsPg17
         scripts/ci/run-tests-and-annotate-with-error.sh local/pg16-tests.txt nix-build --no-out-link -A testsPg16
