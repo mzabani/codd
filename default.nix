@@ -1,5 +1,5 @@
 { system ? builtins.currentSystem
-, ghc ? "ghc9103"
+, ghc ? "ghc9124"
 , pkgs ? import ./nix/nixpkgs.nix { inherit system; }
 }:
 let
