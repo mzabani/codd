@@ -1,5 +1,5 @@
 let
-  ghc = "ghc9103";
+  ghc = "ghc9124";
 in
 { pkgs ? import ./nix/nixpkgs.nix {} }:
 let
@@ -21,7 +21,7 @@ in
       shellcheck
       haskellPackages.cabal-install
       haskellPackages.ghcid
-      haskellPackages.haskell-language-server
+      # haskellPackages.haskell-language-server
       haskellPackages.hlint
       haskellPackages.hspec-discover
       haskellPackages.fourmolu
